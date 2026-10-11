@@ -163,6 +163,8 @@ class ProviderRegistry {
 
     static _Dedupe(items) {
         seen := Map(), kept := []
+        if !Platform.IsWindows
+            seen.CaseSense := "On"
         for item in items {
             if (item.Uid != "") {
                 if seen.Has(item.Uid)

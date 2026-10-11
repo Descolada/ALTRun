@@ -1,4 +1,5 @@
-﻿;===============================================================================
+﻿#ErrorStdOut
+;===============================================================================
 ; ALTRun - An effective launcher for Windows, in the spirit of Alfred for macOS
 ; https://github.com/zhugecaomao/ALTRun
 ;-------------------------------------------------------------------------------
@@ -29,70 +30,9 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Off                     ; 已经在运行时交给它处理 (见 App.HandOff)
 #NoTrayIcon
-#Warn All, OutputDebug
+#Warn All, StdOut
+#Warn Experimental, Off
 
-; --- Lib ---
-#Include Lib\JSON.ahk
-#Include Lib\Logger.ahk
-#Include Lib\Util.ahk
-#Include Lib\TextTools.ahk
-#Include Lib\Kanji.ahk
-#Include Lib\Everything.ahk
-#Include Lib\Units.ahk
-#Include Lib\ClipboardData.ahk
-#Include Lib\Dialogs.ahk
-
-; --- Src\Core ---
-#Include Src\Core\App.ahk
-#Include Src\Core\I18n.ahk
-#Include Src\Core\AppSettings.ahk
-#Include Src\Core\SchemaMigration.ahk
-#Include Src\Core\SearchQuery.ahk
-#Include Src\Core\ResultItem.ahk
-#Include Src\Core\FuzzyMatcher.ahk
-#Include Src\Core\Knowledge.ahk
-#Include Src\Core\Usage.ahk
-#Include Src\Core\ActionCatalog.ahk
-#Include Src\Core\ProviderRegistry.ahk
-#Include Src\Core\FileIndex.ahk
-
-; --- Src\UI ---
-#Include Src\UI\ThemeManager.ahk
-#Include Src\UI\ThemePreview.ahk
-#Include Src\UI\NavIcons.ahk
-#Include Src\UI\IconCache.ahk
-#Include Src\UI\SearchWindow.ahk
-#Include Src\UI\LargeType.ahk
-#Include Src\UI\Hud.ahk
-#Include Src\UI\ItemEditor.ahk
-#Include Src\UI\HotkeyBox.ahk
-#Include Src\UI\PreferencesWindow.ahk
-
-; --- Src\Providers ---
-#Include Src\Providers\ClipboardProvider.ahk
-#Include Src\Providers\ApplicationProvider.ahk
-#Include Src\Providers\CustomCommandProvider.ahk
-#Include Src\Providers\SnippetProvider.ahk
-#Include Src\Providers\SystemProvider.ahk
-#Include Src\Providers\CalculatorProvider.ahk
-#Include Src\Providers\WebSearchProvider.ahk
-#Include Src\Providers\BookmarkProvider.ahk
-#Include Src\Providers\FileSearchProvider.ahk
-#Include Src\Providers\TerminalProvider.ahk
-#Include Src\Providers\WindowProvider.ahk
-#Include Src\Providers\RecentProvider.ahk
-#Include Src\Providers\ScriptProvider.ahk
-#Include Src\Providers\HelpProvider.ahk
-
-; --- Src\Extensions ---
-#Include Src\Extensions\SnippetExpander.ahk
-#Include Src\Extensions\QuickSwitch.ahk
-#Include Src\Extensions\AutoDate.ahk
-#Include Src\Extensions\CapsLockSwitch.ahk
-#Include Src\Extensions\TendonProfile.ahk
-#Include Src\Extensions\PTToolsWindow.ahk
-#Include Src\Extensions\UpdateChecker.ahk
-#Include Src\Extensions\CurrencyRates.ahk
-#Include Src\Extensions\SelectionActions.ahk
+#Include ALTRun.Modules.ahk
 
 App.Start()

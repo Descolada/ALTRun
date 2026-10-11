@@ -105,7 +105,7 @@ class SnippetProvider {
 
     static DeleteItem(item) {
         for index, snippet in AppSettings.Snippets {
-            if (ObjPtr(snippet) = ObjPtr(item.Source)) {
+            if (Platform.ObjectId(snippet) = Platform.ObjectId(item.Source)) {
                 AppSettings.Snippets.RemoveAt(index)
                 saved := AppSettings.Save()
                 SnippetExpander.Refresh()
@@ -157,11 +157,7 @@ class SnippetProvider {
 
     ; 小写、不带大括号的 UUID, 例如 3f2b8c1e-...
     static NewUuid() {
-        guid := Buffer(16)
-        DllCall("ole32\CoCreateGuid", "Ptr", guid)
-        text := Buffer(78)
-        DllCall("ole32\StringFromGUID2", "Ptr", guid, "Ptr", text, "Int", 39)
-        return StrLower(Trim(StrGet(text), "{}"))
+        return Platform.NewUuid()
     }
 
     ; 正文里是否每个词都出现 (不区分大小写, 不做模糊匹配: 长正文用模糊匹配几乎什么都能命中)。

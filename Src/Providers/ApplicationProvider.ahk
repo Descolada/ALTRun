@@ -19,7 +19,7 @@
 
 class ApplicationProvider {
     static Id        := "Applications"
-    static IndexFile := AppSettings.DataDir "\AppIndex.json"
+    static IndexFile := Platform.Join(AppSettings.DataDir, "AppIndex.json")
     static Apps      := []            ; [Map("Title", "Target", "Detail", "Search")...]
     static _storePid := 0, _storeFile := "", _storeTimer := ""
     static _entries := [], _keys := [], _keysFor := "", _lastNeedle := "", _lastMatches := []
@@ -55,7 +55,7 @@ class ApplicationProvider {
         matches := [], ranks := Map()
         for index, score in scores {
             matches.Push(index)
-            ranks[index] := score + Knowledge.Boost(query.Text, "app:" StrLower(apps[index]["Target"]))   ; 常选的应用不会被挤出前几名
+            ranks[index] := score + Knowledge.Boost(query.Text, ApplicationProvider._Uid(apps[index]["Target"]))
         }
         ApplicationProvider._lastNeedle := needle, ApplicationProvider._lastMatches := matches
 
@@ -64,10 +64,14 @@ class ApplicationProvider {
             entry := apps[index]
             isStore := InStr(entry["Target"], "shell:AppsFolder\") = 1
             subtitle := isStore ? I18n.T("App.Subtitle.Store") : (entry["Detail"] != "") ? entry["Detail"] : entry["Target"]
-            results.Push(ResultItem(entry["Title"], subtitle, {
+            props := {
                 Kind: "file", Arg: entry["Target"], Source: entry,
-                Icon: entry["Target"], Uid: "app:" StrLower(entry["Target"]), Score: scores[index] + 10
-            }))
+                Icon: entry.Has("Icon") && entry["Icon"] != "" ? entry["Icon"] : entry["Target"],
+                Uid: ApplicationProvider._Uid(entry["Target"]), Score: scores[index] + 10
+            }
+            if !Platform.IsWindows
+                props.OnRun := ObjBindMethod(ApplicationProvider, "Launch", entry["Target"])
+            results.Push(ResultItem(entry["Title"], subtitle, props))
         }
         return results
     }
@@ -77,10 +81,32 @@ class ApplicationProvider {
         ApplicationProvider._SearchKeys()
     }
 
+    static _Uid(target) => "app:" (Platform.IsWindows ? StrLower(target) : target)
+
+    static Launch(target, *) {
+        if Platform.IsLinux && RegExMatch(target, "\.desktop$") {
+            gio := Platform.FindExecutable("gio")
+            if (gio != "")
+                return ProcessRunner.Start(gio, ["launch", target])
+            entry := ProcessRunner.DesktopEntry(target)
+            if !entry.Has("Exec") || entry["Exec"] = ""
+                throw Error("This desktop entry requires gio to launch.")
+            spec := ProcessRunner.DesktopCommand(entry, target)
+            if entry["Terminal"] {
+                command := ProcessRunner.QuoteShell(spec.Executable)
+                for argument in spec.Arguments
+                    command .= " " ProcessRunner.QuoteShell(argument)
+                return TerminalProvider._Launch(command, entry["Path"] != "" ? entry["Path"] : A_MyDocuments)
+            }
+            return ProcessRunner.Start(spec.Executable, spec.Arguments, entry["Path"])
+        }
+        return Platform.Open(target)
+    }
+
     ; 没有隐藏的应用 (_entries) 和它们的搜索 Key (名称 + 拼音首字母);
     ; Apps 换成新数组或隐藏列表变化时重新计算
     static _SearchKeys() {
-        version := ObjPtr(ApplicationProvider.Apps) "|" ApplicationProvider._HiddenSignature()
+        version := Platform.ObjectId(ApplicationProvider.Apps) "|" ApplicationProvider._HiddenSignature()
         if (ApplicationProvider._keysFor = version)
             return ApplicationProvider._keys
         hidden := ApplicationProvider._HiddenTargets()
@@ -123,7 +149,7 @@ class ApplicationProvider {
         signature := ApplicationProvider._HiddenSignature()
         if (cacheFor != signature) {
             cache := Map()
-            cache.CaseSense := "Off"
+            cache.CaseSense := Platform.IsWindows ? "Off" : "On"
             for target in AppSettings.Feature("Applications")["Hidden"]
                 cache[target] := true
             cacheFor := signature
@@ -133,45 +159,72 @@ class ApplicationProvider {
 
     static _HiddenSignature() {
         hidden := AppSettings.Feature("Applications")["Hidden"]
-        return ObjPtr(hidden) ":" hidden.Length
+        return Platform.ObjectId(hidden) ":" hidden.Length
     }
 
     ; 重新扫描, 返回找到的应用数量
     static Rebuild() {
         options := AppSettings.Feature("Applications")
         found := Map()
-        found.CaseSense := "Off"
+        found.CaseSense := Platform.IsWindows ? "Off" : "On"
         for folder in options["Folders"]
             ApplicationProvider._ScanFolder(Path.Resolve(folder), options, found)
 
         apps := []
         for key, entry in found
-            apps.Push(entry)
-        ApplicationProvider._MergeStoreApps(apps)                          ; 保留上一次的商店应用, 后台更新完成后再替换
+            if (entry is Map)
+                apps.Push(entry)
+        if Platform.IsWindows
+            ApplicationProvider._MergeStoreApps(apps)
         ApplicationProvider.Apps := apps
         ApplicationProvider._SaveCache()
-        if options["StoreApps"]
+        if Platform.IsWindows && options["StoreApps"]
             ApplicationProvider._StartStoreScan()
         Logger.Debug("ApplicationProvider: indexed " apps.Length " apps")
         return apps.Length
     }
 
     static _ScanFolder(folder, options, found) {
-        folder := RTrim(folder, "\")
+        trimmed := RTrim(folder, "\/")
+        folder := trimmed != "" ? trimmed : folder
         if (folder = "" || !DirExist(folder))
             return
+        if Platform.IsMac {
+            ApplicationProvider._ScanBundles(folder, options, found)
+            return
+        }
         exclude := options["Exclude"]
         maxDepth := options["Depth"]
         for pattern in options["FileTypes"] {
-            Loop Files, folder "\" pattern, "R" {
-                relative := SubStr(A_LoopFileFullPath, StrLen(folder) + 2)
-                depth := StrLen(relative) - StrLen(StrReplace(relative, "\"))
+            Loop Files, Platform.Join(folder, pattern), "R" {
+                relative := SubStr(A_LoopFileFullPath, StrLen(folder) + (RegExMatch(folder, "[/\\]$") ? 1 : 2))
+                depth := StrLen(relative) - StrLen(RegExReplace(relative, "[/\\]"))
                 if (depth > maxDepth)
                     continue
                 SplitPath(A_LoopFileName, , , &ext, &title)
                 if (exclude != "" && RegExMatch(title, exclude))
                     continue
                 detail := ""
+                if Platform.IsLinux && ext = "desktop" {
+                    key := "desktop:" StrReplace(relative, "/", "-")
+                    if found.Has(key)
+                        continue
+                    found[key] := ""                                      ; A hidden user entry masks the system entry with the same desktop ID.
+                    try desktop := ProcessRunner.DesktopEntry(A_LoopFileFullPath)
+                    catch as e {
+                        Logger.Debug("ApplicationProvider: " A_LoopFileFullPath " - " e.Message)
+                        continue
+                    }
+                    if !desktop.Has("Name") || desktop["Name"] = "" || (exclude != "" && RegExMatch(desktop["Name"], exclude))
+                        continue
+                    if desktop["TryExec"] != "" && Platform.FindExecutable(desktop["TryExec"]) = ""
+                        continue
+                    entry := ApplicationProvider._Entry(desktop["Name"], A_LoopFileFullPath, desktop["Exec"], options)
+                    entry["Icon"] := desktop["Icon"]
+                    found[key] := entry
+                    continue
+                }
+#if WINDOWS
                 if (ext = "lnk") {                                          ; 同一个程序在多个位置有快捷方式时只保留一个
                     linkTarget := "", linkArgs := ""
                     try FileGetShortcut(A_LoopFileFullPath, &linkTarget, , &linkArgs)
@@ -180,9 +233,26 @@ class ApplicationProvider {
                 } else {
                     key := StrLower(title "|" A_LoopFileFullPath)
                 }
+#else
+                key := title "|" A_LoopFileFullPath
+#endif
                 if !found.Has(key)
                     found[key] := ApplicationProvider._Entry(title, A_LoopFileFullPath, detail, options)
             }
+        }
+    }
+
+    static _ScanBundles(folder, options, found, depth := 0) {
+        if (depth > options["Depth"])
+            return
+        Loop Files, Platform.Join(folder, "*"), "D" {
+            if RegExMatch(A_LoopFileName, "\.app$") {
+                title := SubStr(A_LoopFileName, 1, -4)
+                if options["Exclude"] != "" && RegExMatch(title, options["Exclude"])
+                    continue
+                found[A_LoopFileFullPath] := ApplicationProvider._Entry(title, A_LoopFileFullPath, "", options)
+            } else
+                ApplicationProvider._ScanBundles(A_LoopFileFullPath, options, found, depth + 1)
         }
     }
 
@@ -195,6 +265,7 @@ class ApplicationProvider {
     ; Microsoft Store apps (后台 PowerShell)
     ;---------------------------------------------------------------------------
     static _StartStoreScan() {
+#if WINDOWS
         if (ApplicationProvider._storePid && ProcessExist(ApplicationProvider._storePid))
             return
         outFile := A_Temp "\ALTRun_StoreApps.csv"
@@ -211,6 +282,7 @@ class ApplicationProvider {
         if (ApplicationProvider._storeTimer = "")
             ApplicationProvider._storeTimer := () => ApplicationProvider._CheckStoreScan()
         SetTimer(ApplicationProvider._storeTimer, 500)
+#endif
     }
 
     static _CheckStoreScan() {
@@ -259,6 +331,8 @@ class ApplicationProvider {
             return false
         try {
             data := JSON.Parse(FileRead(ApplicationProvider.IndexFile, "UTF-8"))
+            if data.Has("Platform") ? data["Platform"] != A_OSType : !Platform.IsWindows
+                return false
             ApplicationProvider.Apps := data["Apps"]
             return true
         } catch as e {
@@ -274,7 +348,7 @@ class ApplicationProvider {
 
     static _SaveCache() {
         try {
-            JSON.WriteFile(ApplicationProvider.IndexFile, Map("Apps", ApplicationProvider.Apps))
+            JSON.WriteFile(ApplicationProvider.IndexFile, Map("Platform", A_OSType, "Apps", ApplicationProvider.Apps))
         } catch as e {
             Logger.Error("ApplicationProvider: cannot write cache - " e.Message)
         }

@@ -21,7 +21,7 @@ class I18n {
     static Lang := "en"                                                     ; 当前语言的代码
     static Font := ""                                                       ; 当前语言的界面字体 ("" = Segoe UI)
     static Texts := Map()                                                   ; 当前语言的翻译 (已经合并了 _fallback 的语言)
-    static LangDir := A_ScriptDir "\Resources\Lang"
+    static LangDir := Platform.Join(A_ScriptDir, "Resources", "Lang")
     static Aliases := Map("zh", "zh-CN", "zh-SG", "zh-CN", "zh-HK", "zh-TW", "zh-MO", "zh-TW")   ; 以前的设置值 "zh"; 地区 -> 用哪个文件
 
     ; setting: "auto" 或语言代码; 没有这种语言的文件时按 Resolve 找最接近的, 都没有就用英文
@@ -70,24 +70,22 @@ class I18n {
             return "en"
         base := StrSplit(code, "-")[1]
         for candidate in [code, I18n.Aliases.Get(base, base)]
-            if (candidate = "en" || FileExist(I18n.LangDir "\" candidate ".json"))
+            if (candidate = "en" || FileExist(Platform.Join(I18n.LangDir, candidate ".json")))
                 return candidate
         return "en"
     }
 
     ; Windows 的显示语言 -> 语言代码 (例如 "zh-SG" 用简体中文, "zh-HK" 用繁體中文)
     static SystemLocale() {
-        name := Buffer(85 * 2, 0)
-        if !DllCall("LCIDToLocaleName", "UInt", Integer("0x" A_Language), "Ptr", name, "Int", 85, "UInt", 0)
-            return "en"
-        return I18n.Normalize(StrGet(name))
+        name := Platform.Locale()
+        return (name != "") ? I18n.Normalize(name) : "en"
     }
 
     ; Resources\Lang\<代码>.json -> Map (读不了时为空); "_code" 是文件名里的代码
     static ReadFile(code) {
         data := Map()
         try {
-            parsed := JSON.Parse(FileRead(I18n.LangDir "\" code ".json", "UTF-8"))
+            parsed := JSON.Parse(FileRead(Platform.Join(I18n.LangDir, code ".json"), "UTF-8"))
             if (parsed is Map)
                 for key, text in parsed
                     if (Type(text) = "String")
@@ -101,7 +99,7 @@ class I18n {
     ; 偏好设置的语言列表: [[代码, 名称], ...], 英文在最前, 其它按代码排序
     static Languages() {
         found := Map()
-        Loop Files, I18n.LangDir "\*.json" {
+        Loop Files, Platform.Join(I18n.LangDir, "*.json") {
             code := I18n.Normalize(SubStr(A_LoopFileName, 1, -5))
             name := code
             try if RegExMatch(FileRead(A_LoopFileFullPath, "UTF-8"), '"_name"\s*:\s*"([^"]+)"', &m)
@@ -228,6 +226,7 @@ class I18n {
         s["Files.FolderNotFound"]      := "Folder not found"
         s["Files.OpenEverything"]      := "Search '{1}' in Everything"
         s["Files.WindowsSearch"]       := "Search '{1}' with Windows Search"
+        s["Files.OpenSearchFolder"]    := "Open search folder for '{1}'"
         s["Files.Keyword"]             := "Find files by name"
         s["Folders.Keyword"]           := "Find folders by name"
         s["Files.TypeKeyword"]         := "Find files of type: {1}"

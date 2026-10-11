@@ -90,6 +90,7 @@
   "Files.OpenEverything": "Everything で '{1}' を検索",
   "Files.TypeKeyword": "種類でファイルを検索: {1}",
   "Files.WindowsSearch": "Windows 検索で '{1}' を検索",
+  "Files.OpenSearchFolder": "'{1}' の検索フォルダーを開く",
   "Folders.Keyword": "名前でフォルダーを検索",
   "Help.About.Key": "F1",
   "Help.About.Text": "ALTRun について: バージョン、更新の確認、プロジェクトページ",

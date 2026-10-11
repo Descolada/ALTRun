@@ -1,0 +1,80 @@
+#Import Ks { Clr, A_OSType, A_DirSeparator, Clipboard, Image, Http, Crypt, Font }
+#Include Lib/Platform.ahk
+#Include Lib/ProcessRunner.ahk
+; --- Lib ---
+#Include Lib/JSON.ahk
+#Include Lib/Logger.ahk
+#Include Lib/Util.ahk
+#Include Lib/TextTools.ahk
+#Include Lib/Kanji.ahk
+#Include Lib/Everything.ahk
+#Include Lib/Units.ahk
+#Include Lib/ClipboardData.ahk
+#Include Lib/Dialogs.ahk
+
+; --- Src/Core ---
+#Include Src/Core/App.ahk
+#Include Src/Core/I18n.ahk
+#Include Src/Core/AppSettings.ahk
+#Include Src/Core/SchemaMigration.ahk
+#Include Src/Core/SearchQuery.ahk
+#Include Src/Core/ResultItem.ahk
+#Include Src/Core/FuzzyMatcher.ahk
+#Include Src/Core/Knowledge.ahk
+#Include Src/Core/Usage.ahk
+#Include Src/Core/ActionCatalog.ahk
+#Include Src/Core/ProviderRegistry.ahk
+#Include Src/Core/FileIndex.ahk
+
+; --- Src/UI ---
+#Include Src/UI/ThemeManager.ahk
+#if WINDOWS && !ALTRUN_PORTABLE_UI
+#Include Src/UI/ThemePreview.ahk
+#Include Src/UI/NavIcons.ahk
+#Include Src/UI/IconCache.ahk
+#Include Src/UI/SearchWindow.ahk
+#Include Src/UI/LargeType.ahk
+#Include Src/UI/Hud.ahk
+#Include Src/UI/ItemEditor.ahk
+#Include Src/UI/HotkeyBox.ahk
+#Include Src/UI/PreferencesWindow.ahk
+#else
+#Include Src/UI/Portable/ThemePreview.ahk
+#Include Src/UI/Portable/NavIcons.ahk
+#Include Src/UI/Portable/IconCache.ahk
+#Include Src/UI/Portable/SearchWindow.ahk
+#Include Src/UI/Portable/LargeType.ahk
+#Include Src/UI/Portable/Hud.ahk
+#Include Src/UI/Portable/ItemEditor.ahk
+#Include Src/UI/Portable/HotkeyBox.ahk
+#Include Src/UI/Portable/PreferencesWindow.ahk
+#endif
+
+; --- Src/Providers ---
+#Include Src/Providers/ClipboardProvider.ahk
+#Include Src/Providers/ApplicationProvider.ahk
+#Include Src/Providers/CustomCommandProvider.ahk
+#Include Src/Providers/SnippetProvider.ahk
+#Include Src/Providers/SystemProvider.ahk
+#Include Src/Providers/CalculatorProvider.ahk
+#Include Src/Providers/WebSearchProvider.ahk
+#Include Src/Providers/BookmarkProvider.ahk
+#Include Src/Providers/FileSearchProvider.ahk
+#Include Src/Providers/TerminalProvider.ahk
+#Include Src/Providers/WindowProvider.ahk
+#Include Src/Providers/RecentProvider.ahk
+#Include Src/Providers/ScriptProvider.ahk
+#Include Src/Providers/HelpProvider.ahk
+
+; --- Src/Extensions ---
+#Include Src/Extensions/SnippetExpander.ahk
+#Include Src/Extensions/QuickSwitch.ahk
+#Include Src/Extensions/AutoDate.ahk
+#Include Src/Extensions/CapsLockSwitch.ahk
+#Include Src/Extensions/TendonProfile.ahk
+#Include Src/Extensions/PTToolsWindow.ahk
+#Include Src/Extensions/UpdateChecker.ahk
+#Include Src/Extensions/CurrencyRates.ahk
+#Include Src/Extensions/SelectionActions.ahk
+
+

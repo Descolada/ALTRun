@@ -11,7 +11,8 @@
 ;   4. 按类型搜索:    doc 报告 / pic logo / cad 平面图 ... (TypeFilters: "关键字 = 扩展名 扩展名 ..."),
 ;                     和 Listary 的文件类型筛选一样; 文件搜索模式里也可以写 "doc 报告"
 ;   5. 浏览文件夹:    输入路径 C:\  D:\Projects\rep  \\server\share\  ~\  %OneDrive%\ ,
-;                     列出这个文件夹里的内容 (最后一段过滤), 文件夹在前; Tab 进入选中的文件夹, Backspace 回到上一级
+;                     Linux/macOS: /home/user/、~/、$HOME/; 列出内容 (最后一段过滤), 文件夹在前;
+;                     Tab 进入选中的文件夹, Backspace 回到上一级
 ;                     (和 PowerToys Run / Flow Launcher 的文件夹浏览一样)。隐藏和系统文件不列出
 ; 结果按名称匹配程度排序 (完全相同 > 名称开头 > 单词开头 > 包含), 同分时文件夹在前,
 ; 再按修改时间。Everything 的语法 (folder:、ext:、path:...) 原样传给 Everything。
@@ -73,21 +74,28 @@ class FileSearchProvider {
     ;   中文输入法打出的 "D：、" (全角冒号、顿号) 也当作 "D:\"
     static BrowsePath(text) {
         text := LTrim(text)
+#if WINDOWS
         if RegExMatch(text, "^[A-Za-z][:：][\\、]")
             text := SubStr(text, 1, 1) ":\" StrReplace(SubStr(text, 4), "、", "\")
         if (text = "~")
-            text := EnvGet("UserProfile") "\"
+            text := Platform.Home "\"
         else if RegExMatch(text, "^~\\")
-            text := EnvGet("UserProfile") SubStr(text, 2)
+            text := Platform.Home SubStr(text, 2)
         else if RegExMatch(text, "^%[^%\\]+%\\") {
-            size := DllCall("ExpandEnvironmentStringsW", "WStr", text, "Ptr", 0, "UInt", 0, "UInt")
-            buf := Buffer(size * 2)
-            DllCall("ExpandEnvironmentStringsW", "WStr", text, "Ptr", buf, "UInt", size, "UInt")
-            text := StrGet(buf)
+            text := Platform.ExpandEnvironment(text)
         }
         if !RegExMatch(text, "^([A-Za-z]:\\|\\\\[^\\]+\\[^\\]+\\)")
             return ""
         pos := InStr(text, "\", , -1)
+#else
+        if text = "~"
+            text := Platform.Home "/"
+        else
+            text := Platform.ExpandEnvironment(text)
+        if SubStr(text, 1, 1) != "/"
+            return ""
+        pos := InStr(text, "/", , -1)
+#endif
         dir := SubStr(text, 1, pos), filter := SubStr(text, pos + 1)
         if !DirExist(dir)
             return {Dir: dir, Filter: filter, Missing: true}
@@ -110,8 +118,8 @@ class FileSearchProvider {
             entry := entries[index]
             item := ResultItem(entry.Name, browse.Dir, {
                 Kind: entry.IsFolder ? "folder" : "file", Arg: entry.Path, Icon: entry.IsFolder ? "folder:" : entry.Path,
-                Uid: "file:" StrLower(entry.Path), Score: 150 + scores[index] / 1000, Exclusive: true,
-                AutoComplete: entry.IsFolder ? entry.Path "\" : ""
+                Uid: "file:" Platform.Identity(entry.Path), Score: 150 + scores[index] / 1000, Exclusive: true,
+                AutoComplete: entry.IsFolder ? entry.Path (Platform.IsWindows ? "\" : "/") : ""
             })
             results.Push(item)
         }
@@ -123,13 +131,15 @@ class FileSearchProvider {
     ; 文件夹的内容 [{Name, Path, IsFolder}], 文件夹在前; 3 秒内再次浏览同一个文件夹时直接用 (边打字边过滤)
     static ListFolder(dir) {
         static cache := Map()
-        key := StrLower(dir)
+        key := Platform.Identity(dir)
         if (cache.Has(key) && A_TickCount - cache[key].Time < 3000)
             return cache[key].Entries
         folders := [], files := []
         try {
-            Loop Files, dir "*", "FD" {
+            Loop Files, Platform.Join(dir, "*"), "FD" {
                 if InStr(A_LoopFileAttrib, "H") || InStr(A_LoopFileAttrib, "S")
+                    continue
+                if !Platform.IsWindows && SubStr(A_LoopFileName, 1, 1) = "."
                     continue
                 entry := {Name: A_LoopFileName, Path: A_LoopFileFullPath, IsFolder: InStr(A_LoopFileAttrib, "D") ? true : false}
                 (entry.IsFolder ? folders : files).Push(entry)
@@ -232,6 +242,7 @@ class FileSearchProvider {
         options := AppSettings.Feature("FileSearch")
         needle := StrLower(Trim(term))
         filter := IsObject(scope) ? scope : "", foldersOnly := !IsObject(scope) && scope
+#if WINDOWS
         if (options["UseEverything"] && Everything.IsRunning()) {
             found := []
             search := (preferPrefix ? "startwith:" : "") FileSearchProvider._ScopePrefix(scope) FileSearchProvider._EverythingTerm(term) " " options["EverythingFilter"]
@@ -258,6 +269,7 @@ class FileSearchProvider {
             }
             return FileSearchProvider._Best(found, limit)
         }
+#endif
         found := FileIndex.Search(needle, preferPrefix ? limit * 4 : limit, foldersOnly, IsObject(filter) ? filter.Extensions : "")
         if preferPrefix {
             kept := []
@@ -300,12 +312,13 @@ class FileSearchProvider {
         SplitPath(found.Path, &name, &parentDir)
         return ResultItem(name, parentDir, {
             Kind: found.IsFolder ? "folder" : "file", Arg: found.Path, Icon: found.IsFolder ? "folder:" : found.Path,
-            Uid: "file:" StrLower(found.Path), Score: score
+            Uid: "file:" Platform.Identity(found.Path), Score: score
         })
     }
 
     ; 没有结果时: 在 Everything 里搜索 (装了 Everything) 或用 Windows 搜索
     static FallbackItem(term, scope := false) {
+#if WINDOWS
         exe := FileSearchProvider._EverythingExe()
         if (exe != "") {
             search := FileSearchProvider._ScopePrefix(scope) StrReplace(term, '"')
@@ -317,9 +330,19 @@ class FileSearchProvider {
         return ResultItem(I18n.T("Files.WindowsSearch", search), "search-ms:", {
             Icon: "res:imageres.dll,-8", OnRun: (*) => Run("search-ms:query=" Url.Encode(search))
         })
+#else
+        scopes := AppSettings.Feature("FileSearch")["ScopeFolders"]
+        folder := scopes.Length ? Path.Resolve(scopes[1]) : Platform.Home
+        return ResultItem(I18n.T("Files.OpenSearchFolder", term), folder, {
+            Icon: "folder:", OnRun: ObjBindMethod(FileSearchProvider, "_OpenSearchFolder", folder)
+        })
+#endif
     }
 
+    static _OpenSearchFolder(folder, *) => Platform.Open(folder)
+
     static _EverythingExe() {
+#if WINDOWS
         static cached := ""
         if (cached != "")
             return (cached = "-") ? "" : cached
@@ -337,5 +360,8 @@ class FileSearchProvider {
         }
         cached := "-"
         return ""
+#else
+        return ""
+#endif
     }
 }

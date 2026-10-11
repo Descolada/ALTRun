@@ -2,7 +2,7 @@
 ; TerminalProvider.ahk - 在终端里运行命令 (AutoHotkey v2)
 ;-------------------------------------------------------------------------------
 ; 输入 ">ipconfig /all" (前缀见 Features.Terminal.Prefix) 在终端里运行这条命令,
-; 窗口保持打开。Shell 可选: cmd / powershell / pwsh / wt (Windows Terminal)。
+; 窗口保持打开。Windows 使用配置的命令行程序，其它平台使用已安装的终端和 shell。
 ;
 ; 用法 (其它模块里):
 ;   TerminalProvider.OpenAt(folder)          在指定文件夹打开终端
@@ -19,17 +19,22 @@ class TerminalProvider {
         options := AppSettings.Feature("Terminal")
         if !query.MatchPrefix(options["Prefix"], &command)
             return []
-        icon := "res:imageres.dll,-5323"
+        icon := Platform.IsWindows ? "res:imageres.dll,-5323" : App.IconFile
         if (command = "")
             return [ResultItem(I18n.T("Terminal.Empty"), options["Prefix"] " ...", {Icon: icon, Valid: false, Score: 150, Exclusive: true})]
+        actions := []
+#if WINDOWS
+        actions.Push(ResultItem(I18n.T("Action.RunAsAdmin"), "", {Icon: "res:imageres.dll,-78", OnRun: (*) => TerminalProvider.RunCommand(command, true)}))
+#endif
         return [ResultItem(I18n.T("Terminal.Run", command), options["Shell"], {
             Icon: icon, Score: 150, Uid: "terminal:" StrLower(command), Arg: command, Exclusive: true,
             OnRun: (*) => TerminalProvider.RunCommand(command),
-            Actions: [ResultItem(I18n.T("Action.RunAsAdmin"), "", {Icon: "res:imageres.dll,-78", OnRun: (*) => TerminalProvider.RunCommand(command, true)})]
+            Actions: actions
         })]
     }
 
     static RunCommand(command, asAdmin := false) {
+#if WINDOWS
         shell := AppSettings.Feature("Terminal")["Shell"]
         prefix := asAdmin ? "*RunAs " : ""
         switch shell, false {
@@ -38,11 +43,17 @@ class TerminalProvider {
             case "wt"        : Run(prefix 'wt.exe cmd /k ' command, A_MyDocuments)
             default          : Run(prefix A_ComSpec ' /k ' command, A_MyDocuments)
         }
+#else
+        if asAdmin
+            throw Error("Administrator terminal actions are available only on Windows.")
+        TerminalProvider._Launch(command, A_MyDocuments)
+#endif
     }
 
     static OpenAt(folder) {
         if (folder = "" || !DirExist(folder))
             folder := A_MyDocuments
+#if WINDOWS
         shell := AppSettings.Feature("Terminal")["Shell"]
         switch shell, false {
             case "powershell": Run("powershell.exe -NoExit", folder)
@@ -50,13 +61,82 @@ class TerminalProvider {
             case "wt"        : Run('wt.exe -d "' folder '"', folder)
             default          : Run(A_ComSpec, folder)
         }
+#else
+        TerminalProvider._Launch("", folder)
+#endif
+    }
+
+    static _Shell() {
+        configured := AppSettings.Feature("Terminal")["Shell"]
+        if (configured = "powershell" || configured = "pwsh")
+            executable := Platform.FindExecutable("pwsh")
+        else if (configured = "" || configured = "auto" || configured = "cmd" || configured = "wt")
+            executable := Platform.FindExecutable(EnvGet("SHELL"))
+        else
+            executable := Platform.FindExecutable(configured)
+        if (executable = "" && configured != "powershell" && configured != "pwsh")
+            executable := Platform.FindExecutable("sh")
+        if (executable = "")
+            throw Error("The configured shell is not installed: " configured)
+        return executable
+    }
+
+    static _Launch(command, folder) {
+        shell := TerminalProvider._Shell()
+#if OSX
+        text := "cd -- " ProcessRunner.QuoteShell(folder)
+        if (command != "") {
+            shellArgs := InStr(shell, "pwsh") ? " -NoExit -Command " : " -lc "
+            shellCommand := InStr(shell, "pwsh") ? command : command "; exec " ProcessRunner.QuoteShell(shell) " -i"
+            text .= "; " ProcessRunner.QuoteShell(shell) shellArgs ProcessRunner.QuoteShell(shellCommand)
+        } else
+            text .= "; " ProcessRunner.QuoteShell(shell) (InStr(shell, "pwsh") ? "" : " -i")
+        apple := 'tell application "Terminal"' "`nactivate`ndo script " ProcessRunner.QuoteAppleScript(text) "`nend tell"
+        return ProcessRunner.Start("/usr/bin/osascript", ["-e", apple])
+#else
+        options := AppSettings.Feature("Terminal")
+        configured := options.Has("Terminal") ? options["Terminal"] : EnvGet("TERMINAL")
+        terminal := (configured != "" && configured != "auto") ? Platform.FindExecutable(configured) : ""
+        if (terminal = "") {
+            for candidate in ["x-terminal-emulator", "gnome-terminal", "konsole", "kitty", "alacritty", "xterm"] {
+                terminal := Platform.FindExecutable(candidate)
+                if (terminal != "")
+                    break
+            }
+        }
+        if (terminal = "")
+            throw Error("No supported terminal is installed. Set the TERMINAL environment variable to its executable.")
+        args := []
+        SplitPath(terminal, &name)
+        switch name {
+            case "gnome-terminal": args := ["--working-directory=" folder, "--"]
+            case "konsole": args := ["--workdir", folder, "-e"]
+            case "kitty": args := ["--directory", folder]
+            case "alacritty": args := ["--working-directory", folder, "-e"]
+            default: args := ["-e"]
+        }
+        args.Push(shell)
+        if InStr(shell, "pwsh") {
+            if (command != "")
+                args.Push("-NoExit", "-Command", command)
+        } else if (command != "") {
+            args.Push("-lc", command "; exec " ProcessRunner.QuoteShell(shell) " -i")
+        } else {
+            args.Push("-i")
+        }
+        return ProcessRunner.Start(terminal, args, folder)
+#endif
     }
 
     ; 资源管理器 / Total Commander 当前打开的文件夹 (呼出 ALTRun 前的那个窗口)
     static OpenAtCurrentFolder() {
+#if WINDOWS
         folder := QuickSwitch.FolderOfWindow(App.PreviousWindow)
         if (folder = "")
             return MsgBox(I18n.T("Sys.NoFolder"), App.Name, 48)
         TerminalProvider.OpenAt(folder)
+#else
+        return TerminalProvider.OpenAt(Platform.Home)
+#endif
     }
 }

@@ -33,7 +33,7 @@ class CustomCommandProvider {
     static Search(query) {
         needle := StrLower(query.Text)
         commands := AppSettings.CustomCommands
-        list := ObjPtr(commands) "|" commands.Length
+        list := Platform.ObjectId(commands) "|" commands.Length
         candidates := commands
         if (list = CustomCommandProvider._lastList && StrLen(CustomCommandProvider._lastNeedle) >= 3
             && InStr(needle, CustomCommandProvider._lastNeedle) = 1) {
@@ -104,7 +104,7 @@ class CustomCommandProvider {
     static _Uid(command) {
         arguments := command.Has("Arguments") ? command["Arguments"] : ""
         commandType := command.Has("Type") ? command["Type"] : "File"
-        return "custom:" StrLower(commandType "|" command["Target"] "|" arguments)
+        return "custom:" Platform.Identity(commandType "|" command["Target"] "|" arguments)
     }
 
     ; 名称 / 关键字 / 拼音首字母的搜索 Key, 按 "名称|关键字" 缓存 (修改命令后自然换成新的键)
@@ -220,6 +220,7 @@ class CustomCommandProvider {
         target := Path.Resolve(raw)
         if RegExMatch(target, "i)^([a-z][a-z0-9+.-]+:|::\{)")               ; shell:、ms-settings:、http: 等 (不是 "C:")
             return "Skipped"
+#if WINDOWS
         if !InStr(target, "\")                                              ; 裸文件名, PATH 里没有
             return CustomCommandProvider._InAppPaths(target) ? "OK" : "Missing"
         SplitPath(target, , , , , &drive)
@@ -231,18 +232,24 @@ class CustomCommandProvider {
             if !roots[drive]
                 return "Unavailable"
         }
+#else
+        if !InStr(target, "/")
+            return Platform.FindExecutable(target) != "" ? "OK" : "Missing"
+#endif
         found := (commandType = "Folder") ? DirExist(target) : FileExist(target)
         return (found != "") ? "OK" : "Missing"
     }
 
     ; "App Paths" 里注册的程序 (winword、chrome...), Run 也能直接打开
     static _InAppPaths(name) {
+#if WINDOWS
         SplitPath(name, , , &ext)
         if (ext = "")
             name .= ".exe"
         for root in ["HKCU", "HKLM"]
             try if (RegRead(root "\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\" name, "") != "")
                 return true
+#endif
         return false
     }
 
@@ -275,7 +282,7 @@ class CustomCommandProvider {
 
     static DeleteItem(item) {
         for index, command in AppSettings.CustomCommands {
-            if (ObjPtr(command) = ObjPtr(item.Source)) {
+            if (Platform.ObjectId(command) = Platform.ObjectId(item.Source)) {
                 AppSettings.CustomCommands.RemoveAt(index)
                 CustomCommandProvider._ResetNarrowing()
                 return AppSettings.Save()
@@ -320,11 +327,12 @@ class CustomCommandProvider {
 
     ; 文件 / 文件夹路径 -> 一条新命令 (名称 = 文件名去掉扩展名, 或文件夹名)
     static FromPath(target) {
-        target := RTrim(target, "\/")
+        trimmed := RTrim(target, "\/")
+        target := trimmed != "" ? trimmed : target
         if RegExMatch(target, "^[A-Za-z]:$")                                ; 整个驱动器 "D:"
             target .= "\"
         isFolder := DirExist(target) != ""
-        SplitPath(RTrim(target, "\"), &fileName, , , &nameNoExt)
+        SplitPath(RTrim(target, "\/"), &fileName, , , &nameNoExt)
         title := isFolder ? fileName : nameNoExt
         if (title = "")
             title := target
@@ -333,13 +341,14 @@ class CustomCommandProvider {
 
     ; 目标指向同一个文件 / 文件夹的命令 (比较展开变量后的路径, 不分大小写), 没有返回 ""; commands: 在哪个列表里找 (偏好设置里正在编辑的)
     static FindByTarget(target, commands := AppSettings.CustomCommands) {
-        wanted := StrLower(RTrim(Path.Resolve(target), "\/"))
+        wanted := Platform.Identity(RTrim(Path.Resolve(target), "\/"))
         for command in commands {
             if !(command is Map) || !command.Has("Target")
                 continue
             if (command.Has("Type") && command["Type"] = "Url")
                 continue
-            if (StrLower(RTrim(CustomCommandProvider._Resolve(command["Target"]), "\/")) = wanted)
+            current := Platform.Identity(RTrim(CustomCommandProvider._Resolve(command["Target"]), "\/"))
+            if (Platform.IsWindows ? current = wanted : current == wanted)
                 return command
         }
         return ""

@@ -60,14 +60,21 @@ class WindowProvider {
         if (A_TickCount - WindowProvider._listTime < WindowProvider.CacheMs)
             return WindowProvider._list
         list := []
-        for hwnd in WinGetList() {
+        try handles := WinGetList()
+        catch as e {
+            Logger.Debug("WindowProvider: window enumeration is unavailable - " e.Message)
+            return []
+        }
+        for hwnd in handles {
             if !WindowProvider.IsSwitchable(hwnd)
                 continue
             try {
-                title := WinGetTitle("ahk_id " hwnd), process := WinGetProcessName("ahk_id " hwnd)
+                title := WinGetTitle("ahk_id " hwnd)
             } catch {
                 continue
             }
+            process := ""
+            try process := WinGetProcessName("ahk_id " hwnd)
             exePath := ""
             try exePath := WinGetProcessPath("ahk_id " hwnd)
             name := RegExReplace(process, "i)\.exe$")
@@ -82,6 +89,7 @@ class WindowProvider {
     ; 和任务栏一样的判断: 可见、有标题、不是工具窗口、没有所有者、没有被 DWM 隐藏 (别的虚拟桌面 / 挂起的商店应用)
     static IsSwitchable(hwnd) {
         try {
+#if WINDOWS
             if !DllCall("IsWindowVisible", "Ptr", hwnd) || WinGetTitle("ahk_id " hwnd) = ""
                 return false
             exStyle := WinGetExStyle("ahk_id " hwnd)
@@ -96,6 +104,14 @@ class WindowProvider {
             if (WinGetPID("ahk_id " hwnd) = DllCall("GetCurrentProcessId"))  ; ALTRun 自己的窗口
                 return false
             return WinGetClass("ahk_id " hwnd) != "Progman"
+#else
+            if (hwnd = A_ScriptHwnd || (IsObject(SearchWindow.Gui) && hwnd = SearchWindow.Gui.Hwnd))
+                return false
+            if (WinGetTitle("ahk_id " hwnd) = "")
+                return false
+            pid := WinGetPID("ahk_id " hwnd)
+            return !pid || pid != ProcessExist()
+#endif
         }
         return false
     }
@@ -103,8 +119,10 @@ class WindowProvider {
     static Activate(hwnd) {
         if !WinExist("ahk_id " hwnd)
             return App.Notify(I18n.T("Win.Gone"))
-        if (WinGetMinMax("ahk_id " hwnd) = -1)
-            WinRestore("ahk_id " hwnd)
+        try {
+            if (WinGetMinMax("ahk_id " hwnd) = -1)
+                WinRestore("ahk_id " hwnd)
+        }
         WinActivate("ahk_id " hwnd)
     }
 

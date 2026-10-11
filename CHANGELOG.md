@@ -5,6 +5,21 @@
 
 ## [未发布]
 
+### 新增
+- Keysharp 源码移植：Linux/macOS 标准控件界面、跨平台路径与设置、Linux `.desktop` 和 macOS `.app` 应用索引、终端发现、脚本参数数组与输出捕获；后台脚本超时会终止整个进程树。标准界面已在 Windows 与 Ubuntu 24.04 的 X11/Xvfb 环境验证；原生 Wayland/全局钩子未验证，macOS 为实验性支持、尚未验证。
+- 独立的跨平台冒烟测试，使用临时数据并把错误和警告写到标准输出/错误，不显示错误对话框。
+
+### 修复
+- Windows 专用集成在其它系统上禁用；Unix 文件身份保留大小写，应用缓存记录系统类型。
+- Keysharp 更新检查不会用上游 AutoHotkey 发布包替换程序；当前源码需要 Keysharp 及其编译器组件，原 AutoHotkey 发布工作流不能直接打包此移植版。
+- 单实例转交使用当前用户的命名管道与单行 JSON，保留中文、换行和引号参数；网址编码正确保留 emoji 等补充 Unicode 字符。
+
+### Keysharp source port
+- Added a standard-control Linux/macOS interface, native path/settings handling, Linux desktop-entry and macOS application indexing, terminal discovery and structured script launches with captured output. Background script timeouts terminate the process tree. The portable interface was exercised on Windows and Ubuntu 24.04 under X11/Xvfb; native Wayland/global hooks remain unverified. macOS is experimental and unverified.
+- Added isolated, bounded portability checks with stdout/stderr diagnostics. Guarded Windows integrations on other platforms, preserved Unix path case and tagged application caches by OS.
+- Keysharp update checks cannot replace the runtime with upstream AutoHotkey release binaries. This source requires Keysharp with its compiler; the existing AutoHotkey release workflow does not package it.
+- Single-instance forwarding uses a current-user named pipe with compact JSON, preserving Unicode, newline and quote arguments. URL encoding preserves supplementary Unicode characters such as emoji.
+
 ## [2026.10.10.7]
 
 测试版。

@@ -35,9 +35,9 @@
 
 class ClipboardProvider {
     static Id      := "Clipboard"
-    static File    := AppSettings.DataDir "\ClipboardHistory.json"
-    static Folder  := AppSettings.DataDir "\Clipboard"                         ; 很长的条目和图片
-    static LocalDir := EnvGet("LOCALAPPDATA") != "" ? EnvGet("LOCALAPPDATA") "\ALTRun" : ""   ; LocalFiles = 1 时 (默认) 图片和长条目存在这里
+    static File    := Platform.Join(AppSettings.DataDir, "ClipboardHistory.json")
+    static Folder  := Platform.Join(AppSettings.DataDir, "Clipboard")          ; 很长的条目和图片
+    static LocalDir := ClipboardProvider._LocalStorageDir()                  ; LocalFiles = 1 时 (默认) 图片和长条目存在这里
     static LargeText := 4000
     static Icon => IconCache.Own("Clipboard", "res:imageres.dll,-5314")   ; 文字条目的图标
     static MergeWindow := 400                                               ; 两次 Ctrl+C 最多隔多少毫秒算 "连按"
@@ -52,18 +52,26 @@ class ClipboardProvider {
             ClipboardProvider._Load()
         OnClipboardChange((dataType) => ClipboardProvider._OnChange(dataType))
         if options["MergeDoubleCopy"] {
-            try Hotkey("~^c", (*) => ClipboardProvider._OnCopyKey())         ; ~ : Ctrl+C 照常复制
+            try Hotkey("~" Platform.CopyShortcut, (*) => ClipboardProvider._OnCopyKey())
             catch as e
                 Logger.Error("ClipboardProvider: cannot register Ctrl+C - " e.Message)
         }
     }
 
+    static _LocalStorageDir() {
+        if Platform.IsWindows
+            return EnvGet("LOCALAPPDATA") != "" ? Platform.Join(EnvGet("LOCALAPPDATA"), "ALTRun") : ""
+        return Platform.Join(Platform.UserDataDir, "ALTRun")
+    }
+
+    static _FileKey(file) => Platform.Identity(file)
+
     ; 图片和很长的条目 (Clipboard 文件夹) 放在本机, 不跟着 Data 文件夹进 OneDrive 等同步盘: 图片大, 放在同步盘里
     ; 每复制一张都要上传。ClipboardHistory.json 仍在 Data 里 (文字历史照常同步); 另一台电脑上没有对应文件的
     ; 图片 / 长条目读取时跳过。第一次切换时把 Data 里原来的文件夹搬过来; 搬不动时这次仍用原来的位置, 下次再试
     static UseLocalStorage(dir) {
-        newFolder := dir "\Clipboard"
-        if (newFolder = ClipboardProvider.Folder)
+        newFolder := Platform.Join(dir, "Clipboard")
+        if (ClipboardProvider._FileKey(newFolder) == ClipboardProvider._FileKey(ClipboardProvider.Folder))
             return true
         try {
             if (InStr(FileExist(ClipboardProvider.Folder), "D") && !InStr(FileExist(newFolder), "D")) {
@@ -151,7 +159,7 @@ class ClipboardProvider {
                     filePath := files[1], isFolder := InStr(FileExist(filePath), "D") ? true : false
                     props.Kind := isFolder ? "folder" : "file", props.Arg := filePath
                     props.Icon := isFolder ? IconCache.FolderIcon(filePath) : filePath
-                    title := Path.Leaf(RTrim(filePath, "\"))
+                    title := Path.Leaf(RTrim(filePath, "\/"))
                     subtitle := I18n.T("Clipboard.FileSubtitle", when, source, filePath)
                 } else {
                     props.Kind := "text", props.Arg := entry["Text"], props.Icon := "folder:"
@@ -161,7 +169,7 @@ class ClipboardProvider {
                 }
                 props.RunTitle := I18n.T("Clipboard.PasteFiles")
             case "image":
-                imageFile := ClipboardProvider.Folder "\" entry["Image"]
+                imageFile := Platform.Join(ClipboardProvider.Folder, entry["Image"])
                 props.Kind := "file", props.Arg := imageFile, props.Icon := "thumb:" imageFile
                 props.RunTitle := I18n.T("Clipboard.PasteImage")
                 title := ClipboardProvider._ImageTitle(entry)
@@ -183,7 +191,7 @@ class ClipboardProvider {
     static _Names(files) {
         names := ""
         for filePath in files {
-            names .= (names = "" ? "" : ", ") Path.Leaf(RTrim(filePath, "\"))
+            names .= (names = "" ? "" : ", ") Path.Leaf(RTrim(filePath, "\/"))
             if (StrLen(names) > 100)
                 return SubStr(names, 1, 100) "..."
         }
@@ -220,7 +228,7 @@ class ClipboardProvider {
                 return ClipboardProvider._PasteWith(() => ClipboardData.SetFiles(files))
             case "image":
                 ClipboardProvider._MoveToTop(entry)
-                imageFile := ClipboardProvider.Folder "\" entry["Image"]
+                imageFile := Platform.Join(ClipboardProvider.Folder, entry["Image"])
                 return ClipboardProvider._PasteWith(() => ClipboardData.SetImage(imageFile))
         }
         return ClipboardProvider.Paste(entry["Text"])
@@ -233,14 +241,15 @@ class ClipboardProvider {
         Win.WaitModifiersUp()
         ClipboardProvider.PauseRecording(delay + 1000)
         saved := ClipboardAll()
-        if !setter() {
+        try {
+            if !setter()
+                return false
+            SendInput(Platform.PasteShortcut)
+            Sleep(delay)
+            return true
+        } finally {
             A_Clipboard := saved
-            return false
         }
-        SendInput("^v")
-        Sleep(delay)
-        A_Clipboard := saved
-        return true
     }
 
     ;---------------------------------------------------------------------------
@@ -278,7 +287,7 @@ class ClipboardProvider {
     static AddImage(source := "") {
         try DirCreate(ClipboardProvider.Folder)
         name := "img-" A_Now "-" Random(100000, 999999) ".png"
-        imageFile := ClipboardProvider.Folder "\" name
+        imageFile := Platform.Join(ClipboardProvider.Folder, name)
         size := ClipboardData.SaveImage(imageFile)
         if !IsObject(size)
             return false
@@ -287,10 +296,10 @@ class ClipboardProvider {
 
     ; Data\Clipboard 里已经存好的 PNG 加入历史 (AddImage 和测试用)
     static AddImageFile(name, width, height, source := "") {
-        imageFile := ClipboardProvider.Folder "\" name
+        imageFile := Platform.Join(ClipboardProvider.Folder, name)
         for entry in ClipboardProvider.Entries {
-            if (ClipboardProvider.TypeOf(entry) = "image" && entry["Image"] != name && entry["Width"] = width && entry["Height"] = height
-                && ClipboardProvider._SameFile(ClipboardProvider.Folder "\" entry["Image"], imageFile)) {
+            if (ClipboardProvider.TypeOf(entry) = "image" && !(ClipboardProvider._FileKey(entry["Image"]) == ClipboardProvider._FileKey(name)) && entry["Width"] = width && entry["Height"] = height
+                && ClipboardProvider._SameFile(Platform.Join(ClipboardProvider.Folder, entry["Image"]), imageFile)) {
                 try FileDelete(imageFile)
                 ClipboardProvider._MoveToTop(entry)
                 ClipboardProvider._SaveLater()
@@ -381,6 +390,8 @@ class ClipboardProvider {
             if (FileGetSize(a) != FileGetSize(b))
                 return false
             first := FileRead(a, "RAW"), second := FileRead(b, "RAW")
+            if !Platform.IsWindows
+                return Crypt.Hash(first) == Crypt.Hash(second)
             return DllCall("ntdll\RtlCompareMemory", "Ptr", first, "Ptr", second, "UPtr", first.Size, "UPtr") = first.Size
         }
         return false
@@ -404,8 +415,10 @@ class ClipboardProvider {
         processName := ""
         try processName := WinGetProcessName("A")
         options := AppSettings.Feature("Clipboard")
+        if (!Platform.IsWindows && processName = "" && options["IgnoreApps"].Length)
+            return
         for ignored in options["IgnoreApps"]
-            if (processName = ignored)
+            if (processName = ignored || (!Platform.IsWindows && processName = RegExReplace(ignored, "i)\.exe$")))
                 return
         if (dataType = 1) {                                                 ; 1 = 文字 (复制文件时也是, 内容是路径)
             if ClipboardData.HasFiles()
@@ -446,8 +459,25 @@ class ClipboardProvider {
 
     ; 密码管理器等会给剪贴板内容加上 "不要记录" 的标记 (Windows 剪贴板历史也遵守)
     static _IsPrivate() {
-        static excludeFormat := DllCall("RegisterClipboardFormat", "Str", "ExcludeClipboardContentFromMonitorProcessing", "UInt")
-        static historyFormat := DllCall("RegisterClipboardFormat", "Str", "CanIncludeInClipboardHistory", "UInt")
+        if !Platform.IsWindows {
+            try {
+                for format in ["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType", "application/x-kde-passwordManagerHint", "x-kde-passwordManagerHint", "ExcludeClipboardContentFromMonitorProcessing"]
+                    if Clipboard.Has(format)
+                        return true
+                if Clipboard.Has("CanIncludeInClipboardHistory") {
+                    allowed := Clipboard.GetData("CanIncludeInClipboardHistory")
+                    return !IsObject(allowed) || allowed.Size < 4 || !NumGet(allowed, "UInt")
+                }
+                return false
+            } catch {
+                return true
+            }
+        }
+        static excludeFormat := 0, historyFormat := 0
+        if !excludeFormat
+            excludeFormat := DllCall("RegisterClipboardFormat", "Str", "ExcludeClipboardContentFromMonitorProcessing", "UInt")
+        if !historyFormat
+            historyFormat := DllCall("RegisterClipboardFormat", "Str", "CanIncludeInClipboardHistory", "UInt")
         if DllCall("IsClipboardFormatAvailable", "UInt", excludeFormat)
             return true
         if !DllCall("IsClipboardFormatAvailable", "UInt", historyFormat)
@@ -502,12 +532,12 @@ class ClipboardProvider {
                             joined .= (joined = "" ? "" : "`r`n") filePath
                         entry["Text"] := joined
                     case "image":
-                        if !(entry.Has("Image") && FileExist(ClipboardProvider.Folder "\" entry["Image"]))
+                        if !(entry.Has("Image") && FileExist(Platform.Join(ClipboardProvider.Folder, entry["Image"])))
                             continue
                         entry["Text"] := ""
                     default:
                         if entry.Has("File") {                              ; 很长的条目: 正文在单独的文件里
-                            try entry["Text"] := FileRead(ClipboardProvider.Folder "\" entry["File"], "UTF-8")
+                            try entry["Text"] := FileRead(Platform.Join(ClipboardProvider.Folder, entry["File"]), "UTF-8")
                             catch
                                 continue
                         }
@@ -530,6 +560,7 @@ class ClipboardProvider {
         try {
             DirCreate(AppSettings.DataDir)
             list := [], keep := Map()
+            keep.CaseSense := "On"
             for entry in ClipboardProvider.Entries {
                 stamp := entry.Has("Time") ? entry["Time"] : A_Now, source := entry.Has("App") ? entry["App"] : ""
                 switch ClipboardProvider.TypeOf(entry) {
@@ -537,7 +568,7 @@ class ClipboardProvider {
                         list.Push(ClipboardProvider._WithPin(entry, Map("Type", "files", "Files", entry["Files"], "Time", stamp, "App", source)))
                         continue
                     case "image":
-                        keep[StrLower(entry["Image"])] := true
+                        keep[ClipboardProvider._FileKey(entry["Image"])] := true
                         list.Push(ClipboardProvider._WithPin(entry, Map("Type", "image", "Image", entry["Image"], "Width", entry["Width"], "Height", entry["Height"], "Time", stamp, "App", source)))
                         continue
                 }
@@ -546,17 +577,17 @@ class ClipboardProvider {
                     list.Push(ClipboardProvider._WithPin(entry, Map("Text", text, "Time", stamp, "App", source)))
                     continue
                 }
-                if (!entry.Has("File") || !FileExist(ClipboardProvider.Folder "\" entry["File"])) {   ; 新的长条目: 只写这一次
+                if (!entry.Has("File") || !FileExist(Platform.Join(ClipboardProvider.Folder, entry["File"]))) {   ; 新的长条目: 只写这一次
                     DirCreate(ClipboardProvider.Folder)
                     entry["File"] := stamp "-" Random(100000, 999999) ".txt"
-                    FileAppend(text, ClipboardProvider.Folder "\" entry["File"], "UTF-8")
+                    FileAppend(text, Platform.Join(ClipboardProvider.Folder, entry["File"]), "UTF-8")
                 }
-                keep[StrLower(entry["File"])] := true
+                keep[ClipboardProvider._FileKey(entry["File"])] := true
                 list.Push(ClipboardProvider._WithPin(entry, Map("File", entry["File"], "Time", stamp, "App", source)))
             }
             JSON.WriteFile(ClipboardProvider.File, Map("Entries", list))
-            Loop Files, ClipboardProvider.Folder "\*.*" {                  ; 删掉已经不在历史里的长条目和图片
-                if (RegExMatch(A_LoopFileName, "i)\.(txt|png)$") && !keep.Has(StrLower(A_LoopFileName)))
+            Loop Files, Platform.Join(ClipboardProvider.Folder, "*") {     ; 删掉已经不在历史里的长条目和图片
+                if (RegExMatch(A_LoopFileName, "i)\.(txt|png)$") && !keep.Has(ClipboardProvider._FileKey(A_LoopFileName)))
                     try FileDelete(A_LoopFileFullPath)
             }
         } catch as e {

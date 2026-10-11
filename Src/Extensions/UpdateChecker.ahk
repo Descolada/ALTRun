@@ -26,17 +26,30 @@
 ; git pull 或下载新版本; 程序目录不能写入、Release 没有 SHA256 时, 打开下载页面。
 ;===============================================================================
 
+#CSharp
+public static string ALTRunSha256File(string Filename)
+{
+    using var stream = System.IO.File.OpenRead(Filename);
+    return System.Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream)).ToLowerInvariant();
+}
+public static object ALTRunExtractZip(string Filename, string Destination)
+{
+    System.IO.Compression.ZipFile.ExtractToDirectory(Filename, Destination, overwriteFiles: true);
+    return null;
+}
+#EndCSharp
+
 class UpdateChecker {
     static ApiUrl      := "https://api.github.com/repos/zhugecaomao/ALTRun/releases/latest"
     static ReleasePage := "https://github.com/zhugecaomao/ALTRun/releases"
-    static TempDir     := A_Temp "\ALTRun-update"
+    static TempDir     := Platform.Join(A_Temp, "ALTRun-update")
     static OldSuffix   := ".old"
     static PackageExe  := "ALTRun.exe"                                     ; zip 里的程序名 (本机的 exe 可能改过名)
     ; 以前的版本带有、新版本已经不要的文件, 更新时删掉 (Resources\ 里其它文件可能是用户自己放的, 不动)
     static ObsoleteFiles := ["Resources\DOSBox.exe", "Resources\SDL.dll", "Resources\SDL_net.dll",
                              "Resources\SPF2M.exe", "Resources\Run.bat"]
     static UpgradeCommands := Map("scoop", "scoop update altrun", "winget", "winget upgrade zhugecaomao.ALTRun")
-    static StateFile   := AppSettings.DataDir "\Update.json"                    ; {LastCheck, Skip}
+    static StateFile   := Platform.Join(AppSettings.DataDir, "Update.json")
     static CheckHours  := 6                                                 ; 一直开着时: 离上次检查满几小时再查
     static StartupHours := 1                                                ; 启动时: 离上次检查满几小时就查
     static Pending     := ""                                                ; 后台发现的新版本 (ParseRelease 的结果 + Mode)
@@ -65,16 +78,16 @@ class UpdateChecker {
                 if (choice = "Install")
                     UpdateChecker.Install(release)
                 else if (choice = "Notes")
-                    Run(release.Page)
+                    Platform.Open(release.Page)
             case "source":
                 if (MsgBox(I18n.T("Update.AvailableSource", release.Version), App.Name, "YesNo Iconi") = "Yes")
-                    Run(release.Page)
+                    Platform.Open(release.Page)
             case "page":
                 if (MsgBox(I18n.T("Update.Available", release.Version), App.Name, "YesNo Iconi") = "Yes")
-                    Run(release.Page)
+                    Platform.Open(release.Page)
             default:
                 if (MsgBox(I18n.T("Update.AvailableVia", release.Version, UpdateChecker.UpgradeCommands[release.Mode]), App.Name, "YesNo Iconi") = "Yes")
-                    Run(release.Page)
+                    Platform.Open(release.Page)
         }
     }
 
@@ -146,7 +159,7 @@ class UpdateChecker {
             case "page"   : subtitle := I18n.T("Update.ItemPage", App.Version)
             default       : subtitle := I18n.T("Update.ItemVia", UpdateChecker.UpgradeCommands[release.Mode])
         }
-        actions := [ResultItem(I18n.T("Update.ReleaseNotes"), "", {Icon: "url:", OnRun: (*) => Run(release.Page)})
+        actions := [ResultItem(I18n.T("Update.ReleaseNotes"), "", {Icon: "url:", OnRun: (*) => Platform.Open(release.Page)})
                   , ResultItem(I18n.T("Update.Skip"), I18n.T("Update.SkipHint"), {Icon: "res:imageres.dll,-5338", OnRun: (*) => UpdateChecker.SkipVersion(release.Version)})]
         icon := FileExist(App.IconFile) ? App.IconFile : A_ScriptFullPath
         return ResultItem(I18n.T("Update.ItemTitle", release.Version), subtitle
@@ -160,7 +173,7 @@ class UpdateChecker {
             return
         switch release.Mode {
             case "install"       : UpdateChecker.Install(release)
-            case "source", "page": Run(release.Page)
+            case "source", "page": Platform.Open(release.Page)
             default:
                 command := UpdateChecker.UpgradeCommands[release.Mode]
                 A_Clipboard := command
@@ -199,7 +212,7 @@ class UpdateChecker {
     ; GitHub Release
     ;---------------------------------------------------------------------------
     static Fetch() {
-        tmpFile := A_Temp "\ALTRun_latest.json"
+        tmpFile := Platform.Join(A_Temp, "ALTRun_latest.json")
         Download(UpdateChecker.ApiUrl, tmpFile)
         response := FileRead(tmpFile, "UTF-8")
         try FileDelete(tmpFile)
@@ -229,7 +242,12 @@ class UpdateChecker {
 
     ; 能不能在程序里直接更新: 编译后的 exe, Release 有 zip 和 SHA256, 程序目录能写入
     static CanInstall(release) {
+#if KEYSHARP
+        ; Upstream packages contain an AutoHotkey executable, not a Keysharp runtime.
+        return false
+#else
         return A_IsCompiled && release.ZipUrl != "" && release.Sha256 != "" && UpdateChecker.IsWritable(A_ScriptDir)
+#endif
     }
 
     static IsWritable(dir) => Path.IsWritable(dir)
@@ -238,34 +256,38 @@ class UpdateChecker {
     ;   Scoop   ...\scoop\apps\altrun\current (或版本号文件夹)
     ;   winget  %LOCALAPPDATA%\Microsoft\WinGet\Packages\zhugecaomao.ALTRun_...
     static InstalledBy(dir) {
+#if WINDOWS && !KEYSHARP
         if RegExMatch(dir, "i)\\apps\\altrun\\[^\\]+$")
             return "scoop"
         if RegExMatch(dir, "i)\\WinGet\\Packages\\zhugecaomao\.ALTRun")
             return "winget"
+#endif
         return ""
     }
 
     ; 下载 -> 核对 SHA256 -> 解压 -> 替换 -> 启动新版本; 出错时提示打开下载页面
     static Install(release) {
+        if !UpdateChecker.CanInstall(release)
+            return Platform.Open(release.Page)
         progress := UpdateChecker._Progress(I18n.T("Update.Downloading", release.Version))
         try {
             dir := UpdateChecker.TempDir
             try DirDelete(dir, true)
             DirCreate(dir)
-            zip := dir "\ALTRun_v" release.Version ".zip"
+            zip := Platform.Join(dir, "ALTRun_v" release.Version ".zip")
             Download(release.ZipUrl, zip)
             actual := UpdateChecker.Sha256File(zip)
             if (actual != release.Sha256)
                 throw Error("SHA256 does not match (expected " release.Sha256 ", got " actual ").")
             progress["Text"].Value := I18n.T("Update.Installing", release.Version)
-            files := dir "\files"
+            files := Platform.Join(dir, "files")
             UpdateChecker.Extract(zip, files)
             UpdateChecker.Apply(files, A_ScriptDir, A_ScriptName)
         } catch as e {
             progress.Destroy()
             Logger.Error("UpdateChecker: install " release.Version " - " e.Message)
             if (MsgBox(I18n.T("Update.InstallFailed", e.Message), App.Name, "YesNo Icon!") = "Yes")
-                Run(release.Page)
+                Platform.Open(release.Page)
             return
         }
         progress.Destroy()
@@ -273,32 +295,20 @@ class UpdateChecker {
         App.Restart("-Updated " release.Version)
     }
 
-    ; zip -> 文件夹。先用 Windows 10 (1803) 起自带的 tar.exe (快, 不受 PowerShell 策略限制),
-    ; 没有或失败时用 PowerShell 的 Expand-Archive
+    ; zip -> 文件夹, 使用运行时自带的托管解压实现。
     static Extract(zip, dest) {
-        DirCreate(dest)
-        tar := A_WinDir "\System32\tar.exe"
-        if FileExist(tar) {
-            try exitCode := RunWait('"' tar '" -xf "' zip '" -C "' dest '"', , "Hide")
-            if (IsSet(exitCode) && exitCode = 0 && FileExist(dest "\" UpdateChecker.PackageExe))
-                return
-            Logger.Debug("UpdateChecker: tar.exe could not extract the package, trying PowerShell")
-        }
-        quote := (s) => "'" StrReplace(s, "'", "''") "'"
-        cmd := 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "'
-             . "$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath " quote(zip) " -DestinationPath " quote(dest) ' -Force"'
-        exitCode := RunWait(cmd, , "Hide")
-        if (exitCode != 0 || !FileExist(dest "\" UpdateChecker.PackageExe))
-            throw Error("Could not extract the downloaded package (exit code " exitCode ").")
+        ALTRunExtractZip(zip, dest)
+        if !FileExist(Platform.Join(dest, UpdateChecker.PackageExe))
+            throw Error("Could not extract the downloaded package: " UpdateChecker.PackageExe " is missing.")
     }
 
     ; 把 src 里的新版本复制到 dest: 先复制其它文件, 最后替换 dest\exeName (改名为 .old 后复制新的)。
     ; 被覆盖的文件先备份到 src.backup; 任何一步失败都还原 (覆盖的改回去, 新增的删掉), 再抛出错误
     static Apply(src, dest, exeName) {
-        newExe := src "\" UpdateChecker.PackageExe
+        newExe := Platform.Join(src, UpdateChecker.PackageExe)
         if !FileExist(newExe)
             throw Error(UpdateChecker.PackageExe " is missing from the update package.")
-        exe := dest "\" exeName, old := exe UpdateChecker.OldSuffix
+        exe := Platform.Join(dest, exeName), old := exe UpdateChecker.OldSuffix
         backup := src ".backup"
         try DirDelete(backup, true)
         changes := {Replaced: [], Created: [], Dirs: []}
@@ -323,8 +333,8 @@ class UpdateChecker {
         }
         try DirDelete(backup, true)
         for rel in UpdateChecker.ObsoleteFiles
-            if !FileExist(src "\" rel)                                    ; 新版本里还有的就留着
-                try FileDelete(dest "\" rel)
+            if !FileExist(Platform.Join(src, rel))
+                try FileDelete(Platform.Join(dest, rel))
     }
 
     ; 逐层复制 (按文件名拼路径: A_Temp 和 Loop Files 给出的路径可能一个是长文件名、一个是 8.3 短文件名,
@@ -334,23 +344,23 @@ class UpdateChecker {
             DirCreate(dest)
             changes.Dirs.Push(dest)
         }
-        Loop Files src "\*", "FD" {
+        Loop Files Platform.Join(src, "*"), "FD" {
             name := A_LoopFileName
             if InStr(A_LoopFileAttrib, "D") {
-                UpdateChecker._CopyTree(src "\" name, dest "\" name, backup "\" name, changes)
+                UpdateChecker._CopyTree(Platform.Join(src, name), Platform.Join(dest, name), Platform.Join(backup, name), changes)
                 continue
             }
             if (name = skipFile)
                 continue
-            target := dest "\" name
+            target := Platform.Join(dest, name)
             if FileExist(target) {
                 DirCreate(backup)
-                FileCopy(target, backup "\" name, true)
-                changes.Replaced.Push([target, backup "\" name])
+                FileCopy(target, Platform.Join(backup, name), true)
+                changes.Replaced.Push([target, Platform.Join(backup, name)])
             } else {
                 changes.Created.Push(target)
             }
-            FileCopy(src "\" name, target, true)
+            FileCopy(Platform.Join(src, name), target, true)
         }
     }
 
@@ -366,7 +376,7 @@ class UpdateChecker {
     ; 新版本启动时: 删掉改了名的旧程序 (旧进程可能还没退出, 过一会儿再试) 和下载的临时文件
     static CleanUp(attempt := 1) {
         old := A_ScriptFullPath UpdateChecker.OldSuffix
-        if FileExist(old) {
+        if A_IsCompiled && FileExist(old) {
             try FileDelete(old)
             if FileExist(old) && (attempt < 10)
                 SetTimer(() => UpdateChecker.CleanUp(attempt + 1), -1000)
@@ -376,20 +386,7 @@ class UpdateChecker {
     }
 
     static Sha256File(path) {
-        data := FileRead(path, "RAW")
-        hAlg := 0
-        if DllCall("bcrypt\BCryptOpenAlgorithmProvider", "Ptr*", &hAlg, "WStr", "SHA256", "Ptr", 0, "UInt", 0, "UInt")
-            throw Error("SHA256 is not available.")
-        digest := Buffer(32)
-        status := DllCall("bcrypt\BCryptHash", "Ptr", hAlg, "Ptr", 0, "UInt", 0
-                        , "Ptr", data, "UInt", data.Size, "Ptr", digest, "UInt", 32, "UInt")
-        DllCall("bcrypt\BCryptCloseAlgorithmProvider", "Ptr", hAlg, "UInt", 0)
-        if status
-            throw Error(Format("SHA256 failed (0x{:08X}).", status))
-        hex := ""
-        Loop 32
-            hex .= Format("{:02x}", NumGet(digest, A_Index - 1, "UChar"))
-        return hex
+        return ALTRunSha256File(path)
     }
 
     ; 按点分隔逐段比较数字: > 0 表示 v1 更新

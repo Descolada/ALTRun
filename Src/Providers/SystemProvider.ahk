@@ -79,7 +79,7 @@ class SystemProvider {
     static _HiddenIds() {
         static cache := "", cacheFor := ""
         hidden := AppSettings.Feature("System")["Hidden"]
-        signature := ObjPtr(hidden) ":" hidden.Length
+        signature := Platform.ObjectId(hidden) ":" hidden.Length
         if (cacheFor != signature) {
             cache := Map()
             cache.CaseSense := "Off"
@@ -162,6 +162,7 @@ class SystemProvider {
         add("Log"         , "Sys.Log"         , "res:imageres.dll,-102" , () => App.OpenLog())
         add("Quit"        , "Sys.Quit"        , "res:imageres.dll,-98"  , () => App.Quit())
 
+#if WINDOWS
         ; --- System ---
         add("Lock"        , "Sys.Lock"        , "res:imageres.dll,-59"  , () => DllCall("LockWorkStation"))
         add("Sleep"       , "Sys.Sleep"       , "res:shell32.dll,-28"   , () => DllCall("PowrProf\SetSuspendState", "Int", 0, "Int", 0, "Int", 0))
@@ -187,6 +188,11 @@ class SystemProvider {
         add("PTTools"     , "Sys.PTTools"     , IconCache.Own("Calculator", "res:imageres.dll,-182"), () => PTToolsWindow.Show())
         add("SPF2M"       , "Sys.SPF2M"       , IconCache.Own("Calculator", "res:imageres.dll,-182"), () => PTToolsWindow.ShowSpf2m())
 
+#else
+        add("PastePlain", "Sys.PastePlain", ClipboardProvider.Icon, () => SystemProvider.PastePlainText())
+        add("ScriptsFolder", "Sys.ScriptsFolder", "folder:", () => ScriptProvider.OpenFolder())
+        add("TerminalHere", "Prefs.Feature.Terminal", "folder:", () => TerminalProvider.OpenAtCurrentFolder())
+#endif
         ; --- Clipboard text tools ---
         text("TextUpper"        , "Text.Upper"        , (s) => TextTools.Upper(s))
         text("TextLower"        , "Text.Lower"        , (s) => TextTools.Lower(s))
@@ -201,6 +207,7 @@ class SystemProvider {
         text("TextToSimplified" , "Text.ToSimplified" , (s) => Kanji.ToSimplified(s))
         text("TextUrlEncode"    , "Text.UrlEncode"    , (s) => Url.Encode(s))
 
+#if WINDOWS
         ; --- Windows tools ---
         tool("TaskManager"       , "Tool.TaskManager"       , system32 "taskmgr.exe")
         tool("ControlPanel"      , "Tool.ControlPanel"      , system32 "control.exe")
@@ -281,6 +288,7 @@ class SystemProvider {
         setting("Developers"       , "developers")
         setting("Backup"           , "backup")
 
+#endif
         SystemProvider._commands := list
         return list
     }

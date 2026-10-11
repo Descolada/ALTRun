@@ -32,14 +32,15 @@
 class AppSettings {
     static CurrentVersion := 4
     static Portable := Path.IsWritable(A_ScriptDir)                          ; 程序目录能写入: 数据放在程序目录 (便携)
-    static UserDir := A_AppData "\ALTRun"                                   ; 程序目录不能写入时 (例如装在 Program Files) 用这里
+    static UserDir := Platform.Join(Platform.UserDataDir, "ALTRun")           ; 程序目录不能写入时用这里
     static DataDir := AppSettings.ResolveDataDir()
-    static File := AppSettings.DataDir "\ALTRun.json"
-    static LegacyFile := A_ScriptDir "\ALTRun.json"      ; 旧版本的位置, 2.x 的 ALTRun.ini 也在这个目录
+    static File := Platform.Join(AppSettings.DataDir, "ALTRun.json")
+    static LegacyFile := Platform.Join(A_ScriptDir, "ALTRun.json")           ; 旧版本的位置, 2.x 的 ALTRun.ini 也在这个目录
     static Data := Map()
     static MigratedFrom := 0          ; 本次启动时从哪个版本升级过来的 (0 = 没有升级)
     static ImportedFrom := ""         ; 本次启动时从旧版本的 ALTRun.ini 导入 ("" = 没有)
     static MovedFrom := ""            ; 本次启动时从程序目录移到 Data\ ("" = 没有)
+    static _runtimeFallbacks := []
 
     static General        => AppSettings.Data["General"]
     static Appearance     => AppSettings.Data["Appearance"]
@@ -54,12 +55,14 @@ class AppSettings {
     ;   2. 程序目录能写入: 程序目录\Data (便携, 默认)
     ;   3. 否则: %APPDATA%\ALTRun\Data
     static ResolveDataDir() {
-        if ((location := AppSettings.DataLocationIn(AppSettings.DefaultDataDir() "\ALTRun.json")) != "")
+        if ((location := AppSettings.DataLocationIn(Platform.Join(AppSettings.DefaultDataDir(), "ALTRun.json"))) != "")
             return location
         return AppSettings.DefaultDataDir()
     }
 
-    static DefaultDataDir() => AppSettings.Portable ? A_ScriptDir "\Data" : AppSettings.UserDir "\Data"
+    static DefaultDataDir() => Platform.Join(AppSettings.Portable ? A_ScriptDir : AppSettings.UserDir, "Data")
+
+    static _SameLocation(first, second) => Platform.Identity(first) == Platform.Identity(second)
 
     ; 设置文件里 "DataLocation" 指定的文件夹 (没有、为空或就是默认位置时 "")。启动时调用:
     ; 只找这一项, 不解析整个文件 (不跳转时同一个文件马上还要完整读一次)
@@ -70,7 +73,9 @@ class AppSettings {
             if !RegExMatch(FileRead(settingsFile, "UTF-8"), '"DataLocation"\s*:\s*("(?:[^"\\]|\\.)*")', &m)
                 return ""
             location := Trim(JSON.Parse("[" m[1] "]")[1])
-            if (location != "" && (location := Path.Full(location)) != AppSettings.DefaultDataDir())
+            if (!Platform.IsWindows && RegExMatch(location, "^(?:[A-Za-z]:[\\/]|\\\\)"))
+                return ""
+            if (location != "" && !AppSettings._SameLocation(location := Path.Full(location), AppSettings.DefaultDataDir()))
                 return location
         }
         return ""
@@ -78,8 +83,8 @@ class AppSettings {
 
     ; 把数据文件夹改成 folder ("" 或默认位置 = 恢复默认): 写进默认位置的 ALTRun.json ("DataLocation"), 重新载入后生效
     static SetDataLocation(folder) {
-        settingsFile := AppSettings.DefaultDataDir() "\ALTRun.json"
-        reset := (folder = "" || Path.Full(folder) = AppSettings.DefaultDataDir())
+        settingsFile := Platform.Join(AppSettings.DefaultDataDir(), "ALTRun.json")
+        reset := (folder = "" || AppSettings._SameLocation(Path.Full(folder), AppSettings.DefaultDataDir()))
         data := Map()
         if FileExist(settingsFile)
             data := JSON.Parse(FileRead(settingsFile, "UTF-8"))
@@ -91,7 +96,7 @@ class AppSettings {
             data.Delete("DataLocation")
         DirCreate(AppSettings.DefaultDataDir())
         JSON.WriteFile(settingsFile, data)
-        if (AppSettings.DataDir = AppSettings.DefaultDataDir()) {           ; 正在用默认位置的设置: 之后保存时也要留着这一项
+        if AppSettings._SameLocation(AppSettings.DataDir, AppSettings.DefaultDataDir()) { ; 正在用默认位置的设置: 之后保存时也要留着这一项
             if !reset
                 AppSettings.Data["DataLocation"] := folder
             else if AppSettings.Data.Has("DataLocation")
@@ -108,6 +113,7 @@ class AppSettings {
     }
 
     static Load() {
+        AppSettings._runtimeFallbacks := []
         AppSettings.MoveLegacyFile()
         data := AppSettings._ReadFile()
         changed := false
@@ -136,18 +142,32 @@ class AppSettings {
 
         if AppSettings._MergeDefaults(data, AppSettings.Defaults())
             changed := true
-        if (AppSettings.DataDir != AppSettings.DefaultDataDir() && data.Has("DataLocation"))
+        if (!AppSettings._SameLocation(AppSettings.DataDir, AppSettings.DefaultDataDir()) && data.Has("DataLocation"))
             data.Delete("DataLocation")                                     ; 跳转到的文件夹里的这一项没有作用, 去掉免得混淆
         data["SchemaVersion"] := AppSettings.CurrentVersion
         AppSettings.Data := data
 
         if (changed)
             AppSettings.Save()
+        AppSettings.EffectiveDefaults(data)
     }
 
     static Save() {
         try {
-            JSON.WriteFile(AppSettings.File, AppSettings.Data)
+            data := AppSettings.Data, remaining := []
+            if AppSettings._runtimeFallbacks.Length {
+                data := AppSettings._CopyValue(data)
+                for fallback in AppSettings._runtimeFallbacks {
+                    parent := AppSettings._ParentFor(data, fallback.Path)
+                    key := fallback.Path[fallback.Path.Length]
+                    if AppSettings._SameValue(parent[key], fallback.Effective) {
+                        parent[key] := fallback.Stored
+                        remaining.Push(fallback)
+                    }
+                }
+            }
+            JSON.WriteFile(AppSettings.File, data)
+            AppSettings._runtimeFallbacks := remaining
             return true
         } catch as e {
             Logger.Error("AppSettings.Save: " e.Message)
@@ -161,7 +181,7 @@ class AppSettings {
     ; 移不动 (例如文件被占用) 时这次继续用旧位置, 下次启动再试
     static MoveLegacyFile() {
         legacy := AppSettings.LegacyFile, target := AppSettings.File
-        if (legacy = target || !FileExist(legacy) || FileExist(target))
+        if (AppSettings._SameLocation(legacy, target) || !FileExist(legacy) || FileExist(target))
             return
         SplitPath(legacy, , &fromDir)
         SplitPath(target, , &toDir)
@@ -174,10 +194,10 @@ class AppSettings {
             return
         }
         AppSettings.MovedFrom := legacy
-        Loop Files, fromDir "\ALTRun.*", "F" {
+        Loop Files, Platform.Join(fromDir, "ALTRun.*"), "F" {
             if (A_LoopFileName = "ALTRun.json.bad" || RegExMatch(A_LoopFileName, "i)^ALTRun\.v\d+\.backup\.json$"))
-                if !FileExist(toDir "\" A_LoopFileName)
-                    try FileMove(A_LoopFileFullPath, toDir "\" A_LoopFileName)
+                if !FileExist(Platform.Join(toDir, A_LoopFileName))
+                    try FileMove(A_LoopFileFullPath, Platform.Join(toDir, A_LoopFileName))
         }
         Logger.Debug("AppSettings: moved " legacy " to " target)
     }
@@ -223,7 +243,7 @@ class AppSettings {
 
     ; 每次调用都新建一份, 调用方可以随意修改返回值
     static Defaults() {
-        return Map(
+        defaults := Map(
             "SchemaVersion", AppSettings.CurrentVersion,
             "General", Map(
                 "Hotkey"              , "!Space",
@@ -394,10 +414,129 @@ class AppSettings {
             "CustomCommands", AppSettings._DefaultCommands(),
             "Snippets", AppSettings._DefaultSnippets()
         )
+        if !Platform.IsWindows
+            AppSettings._PortableDefaults(defaults)
+        return defaults
+    }
+
+    static _PortableDefaults(defaults) {
+        general := defaults["General"], features := defaults["Features"]
+        for name in ["LaunchAtLogin", "SwitchToEnglishInput", "RestoreInput", "SendToMenu", "StartMenuShortcut"]
+            general[name] := 0
+        general["CapsLock"] := ""
+        general["FileManager"] := ""
+        applications := features["Applications"]
+        applications["StoreApps"] := 0
+        applications["Folders"] := AppSettings._ApplicationFolders()
+        applications["FileTypes"] := Platform.IsMac ? ["*.app"] : ["*.desktop"]
+        features["FileSearch"]["UseEverything"] := 0
+        features["FileSearch"]["EverythingFilter"] := ""
+        features["FileSearch"]["ScopeFolders"] := ["A_Desktop", "A_MyDocuments", Platform.Join(Platform.Home, "Downloads")]
+        features["FileSearch"]["ScopeExclude"] := "i)/(node_modules|\.git|__pycache__)(/|$)"
+        features["FileSearch"]["TypeFilters"][6] := Platform.IsMac ? "exe = app sh command" : "exe = desktop sh AppImage"
+        features["Terminal"]["Shell"] := Platform.IsMac ? "zsh" : "bash"
+        features["System"]["SettingsPages"] := 0
+        features["Clipboard"]["IgnoreApps"] := ["keepass", "keepassxc", "1password", "bitwarden"]
+        features["Snippets"]["ExpandExclude"] := "ahk_exe keepass, ahk_exe keepassxc, ahk_exe 1password, ahk_exe bitwarden"
+        defaults["Extensions"]["QuickSwitch"]["Enabled"] := 0
+        defaults["Extensions"]["AutoDate"]["Enabled"] := 0
+        defaults["Hotkeys"] := []
+    }
+
+    ; Stock Windows choices get portable runtime values; saving retains their originals until edited.
+    static EffectiveDefaults(data) {
+        AppSettings._runtimeFallbacks := []
+        if Platform.IsWindows
+            return data
+        defaults := AppSettings.Defaults()
+        applications := data["Features"]["Applications"]
+        if AppSettings._SameTokens(applications["Folders"], ["A_Programs", "A_ProgramsCommon", "A_Desktop", "A_DesktopCommon"])
+            AppSettings._SetEffective(data, ["Features", "Applications", "Folders"], defaults["Features"]["Applications"]["Folders"])
+        if AppSettings._SameTokens(applications["FileTypes"], ["*.lnk", "*.exe", "*.url", "*.appref-ms"])
+            AppSettings._SetEffective(data, ["Features", "Applications", "FileTypes"], defaults["Features"]["Applications"]["FileTypes"])
+        if (data["Features"]["Terminal"]["Shell"] = "cmd")
+            AppSettings._SetEffective(data, ["Features", "Terminal", "Shell"], defaults["Features"]["Terminal"]["Shell"])
+        if (data["General"]["FileManager"] = "explorer.exe" || data["General"]["FileManager"] = "explorer")
+            AppSettings._SetEffective(data, ["General", "FileManager"], "")
+        if AppSettings._SameValue(data["CustomCommands"], AppSettings._WindowsCommands())
+            AppSettings._SetEffective(data, ["CustomCommands"], defaults["CustomCommands"])
+        return data
+    }
+
+    static _SetEffective(data, path, value) {
+        parent := AppSettings._ParentFor(data, path), key := path[path.Length]
+        AppSettings._runtimeFallbacks.Push({Path: path, Stored: AppSettings._CopyValue(parent[key]), Effective: AppSettings._CopyValue(value)})
+        parent[key] := value
+    }
+
+    static _ParentFor(data, path) {
+        parent := data
+        Loop path.Length - 1
+            parent := parent[path[A_Index]]
+        return parent
+    }
+
+    static _CopyValue(value) => JSON.Parse(JSON.Stringify(value))
+
+    static _SameTokens(first, second) {
+        if !(first is Array) || first.Length != second.Length
+            return false
+        counts := Map()
+        for token in second
+            counts[StrLower(token)] := (counts.Has(StrLower(token)) ? counts[StrLower(token)] : 0) + 1
+        for token in first {
+            if !(token is String)
+                return false
+            key := StrLower(token)
+            if (!counts.Has(key) || !counts[key])
+                return false
+            counts[key] -= 1
+        }
+        return true
+    }
+
+    static _SameValue(first, second) {
+        if (first is Array || second is Array) {
+            if !(first is Array && second is Array) || first.Length != second.Length
+                return false
+            for index, value in first
+                if !AppSettings._SameValue(value, second[index])
+                    return false
+            return true
+        }
+        if (first is Map || second is Map) {
+            if !(first is Map && second is Map) || first.Count != second.Count
+                return false
+            for key, value in first
+                if !second.Has(key) || !AppSettings._SameValue(value, second[key])
+                    return false
+            return true
+        }
+        return first == second
+    }
+
+    static _ApplicationFolders() {
+        if Platform.IsMac
+            return ["/Applications", "/System/Applications", Platform.Join(Platform.Home, "Applications")]
+        folders := [Platform.Join(Platform.UserDataDir, "applications")]
+        roots := EnvGet("XDG_DATA_DIRS")
+        if (roots = "")
+            roots := "/usr/local/share:/usr/share"
+        for root in StrSplit(roots, ":")
+            if (SubStr(root, 1, 1) = "/")
+                folders.Push(Platform.Join(root, "applications"))
+        folders.Push("A_Desktop")
+        return folders
     }
 
     ; 默认的自定义命令: 每种类型都有, 让新用户看到能做什么 (已有的用户不受影响)
     static _DefaultCommands() {
+        if !Platform.IsWindows
+            return AppSettings._PortableCommands()
+        return AppSettings._WindowsCommands()
+    }
+
+    static _WindowsCommands() {
         commands := []
         for row in [
             ; 文件 / 程序: 运行程序, 或打开文件; Arguments 附带参数
@@ -417,6 +556,24 @@ class AppSettings {
             ["Google Maps"         , "Url"    , "https://www.google.com/maps/search/{query}", ""                 , "maps"],     ; {query}: "maps Changi Airport"
             ["Windows Update"      , "Url"    , "ms-settings:windowsupdate", ""                                  , ""]
         ]
+            commands.Push(Map("Title", row[1], "Type", row[2], "Target", row[3], "Arguments", row[4], "Keyword", row[5]))
+        return commands
+    }
+
+    static _PortableCommands() {
+        commands := []
+        rows := [
+            ["Home", "Folder", Platform.Home, "", "home"],
+            ["Desktop", "Folder", "A_Desktop", "", ""],
+            ["Downloads", "Folder", Platform.Join(Platform.Home, "Downloads"), "", "dl"],
+            ["ALTRun Folder", "Folder", "A_ScriptDir", "", ""],
+            ["Documents subfolder", "Folder", Platform.Join(A_MyDocuments, "{query}"), "", "docs"],
+            ["ALTRun on GitHub", "Url", "https://github.com/zhugecaomao/ALTRun", "", "altrun"],
+            ["Google Maps", "Url", "https://www.google.com/maps/search/{query}", "", "maps"]
+        ]
+        if Platform.IsMac
+            rows.InsertAt(1, ["TextEdit", "File", "/System/Applications/TextEdit.app", "", "edit"])
+        for row in rows
             commands.Push(Map("Title", row[1], "Type", row[2], "Target", row[3], "Arguments", row[4], "Keyword", row[5]))
         return commands
     }

@@ -5,22 +5,46 @@
 感谢你愿意改进 ALTRun! 反馈问题、改进文档、补充翻译、提交代码都非常欢迎。提交之前请花几分钟看一下下面的约定。
 
 ## 反馈问题
-- **Bug**: 用 [Bug 报告模板](https://github.com/zhugecaomao/ALTRun/issues/new?template=bug_report.yml), 写清 Windows 版本、ALTRun 版本、复现步骤, 最好附上截图
+- **Bug**: 用 [Bug 报告模板](https://github.com/zhugecaomao/ALTRun/issues/new?template=bug_report.yml), 写清操作系统、Keysharp 和 ALTRun 版本、复现步骤，最好附上截图；Linux 还请注明桌面与 X11/Wayland 会话
 - **建议**: 用 [功能建议模板](https://github.com/zhugecaomao/ALTRun/issues/new?template=feature_request.yml), 或先在 [Discussions](https://github.com/zhugecaomao/ALTRun/discussions) 里讨论
 - 需要更多信息时, 可以在偏好设置 → 通用里打开 "写入调试日志", 复现问题后在搜索框输入 "日志" (或 log) 打开日志文件 (`%Temp%\ALTRun.log`), 附上相关部分 (注意先去掉隐私信息)
 
 ## 开发环境
-1. 安装 [AutoHotkey v2](https://www.autohotkey.com/) (2.0 或更新)
-2. 克隆仓库, 直接运行 `ALTRun.ahk`
-3. 修改后运行单元测试:
-   ```
-   AutoHotkey64.exe /ErrorStdOut Tests\RunTests.ahk
-   ```
-   退出码为失败的数量, 0 = 全部通过
-4. 语法检查 (不运行):
-   ```
-   AutoHotkey64.exe /ErrorStdOut /validate ALTRun.ahk
-   ```
+
+当前源码仅支持 Keysharp：AutoHotkey v2 与 Ahk2Exe 无法处理 `#Import`、平台预处理和 `#CSharp` 辅助代码。请安装包含解析器/编译器组件及桌面依赖的 [Keysharp](https://github.com/keysharp-org/Keysharp)。自行编译 Keysharp 时，按其仓库说明准备本机平台依赖，安装 .NET 10 SDK，在 Keysharp 仓库根目录运行：
+
+```sh
+dotnet build Keysharp.sln -c Debug
+```
+
+Windows 可执行文件位于 `bin/Debug/net10.0-windows/Keysharp.exe`，Linux/macOS 位于 `bin/Debug/net10.0/Keysharp`。ALTRun 源码在启动时编译；请在 `ALTRun.ahk` 旁保留 `ALTRun.Modules.ahk`、`Lib/`、`Src/` 和 `Resources/`。Windows 上在 ALTRun 文件夹中运行：
+
+```powershell
+$keysharp = 'C:\path\to\Keysharp.exe'
+& $keysharp --errorstdout .\ALTRun.ahk
+# 只检查编译，不运行程序
+& $keysharp --errorstdout --validate .\ALTRun.ahk
+# 独立的服务、设置、界面和启动检查
+& $keysharp --errorstdout .\Tests\PlatformServices.ahk
+& $keysharp --errorstdout .\Tests\SettingsFallback.ahk
+& $keysharp --errorstdout --define:ALTRUN_PORTABLE_UI .\Tests\PortableSmoke.ahk
+& $keysharp --errorstdout .\Tests\StartupSmoke.ahk
+```
+
+Linux/macOS 用 `/path/to/Keysharp ALTRun.ahk` 启动。无桌面的 Linux 需要为桌面后端提供 X11 显示，编译检查也一样：
+
+```sh
+xvfb-run -a /path/to/Keysharp --errorstdout --validate ALTRun.ahk
+xvfb-run -a /path/to/Keysharp --errorstdout Tests/PlatformServices.ahk
+# 设置保存和缓存检查不需要显示服务
+/path/to/Keysharp --errorstdout Tests/SettingsFallback.ahk
+xvfb-run -a /path/to/Keysharp --errorstdout Tests/PortableSmoke.ahk
+xvfb-run -a /path/to/Keysharp --errorstdout Tests/StartupSmoke.ahk
+```
+
+这四个移植检查脚本使用临时数据，把错误/警告写到标准输出/错误，成功时退出码为 0。`PlatformServices` 检查进程输出捕获/取消、路径和桌面应用项。`SettingsFallback` 检查有效设置、保存时保留已存储的平台选择，以及文件/缓存身份。`PortableSmoke` 实际操作搜索、操作面板和偏好设置控件。`StartupSmoke` 检查真实程序启动、第二个进程向原实例转发参数，以及退出时保存独立数据。原 `Tests/RunTests.ahk` 仍是面向 Windows 的回归测试，可在 Windows 上用 Keysharp 运行，不是 Linux/macOS 验收测试。
+
+标准界面已在 Windows 和 Ubuntu 24.04 的 X11/Xvfb 环境通过冒烟检查，不表示验证了原生 Wayland 或全局钩子；macOS 为实验性支持、尚未验证。无人值守测试脚本应包含 `#ErrorStdOut` 与 `#Warn All, StdOut`，避免模态提示，进程检查须设超时并清理。通过脚本扩展测试源码脚本时须保留 Keysharp 编译器。
 
 ## 代码规范
 - **文件与类**: 一个文件一个类, 文件名 = 类名, PascalCase (`SearchWindow.ahk` → `class SearchWindow`)
@@ -38,13 +62,16 @@
 
 ## 提交 Pull Request
 1. 从 `main` 新建分支, 一个 PR 只做一件事
-2. 提交前确认单元测试全部通过、`/validate` 没有警告
-3. 新功能或修复请附带测试 (`Tests\RunTests.ahk`)
+2. 提交前运行相关测试与 `--validate`，说明验证的平台及尚存的警告
+3. 新功能或修复请附带合适的测试 (`Tests/PlatformServices.ahk`、`Tests/SettingsFallback.ahk`、`Tests/PortableSmoke.ahk`、`Tests/StartupSmoke.ahk` 或 Windows 回归测试)
 4. 涉及界面的改动请附上截图; README / Wiki 里的截图由 Screenshots workflow 生成, 用英文界面和虚构的示例数据, 不要放个人或工作相关的信息
 5. 用户可见的变化请更新 README (`README.md` 英文和 `README.zh-CN.md` 中文)、`CHANGELOG.md` 的 "未发布" 部分, 必要时更新 Wiki (中文页和 `en-` 英文页都要改)
 
 ## 发布新版本
-版本号用发布日期 `YYYY.MM.DD`:
+
+版本号使用发布日期 `YYYY.MM.DD`。下面的工作流对应原上游 AutoHotkey Windows 分发版。现有 `.github/workflows/release.yml` 使用 Ahk2Exe，不会打包此 Keysharp 移植版；在当前源码上运行它不是跨平台发布方法。Keysharp 分发版需要单独的系统/运行时打包及编译器部署。本次没有重设计发布自动化。
+
+对于原本兼容 AutoHotkey 的上游源码：
 1. 更新 `Src\Core\App.ahk` 的 `App.Version` 和 `ALTRun.ahk` 的 `;@Ahk2Exe-SetVersion` (有测试检查两者一致)
 2. 在 `CHANGELOG.md` 把 "未发布" 改成 `## [YYYY.MM.DD]`, 这一节就是 Release 的说明; 文件末尾加上这个版本的链接, 并把 `[未发布]` 的比较链接改成从这个版本开始 (有测试检查)
 3. 合并到 `main` 后, 在 Actions 里运行 **Release** (`.github/workflows/release.yml`): 先 `publish = false` 检查构建、测试和升级测试, 再 `publish = true` 创建 Release

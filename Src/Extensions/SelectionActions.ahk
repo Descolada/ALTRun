@@ -18,6 +18,7 @@
 
 class SelectionActions {
     static ConsoleClasses := "i)^(ConsoleWindowClass|CASCADIA_HOSTING_WINDOW_CLASS|mintty|PuTTY|VirtualConsoleClass)$"
+    static UnixConsoleClasses := "i)(gnome-terminal|konsole|xfce4-terminal|terminator|tilix|alacritty|kitty|foot|wezterm|xterm|urxvt)"
 
     static Run() {
         selection := SelectionActions.Capture()
@@ -30,25 +31,32 @@ class SelectionActions {
     static Capture() {
         className := ""
         try className := WinGetClass("A")
+        if (Platform.IsLinux && className = "")
+            return ""
         Win.WaitModifiersUp()                                               ; 热键的 Ctrl+Alt 还按着时, Ctrl+C 会变成 Ctrl+Alt+C
         ClipboardProvider.PauseRecording(2000)
         saved := ClipboardAll()
-        A_Clipboard := ""
-        Send(RegExMatch(className, SelectionActions.ConsoleClasses) ? "^{Insert}" : "^c")
         result := ""
-        if ClipWait(0.8, 1) {
-            if DllCall("IsClipboardFormatAvailable", "UInt", 15) {         ; CF_HDROP: 复制的是文件
-                files := []
-                for line in StrSplit(A_Clipboard, "`n", "`r")
-                    if (line != "")
-                        files.Push(line)
-                if files.Length
-                    result := {Files: files}
-            } else if (Trim(A_Clipboard, " `t`r`n") != "") {
-                result := {Text: A_Clipboard}
+        try {
+            A_Clipboard := ""
+            shortcut := Platform.CopyShortcut
+            if (Platform.IsWindows && RegExMatch(className, SelectionActions.ConsoleClasses))
+                shortcut := "^{Insert}"
+            else if (Platform.IsLinux && RegExMatch(className, SelectionActions.UnixConsoleClasses))
+                shortcut := "^+c"
+            Send(shortcut)
+            if ClipWait(0.8, 1) {
+                if ClipboardData.HasFiles() {
+                    files := ClipboardData.Files()
+                    if files.Length
+                        result := {Files: files}
+                } else if (Trim(A_Clipboard, " `t`r`n") != "") {
+                    result := {Text: A_Clipboard}
+                }
             }
+        } finally {
+            A_Clipboard := saved
         }
-        A_Clipboard := saved
         return result
     }
 
@@ -63,14 +71,14 @@ class SelectionActions {
         trimmed := Trim(text, " `t`r`n")
         if RegExMatch(trimmed, "i)^https?://\S+$")
             return ResultItem(trimmed, I18n.T("Selection.Link"), {Kind: "url", Arg: trimmed, Icon: "url:", Provider: "Selection"})
-        if (!InStr(trimmed, "`n") && RegExMatch(trimmed, "^(?:[A-Za-z]:\\|\\\\)") && FileExist(trimmed))   ; 选中的是一个路径
-            return SelectionActions._FileItem(trimmed)
+        if (!InStr(trimmed, "`n") && RegExMatch(trimmed, "^(?:[A-Za-z]:[\\/]|\\\\|/|~/)") && FileExist(file := Path.Resolve(trimmed)))
+            return SelectionActions._FileItem(file)
         return SelectionActions._TextItem(text)
     }
 
     static _FileItem(filePath) {
         isFolder := InStr(FileExist(filePath), "D") ? true : false
-        SplitPath(RTrim(filePath, "\"), &name)
+        SplitPath(RTrim(filePath, "\/"), &name)
         return ResultItem((name != "") ? name : filePath, filePath, {Kind: isFolder ? "folder" : "file", Arg: filePath
             , Icon: isFolder ? IconCache.FolderIcon(filePath) : filePath, Provider: "Selection"})
     }
@@ -78,7 +86,7 @@ class SelectionActions {
     static _FilesItem(files) {
         names := ""
         for filePath in files {
-            SplitPath(RTrim(filePath, "\"), &name)
+            SplitPath(RTrim(filePath, "\/"), &name)
             names .= (names = "" ? "" : ", ") name
             if (StrLen(names) > 100)
                 break

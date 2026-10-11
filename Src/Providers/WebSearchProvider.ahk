@@ -78,8 +78,8 @@ class WebSearchProvider {
             return WebSearchProvider.BuiltinIcon(engine)
         if RegExMatch(spec, "i)^(res|ext|url|folder|thumb|shell):")
             return spec
-        if !RegExMatch(spec, "i)^([a-z]:\\|\\\\|%|A_)")                    ; 相对路径: 从 Data 文件夹算起
-            spec := AppSettings.DataDir "\" spec
+        if !RegExMatch(spec, "i)^([a-z]:[\\/]|\\\\|/|~|%|A_)")           ; 相对路径: 从 Data 文件夹算起
+            spec := Platform.Join(AppSettings.DataDir, spec)
         iconFile := Path.Resolve(spec)
         if !FileExist(iconFile)
             return WebSearchProvider.BuiltinIcon(engine)
@@ -87,14 +87,16 @@ class WebSearchProvider {
     }
 
     ; 自带的引擎 (Google、Bing、GitHub...) 的图标: Resources\Icons\Web\<Id>.png (各网站自己的图标), 没有时用默认浏览器的图标
-    static BuiltinIconDir := A_ScriptDir "\Resources\Icons\Web", _builtinIcons := Map()
+    static BuiltinIconDir := Platform.Join(A_ScriptDir, "Resources", "Icons", "Web"), _builtinIcons := Map()
     static BuiltinIcon(engine) {
         id := (engine.Has("Id") && engine["Id"] != "") ? engine["Id"] : ""
         if (id = "" || !RegExMatch(id, "^[\w-]+$"))
             return "url:"
         found := WebSearchProvider._builtinIcons
+        if (!Platform.IsWindows && !found.Count)
+            found.CaseSense := "On"
         if !found.Has(id) {
-            iconFile := WebSearchProvider.BuiltinIconDir "\" id ".png"
+            iconFile := Platform.Join(WebSearchProvider.BuiltinIconDir, id ".png")
             found[id] := FileExist(iconFile) ? "thumb:" iconFile : "url:"
         }
         return found[id]
@@ -136,16 +138,17 @@ class WebSearchProvider {
                 continue
             if ((ext := WebSearchProvider.ImageType(response.Body, response.Size)) = "")
                 continue
-            folder := AppSettings.DataDir "\Icons"
+            folder := Platform.Join(AppSettings.DataDir, "Icons")
             DirCreate(folder)
             for old in ["png", "ico", "jpg", "gif", "bmp"]                     ; 以前下载的同名图标 (可能是别的格式)
-                try FileDelete(folder "\" name "." old)
-            f := FileOpen(folder "\" name "." ext, "w")
+                try FileDelete(Platform.Join(folder, name "." old))
+            f := FileOpen(Platform.Join(folder, name "." ext), "w")
             f.RawWrite(response.Body, response.Size)
             f.Close()
             IconCache.Clear()                                               ; 同一个文件名的旧图标还在缓存里
-            Logger.Debug("WebSearch: downloaded icon " candidate " -> Icons\" name "." ext)
-            return {File: "Icons\" name "." ext}
+            relativeFile := Platform.Join("Icons", name "." ext)
+            Logger.Debug("WebSearch: downloaded icon " candidate " -> " relativeFile)
+            return {File: relativeFile}
         }
         Logger.Debug("WebSearch: no icon found for " origin)
         return {Error: I18n.T("Web.IconNotFound", origin)}
@@ -225,6 +228,11 @@ class WebSearchProvider {
 
     ; GET 一个网址: {Status, Body (Buffer), Size, Url (跳转后的网址)}; 连不上时抛出异常
     static _Fetch(target) {
+        if !Platform.IsWindows {
+            response := Http.Get(target, {Timeout: 8, Headers: Map("User-Agent", "ALTRun/" App.Version)})
+            body := response.Body
+            return {Status: response.Status, Body: body, Size: body.Size, Url: response.Url}
+        }
         request := ComObject("WinHttp.WinHttpRequest.5.1")
         request.SetTimeouts(5000, 5000, 8000, 8000)
         request.Open("GET", target, false)
@@ -265,11 +273,14 @@ class WebSearchProvider {
         if !RegExMatch(address, "i)^https?://")
             return MsgBox(I18n.T("Web.IconBadUrl"), App.Name, 48)
         name := controls.Has("Id") && Trim(controls["Id"].Value) != "" ? Trim(controls["Id"].Value) : (controls.Has("Keyword") ? Trim(controls["Keyword"].Value) : "")
-        cursor := DllCall("SetCursor", "Ptr", DllCall("LoadCursor", "Ptr", 0, "Ptr", 32514, "Ptr"), "Ptr")   ; IDC_WAIT
+        cursor := 0
+        if Platform.IsWindows
+            cursor := DllCall("SetCursor", "Ptr", DllCall("LoadCursor", "Ptr", 0, "Ptr", 32514, "Ptr"), "Ptr")   ; IDC_WAIT
         try result := WebSearchProvider.DownloadIcon(address, name)
         catch as e
             result := {Error: e.Message}
-        DllCall("SetCursor", "Ptr", cursor)
+        if Platform.IsWindows
+            DllCall("SetCursor", "Ptr", cursor)
         if result.HasOwnProp("File")
             controls["Icon"].Value := result.File
         else
@@ -296,7 +307,7 @@ class WebSearchProvider {
     static DeleteItem(item) {
         engines := WebSearchProvider.Engines()
         for index, engine in engines {
-            if (ObjPtr(engine) = ObjPtr(item.Source)) {
+            if (Platform.ObjectId(engine) = Platform.ObjectId(item.Source)) {
                 engines.RemoveAt(index)
                 return AppSettings.Save()
             }

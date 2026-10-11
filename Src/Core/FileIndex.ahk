@@ -16,7 +16,7 @@
 ;===============================================================================
 
 class FileIndex {
-    static File     := AppSettings.DataDir "\FileIndex.json"
+    static File     := Platform.Join(AppSettings.DataDir, "FileIndex.json")
     static Paths    := [], Names := [], Folders := []     ; 三个平行数组: 完整路径 / 小写文件名 / 是否文件夹
     static Scanning := false
     static _stack := [], _new := "", _timer := "", _lastNeedle := "", _lastMatches := ""
@@ -53,7 +53,9 @@ class FileIndex {
         options := AppSettings.Feature("FileSearch")
         FileIndex._stack := []
         for folder in options["ScopeFolders"] {
-            resolved := RTrim(Path.Resolve(folder), "\")
+            resolved := Path.Resolve(folder)
+            if (Platform.IsWindows || resolved != "/")
+                resolved := RTrim(resolved, "\/")
             if (resolved != "" && DirExist(resolved))
                 FileIndex._stack.Push([resolved, 0])
         }
@@ -73,7 +75,7 @@ class FileIndex {
             entry := FileIndex._stack.Pop()
             folder := entry[1], depth := entry[2]
             try {
-                Loop Files, folder "\*", "FD" {
+                Loop Files, Platform.Join(folder, "*"), "FD" {
                     if (A_LoopFileAttrib ~= "[HS]")                             ; 跳过隐藏 / 系统文件
                         continue
                     if (exclude != "" && RegExMatch(A_LoopFileFullPath, exclude))
@@ -166,6 +168,8 @@ class FileIndex {
             return false
         try {
             data := JSON.Parse(FileRead(FileIndex.File, "UTF-8"))
+            if (data.Has("Platform") ? data["Platform"] != FileIndex._PlatformId() : !Platform.IsWindows)
+                return false
             FileIndex.Paths := data["Paths"], FileIndex.Folders := data["Folders"]
             names := []
             for fullPath in FileIndex.Paths {
@@ -185,9 +189,11 @@ class FileIndex {
         return DateDiff(A_Now, FileGetTime(FileIndex.File, "M"), "Minutes") >= minutes
     }
 
+    static _PlatformId() => Platform.IsWindows ? "Windows" : Platform.IsMac ? "macOS" : "Linux"
+
     static _SaveCache() {
         try {
-            JSON.WriteFile(FileIndex.File, Map("Paths", FileIndex.Paths, "Folders", FileIndex.Folders))
+            JSON.WriteFile(FileIndex.File, Map("Platform", FileIndex._PlatformId(), "Paths", FileIndex.Paths, "Folders", FileIndex.Folders))
         } catch as e {
             Logger.Error("FileIndex: cannot write cache - " e.Message)
         }

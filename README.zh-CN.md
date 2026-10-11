@@ -2,6 +2,8 @@
 
 <p align="center"><a href="README.md">English</a> | <b>简体中文</b></p>
 
+> **仅支持 Keysharp 的分支：** 本 [ALTRun](https://github.com/zhugecaomao/ALTRun) 分支需要 [Keysharp](https://github.com/keysharp-org/Keysharp)，不能使用 AutoHotkey 运行或使用 Ahk2Exe 编译。安装方式及平台支持见下文的 Keysharp 源码运行说明。
+
 <p align="center">
   <b>轻量、开源的 Windows 启动器，操作方式参照 macOS 上的 <a href="https://www.alfredapp.com/">Alfred</a></b><br>
   按 <code>Alt+Space</code>，输入几个字母，按 <code>Enter</code>：程序、文件、网页、计算、剪贴板、系统命令，一个窗口完成
@@ -49,7 +51,7 @@
 2. 按 `Alt+Space`（或 `Alt+R`）打开搜索窗口，输入名称，按 `Enter` 打开；也可以在偏好设置中改为双击 `Ctrl` / `Shift` 呼出。
 3. 输入 `?` 查看全部语法和快捷键；按 `Ctrl+,` 打开偏好设置。
 
-已安装 [AutoHotkey v2](https://www.autohotkey.com/) 时，也可以直接运行源码中的 `ALTRun.ahk`。
+上面的下载方式对应已发布的 Windows AutoHotkey 版本。当前源码使用 Keysharp 指令和托管辅助代码，请按下面的方法用 Keysharp 运行。
 
 **通过 [Scoop](https://scoop.sh/) 安装**（自动创建开始菜单快捷方式，升级时保留设置）：
 ```powershell
@@ -60,6 +62,26 @@ scoop update altrun    # 升级（请先退出 ALTRun）
 winget 清单已提交，收录后可使用 `winget install zhugecaomao.ALTRun` 安装。
 
 **升级**：有新版本时搜索窗口中显示“发现新版本”，按 `Enter` 安装，设置保留。从较早的版本或 2.x 升级见[安装与升级](https://github.com/zhugecaomao/ALTRun/wiki/Installation)。
+
+### 用 Keysharp 运行当前源码
+
+安装或编译适合本机系统的 [Keysharp](https://github.com/keysharp-org/Keysharp)，包含解析器和编译器组件。保留 `ALTRun.ahk`、`ALTRun.Modules.ahk`、`Lib/`、`Src/`、`Resources/`，在 ALTRun 文件夹中运行：
+
+```powershell
+# Windows
+& 'C:\path\to\Keysharp.exe' .\ALTRun.ahk
+```
+
+```sh
+# Linux 或 macOS
+/path/to/Keysharp ALTRun.ahk
+```
+
+源码移植版为 Linux/macOS 提供标准控件界面、Linux `.desktop` 应用索引、macOS `.app` 索引、本机路径处理、已安装的终端和跨平台脚本输出捕获。标准界面已在 Windows 和 Ubuntu 24.04 的 X11/Xvfb 环境通过冒烟检查，涵盖搜索结果、操作面板、偏好设置和文件夹浏览。macOS 为实验性支持，尚未验证。全局热键、托盘、窗口切换和剪贴板自动化取决于 Keysharp 桌面后端与桌面会话，尚未验证原生 Wayland 集成。如果窗口管理器占用了 `Alt+Space`，可在偏好设置里换一个热键。
+
+Everything、Microsoft Store 索引、资源管理器/Total Commander 对话框快速跳转、Windows 输入法/CapsLock 集成、外壳属性/提权、Windows 开机启动和“发送到”快捷方式仍是 Windows 集成，在其它系统上会禁用。Linux/macOS 使用本地文件索引。脚本支持 `.ahk`/`.ks`、`.sh`、`.py`、`.ps1`，需要对应解释器；`.bat`/`.cmd` 仅限 Windows。通过脚本扩展启动源码脚本时，Keysharp 的编译器组件也必须保留。
+
+当前源码不能由 AutoHotkey v2/Ahk2Exe 运行或编译。现有 Windows 发布工作流和可下载的 AutoHotkey 可执行文件不包含这个 Keysharp 移植版。用 Keysharp 运行时只检查更新，不会用这些二进制文件替换自身；请从源码更新。数据位置和平台限制见[安装与升级](docs/wiki/Installation.md)。
 
 
 ## 功能

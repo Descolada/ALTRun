@@ -51,9 +51,9 @@ class RecentProvider {
             return ""
         if RegExMatch(item.Uid, "^system:(.+)$", &m)
             return Map("System", m[1], "Title", item.Title, "Uid", item.Uid)
-        if (RegExMatch(item.Kind, "^(file|folder|url)$") && item.Arg != "" && !IsObject(item.OnRun))
+        if (RegExMatch(item.Kind, "^(file|folder|url)$") && item.Arg != "" && (!IsObject(item.OnRun) || item.Provider = "Applications"))
             return Map("Title", item.Title, "Subtitle", item.Subtitle, "Kind", item.Kind, "Arg", item.Arg, "Arguments", item.Arguments
-                     , "Icon", IsObject(item.Icon) ? "" : item.Icon, "Uid", (item.Uid != "") ? item.Uid : item.Kind ":" StrLower(item.Arg))
+                     , "Icon", IsObject(item.Icon) ? "" : item.Icon, "Uid", (item.Uid != "") ? item.Uid : item.Kind ":" Platform.Identity(item.Arg))
         return ""
     }
 
@@ -63,7 +63,7 @@ class RecentProvider {
             return
         recent := Knowledge.Recent
         for index, previous in recent {
-            if (previous is Map && previous.Has("Uid") && previous["Uid"] = entry["Uid"]) {
+            if (previous is Map && previous.Has("Uid") && RecentProvider._SameUid(previous["Uid"], entry["Uid"])) {
                 recent.RemoveAt(index)
                 break
             }
@@ -77,7 +77,7 @@ class RecentProvider {
     static IsPinned(item) {
         uid := IsObject(entry := RecentProvider.Snapshot(item)) ? entry["Uid"] : ""
         for pinned in AppSettings.Feature("Recent")["Pinned"]
-            if (pinned is Map && pinned.Has("Uid") && pinned["Uid"] = uid)
+            if (pinned is Map && pinned.Has("Uid") && RecentProvider._SameUid(pinned["Uid"], uid))
                 return true
         return false
     }
@@ -95,7 +95,7 @@ class RecentProvider {
     static Unpin(uid) {
         pinned := AppSettings.Feature("Recent")["Pinned"]
         for index, entry in pinned {
-            if (entry is Map && entry.Has("Uid") && entry["Uid"] = uid) {
+            if (entry is Map && entry.Has("Uid") && RecentProvider._SameUid(entry["Uid"], uid)) {
                 pinned.RemoveAt(index)
                 return AppSettings.Save()
             }
@@ -134,11 +134,13 @@ class RecentProvider {
         return item
     }
 
+    static _SameUid(left, right) => Platform.IsWindows ? left = right : left == right
+
     static DeleteItem(item) {
         if item.Pinned
             return RecentProvider.Unpin(item.Uid)
         for index, entry in Knowledge.Recent {
-            if (entry is Map && entry.Has("Uid") && entry["Uid"] = item.Uid) {
+            if (entry is Map && entry.Has("Uid") && RecentProvider._SameUid(entry["Uid"], item.Uid)) {
                 Knowledge.Recent.RemoveAt(index)
                 Knowledge.Save()
                 return true

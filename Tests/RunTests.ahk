@@ -1,4 +1,4 @@
-﻿;===============================================================================
+;===============================================================================
 ; RunTests.ahk - ALTRun 单元测试 (AutoHotkey v2)
 ;-------------------------------------------------------------------------------
 ; 只测试不依赖界面的纯逻辑: 匹配打分、输入解析、设置升级、计算器、加日期、
@@ -7,10 +7,15 @@
 ; 结果输出到标准输出, 退出码 = 失败的数量 (0 = 全部通过)。
 ;===============================================================================
 #Requires AutoHotkey v2.0
+#ErrorStdOut
 #SingleInstance Off
 #NoTrayIcon
 #Warn All, StdOut
+#Warn Experimental, Off
+#Import Ks { Clr, A_OSType, A_DirSeparator, Clipboard, Image, Http, Crypt, Font }
 
+#Include ../Lib/Platform.ahk
+#Include ../Lib/ProcessRunner.ahk
 #Include %A_ScriptDir%\..\Lib\JSON.ahk
 #Include %A_ScriptDir%\..\Lib\Logger.ahk
 #Include %A_ScriptDir%\..\Lib\Util.ahk

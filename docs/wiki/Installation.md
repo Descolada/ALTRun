@@ -2,16 +2,38 @@
 
 # 安装与升级
 
-## 系统要求
+## 已发布 Windows 安装包的系统要求
 - Windows 10 或 Windows 11 (64 位)
-- 用源码运行时需要 [AutoHotkey v2](https://www.autohotkey.com/) 2.0 或更新版本; 发布的 exe 不需要
+- 已发布的可执行文件包含 AutoHotkey，不需要另装解释器
 - 不需要 .NET、Electron 或其他运行库; 下载的 zip 不到 1 MB, 解压后约 2 MB
 
-## 安装
+## 用 Keysharp 运行当前源码
+
+当前源码需要包含解析器和编译器组件的 [Keysharp](https://github.com/keysharp-org/Keysharp)。源码使用 `#Import`、平台条件指令和托管辅助代码，AutoHotkey v2 与 Ahk2Exe 无法运行或编译它。安装 Keysharp 在本机系统上的依赖，保留 `ALTRun.ahk`、`ALTRun.Modules.ahk`、`Lib/`、`Src/`、`Resources/`，在 ALTRun 文件夹中运行：
+
+```powershell
+# Windows
+& 'C:\path\to\Keysharp.exe' .\ALTRun.ahk
+```
+
+```sh
+# Linux 或 macOS
+/path/to/Keysharp ALTRun.ahk
+```
+
+Linux/macOS 使用标准控件界面。Linux 通过 XDG `.desktop` 文件发现应用，macOS 扫描 `.app` 包。文件浏览支持 `/绝对路径/`、`~/`、`$HOME/`，Unix 文件身份保留大小写。终端与 `.sh`、`.py`、`.ps1`、`.ahk`/`.ks` 脚本使用本机解释器及参数数组；后台脚本捕获标准输出/错误，超时会终止整个进程树。输出按 UTF-8 解码；Windows 脚本调用仍输出 OEM 编码的旧工具时，应把输出转为 UTF-8。运行源码脚本时须保留 Keysharp 编译器。
+
+标准界面已在 Windows 和 Ubuntu 24.04 的 X11/Xvfb 环境通过冒烟检查，涵盖搜索结果、操作面板、偏好设置和文件夹浏览。这些检查不代表验证了原生 Wayland 或全局钩子集成。macOS 为实验性支持，尚未验证。全局热键、托盘、窗口枚举/激活和剪贴板自动化取决于 Keysharp 桌面后端与桌面会话。窗口管理器可能占用 `Alt+Space`，可在偏好设置里换一个热键。
+
+Everything、Microsoft Store 索引、资源管理器/Total Commander 对话框快速跳转、Windows 输入法/CapsLock、外壳属性/提权、Windows 启动/开始菜单/“发送到”集成仅限 Windows，在其它平台禁用。其它平台使用本地文件索引。可写的源码目录在程序旁保留 `Data/`；否则使用本机用户应用数据位置：Linux 的 `$XDG_DATA_HOME/ALTRun` 或 `~/.local/share/ALTRun`，macOS 的 `~/Library/Application Support/ALTRun`。
+
+现有可下载程序、Scoop/winget 包和发布工作流都是 AutoHotkey Windows 构建，不包含此 Keysharp 移植版。用 Keysharp 检查更新时打开发布页面或提示更新源码，不会用 AutoHotkey 包替换 Keysharp 可执行文件。请从源码更新此版本；Keysharp 发布需要单独的平台打包工作流。
+
+## 安装已发布的 Windows 版本
 ALTRun 是绿色软件, 不需要安装, 不写注册表。
 
 1. 从 [Releases](https://github.com/zhugecaomao/ALTRun/releases/latest) 下载最新版本, 解压到任意文件夹 (例如 `D:\Apps\ALTRun`)
-   - 或者克隆仓库, 双击 `ALTRun.ahk` 用 AutoHotkey v2 运行
+   - 运行当前源码请参考上面的 Keysharp 说明
 2. 运行后托盘出现 ALTRun 图标, 按 `Alt+Space` 呼出搜索窗口
 3. 第一次运行会在后台建立应用索引, 几秒后就能搜到开始菜单里的程序
 

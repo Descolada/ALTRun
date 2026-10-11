@@ -16,7 +16,7 @@
 ;===============================================================================
 
 class Logger {
-    static File    := A_Temp "\ALTRun.log"
+    static File    := Platform.Join(A_Temp, "ALTRun.log")
     static _buffer := []
     static _maxBuf := 60                        ; 攒够这么多条才写一次盘
     static Enabled := true
@@ -27,11 +27,7 @@ class Logger {
 
     ; 高精度的毫秒数 (QueryPerformanceCounter; A_TickCount 的精度只有 10 ~ 16 ms)
     static Ms() {
-        static freq := 0
-        if !freq
-            DllCall("QueryPerformanceFrequency", "Int64*", &freq)
-        DllCall("QueryPerformanceCounter", "Int64*", &now := 0)
-        return now * 1000 / freq
+        return Platform.Milliseconds()
     }
 
     ; 从 start (Logger.Ms()) 到现在的耗时写进日志, 返回毫秒数

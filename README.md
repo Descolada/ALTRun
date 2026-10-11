@@ -2,6 +2,8 @@
 
 <p align="center"><b>English</b> | <a href="README.zh-CN.md">简体中文</a></p>
 
+> **Keysharp-only fork:** This fork of [ALTRun](https://github.com/zhugecaomao/ALTRun) requires [Keysharp](https://github.com/keysharp-org/Keysharp). It cannot run with AutoHotkey or be compiled with Ahk2Exe. See [Running this source checkout with Keysharp](#running-this-source-checkout-with-keysharp) for setup and platform support.
+
 <p align="center">
   <b>A lightweight, open-source launcher for Windows, modeled on <a href="https://www.alfredapp.com/">Alfred</a> for macOS</b><br>
   Press <code>Alt+Space</code>, type a few letters, press <code>Enter</code>: apps, files, web search, calculations, clipboard and system commands, all from one window
@@ -49,7 +51,7 @@
 2. Press `Alt+Space` (or `Alt+R`) to open the search window, type a name and press `Enter`. In Preferences you can switch to a double tap of `Ctrl` / `Shift` instead.
 3. Type `?` to see every syntax and shortcut; press `Ctrl+,` to open Preferences.
 
-With [AutoHotkey v2](https://www.autohotkey.com/) installed, you can also run `ALTRun.ahk` from the source code directly.
+The download instructions above describe the published Windows AutoHotkey build. This source checkout uses Keysharp directives and managed helpers; run it with Keysharp as described below.
 
 **Install with [Scoop](https://scoop.sh/)** (creates a Start menu shortcut and keeps your settings across upgrades):
 ```powershell
@@ -60,6 +62,26 @@ scoop update altrun    # upgrade (quit ALTRun first)
 The winget manifest has been submitted; once it is accepted you can install with `winget install zhugecaomao.ALTRun`.
 
 **Upgrading**: when a new version is available, the search window shows "Update Available"; press `Enter` to install it, and your settings are kept. Upgrading from an older version or from 2.x: see [Installation and upgrades](https://github.com/zhugecaomao/ALTRun/wiki/en-Installation).
+
+### Running this source checkout with Keysharp
+
+Install or build [Keysharp](https://github.com/keysharp-org/Keysharp) for your operating system, including its parser and compiler components, then keep `ALTRun.ahk`, `ALTRun.Modules.ahk`, `Lib/`, `Src/` and `Resources/` together. Run from the ALTRun folder:
+
+```powershell
+# Windows
+& 'C:\path\to\Keysharp.exe' .\ALTRun.ahk
+```
+
+```sh
+# Linux or macOS
+/path/to/Keysharp ALTRun.ahk
+```
+
+The source port provides a standard-control interface for Linux/macOS, Linux `.desktop` application discovery, macOS `.app` discovery, native path handling, installed terminals, and portable script output capture. The portable interface passed smoke checks on Windows and Ubuntu 24.04 under X11/Xvfb, including search results, actions, preferences and folder browsing. macOS is experimental and unverified. Global shortcuts, tray icons, window switching and clipboard automation depend on the Keysharp desktop backend and the desktop session; native Wayland integration has not been verified. Choose another shortcut in Preferences if the window manager owns `Alt+Space`.
+
+Everything, Microsoft Store indexing, Explorer/Total Commander Quick Switch, Windows input-language/CapsLock integration, shell properties/elevation and Windows startup/Send To shortcuts remain Windows integrations and are guarded off elsewhere. Linux/macOS use a local file index. Scripts support `.ahk`/`.ks`, `.sh`, `.py` and `.ps1` when their interpreters are installed; `.bat`/`.cmd` are Windows-only. Keep Keysharp's compiler deployed when launching source scripts from the Scripts provider.
+
+This checkout cannot be run or compiled by AutoHotkey v2/Ahk2Exe. The existing Windows release workflow and downloadable AutoHotkey executables do not package this Keysharp source port. Keysharp runs check for updates without replacing themselves with those binaries; update this checkout from source instead. See [Installation and upgrades](docs/wiki/en-Installation.md) for data locations and platform limits.
 
 
 ## Features

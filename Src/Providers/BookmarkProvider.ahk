@@ -55,19 +55,43 @@ class BookmarkProvider {
     ; 所有浏览器的所有配置里的 Bookmarks 文件
     static Files() {
         files := []
-        for browser in BookmarkProvider.Browsers {
-            root := EnvGet("LOCALAPPDATA") "\" browser[2]
+        for browser in BookmarkProvider.BrowserRoots() {
+            root := browser[2]
             if !DirExist(root)
                 continue
-            Loop Files, root "\*", "D"
-                if FileExist(A_LoopFileFullPath "\Bookmarks")
-                    files.Push([browser[1], A_LoopFileFullPath "\Bookmarks"])
+            Loop Files, Platform.Join(root, "*"), "D"
+                if FileExist(file := Platform.Join(A_LoopFileFullPath, "Bookmarks"))
+                    files.Push([browser[1], file])
         }
         return files
     }
 
+    static BrowserRoots() {
+        roots := []
+        if Platform.IsWindows {
+            base := EnvGet("LOCALAPPDATA")
+            if (base != "")
+                for browser in BookmarkProvider.Browsers
+                    roots.Push([browser[1], Platform.Join(base, browser[2])])
+            return roots
+        }
+        if Platform.IsMac {
+            base := Platform.Join(Platform.Home, "Library", "Application Support")
+            browsers := [["Chrome", "Google/Chrome"], ["Edge", "Microsoft Edge"], ["Brave", "BraveSoftware/Brave-Browser"], ["Vivaldi", "Vivaldi"]]
+        } else {
+            base := EnvGet("XDG_CONFIG_HOME")
+            if (SubStr(base, 1, 1) != "/")
+                base := Platform.Join(Platform.Home, ".config")
+            browsers := [["Chrome", "google-chrome"], ["Chromium", "chromium"], ["Edge", "microsoft-edge"], ["Brave", "BraveSoftware/Brave-Browser"], ["Vivaldi", "vivaldi"]]
+        }
+        for browser in browsers
+            roots.Push([browser[1], Platform.Join(base, browser[2])])
+        return roots
+    }
+
     static Load() {
         items := [], seen := Map(), stamp := ""
+        seen.CaseSense := "On"
         for bookmarkFile in BookmarkProvider.Files() {
             try {
                 fileStamp := bookmarkFile[2] FileGetTime(bookmarkFile[2], "M") "|"
@@ -118,7 +142,7 @@ class BookmarkProvider {
         stamp := ""
         for bookmarkFile in BookmarkProvider.Files()
             try stamp .= bookmarkFile[2] FileGetTime(bookmarkFile[2], "M") "|"
-        if (stamp != BookmarkProvider._stamp)
+        if !(stamp == BookmarkProvider._stamp)
             BookmarkProvider.Load()
     }
 }

@@ -14,7 +14,7 @@
 
 class CurrencyRates {
     static Url   := "https://api.frankfurter.dev/v1/latest?base=EUR"
-    static File  := AppSettings.DataDir "\Currency.json"
+    static File  := Platform.Join(AppSettings.DataDir, "Currency.json")
     static Date  := "", Fetched := ""
     static StaleHours := 12
     static _timer := ""
@@ -60,7 +60,7 @@ class CurrencyRates {
     }
 
     static Refresh() {
-        tmpFile := A_Temp "\ALTRun_rates.json"
+        tmpFile := Platform.Join(A_Temp, "ALTRun_rates." Platform.NewUuid() ".json")
         try {
             Download(CurrencyRates.Url, tmpFile)
             data := JSON.Parse(FileRead(tmpFile, "UTF-8"))

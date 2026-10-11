@@ -37,8 +37,8 @@ class ThemeManager {
     static Current  := Map()
     static Name     := "Light"                      ; 设置里选的主题
     static Resolved := "Light"                      ; 实际使用的主题 (System -> Light / Dark)
-    static BuiltinDir := A_ScriptDir "\Resources\Themes"
-    static UserDir    := AppSettings.Portable ? A_ScriptDir "\Themes" : AppSettings.UserDir "\Themes"
+    static BuiltinDir := Platform.Join(A_ScriptDir, "Resources", "Themes")
+    static UserDir    := Platform.Join(AppSettings.Portable ? A_ScriptDir : AppSettings.UserDir, "Themes")
     static BuiltinOrder := ["Dark", "DarkCompact", "LightCompact", "Classic", "Midnight", "MidnightCompact", "Frost", "Graphite", "Ocean", "Paper"
                           , "DarkModern", "LightModern", "Monokai", "OneDark", "TokyoNight", "Dracula", "CatppuccinMocha", "GruvboxDark", "SolarizedLight"]   ; 列表里的顺序
     static _listening := false
@@ -69,14 +69,16 @@ class ThemeManager {
 
     ; 主题的 FontName -> 实际字体: "auto" (或空) 按界面语言选
     static FontFrom(name) {
-        if (name != "" && name != "auto")
+        if (name = "" || name = "auto")
+            name := I18n.Font
+        if (name != "" && Font.Exists(name))
             return name
-        return (I18n.Font != "") ? I18n.Font : "Segoe UI"                    ; 语言文件的 "_font"
+        return Font.UiDefault.Name
     }
 
     ; 主题名 -> 完整的键值 Map: 从 Light 开始, 沿 "Base" 逐层叠加。builtinOnly = 只找内置主题
     static Resolve(themeName, builtinOnly := false, depth := 0) {
-        if (themeName = "Light" && !FileExist(ThemeManager.UserDir "\Light.json") || depth > 8)
+        if (themeName = "Light" && !FileExist(Platform.Join(ThemeManager.UserDir, "Light.json")) || depth > 8)
             return ThemeManager.Defaults()
         themeFile := ThemeManager.FileFor(themeName, builtinOnly)
         if (themeFile = "")
@@ -106,23 +108,23 @@ class ThemeManager {
     static FileFor(themeName, builtinOnly := false) {
         folders := builtinOnly ? [ThemeManager.BuiltinDir] : [ThemeManager.UserDir, ThemeManager.BuiltinDir]
         for folder in folders
-            if FileExist(folder "\" themeName ".json")
-                return folder "\" themeName ".json"
+            if FileExist(Platform.Join(folder, themeName ".json"))
+                return Platform.Join(folder, themeName ".json")
         return ""
     }
 
     static IsBuiltin(themeName) {
-        return (themeName = "System" || themeName = "Light" || FileExist(ThemeManager.BuiltinDir "\" themeName ".json") != "")
+        return (themeName = "System" || themeName = "Light" || FileExist(Platform.Join(ThemeManager.BuiltinDir, themeName ".json")) != "")
     }
 
     ; System, Light, 内置主题 (按 BuiltinOrder, 其余按文件名), 用户主题
     static Names() {
         names := ["System", "Light"]
         for themeName in ThemeManager.BuiltinOrder
-            if FileExist(ThemeManager.BuiltinDir "\" themeName ".json")
+            if FileExist(Platform.Join(ThemeManager.BuiltinDir, themeName ".json"))
                 names.Push(themeName)
         for folder in [ThemeManager.BuiltinDir, ThemeManager.UserDir] {
-            Loop Files, folder "\*.json" {
+            Loop Files, Platform.Join(folder, "*.json") {
                 SplitPath(A_LoopFileName, , , , &themeName)
                 if !ThemeManager._Contains(names, themeName)
                     names.Push(themeName)
@@ -133,13 +135,15 @@ class ThemeManager {
 
     ; Windows 设置 -> 个性化 -> 颜色 -> "选择默认应用模式"
     static SystemUsesDark() {
+#if WINDOWS
         try return !RegRead("HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme")
+#endif
         return false
     }
 
     ; 系统切换浅色 / 深色时 Windows 广播 WM_SETTINGCHANGE ("ImmersiveColorSet"), 重新载入换主题
     static _WatchSystemTheme() {
-        if ThemeManager._listening
+        if (!Platform.IsWindows || ThemeManager._listening)
             return
         ThemeManager._listening := true
         OnMessage(0x1A, (wParam, lParam, *) => ThemeManager._OnSettingChange(lParam))

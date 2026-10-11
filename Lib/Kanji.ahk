@@ -22,7 +22,7 @@ Class Kanji {
         Kanji._s2t := Map()
         Kanji._t2s := Map()
 
-        dataFile := A_ScriptDir "\Resources\Kanji.txt"
+        dataFile := Platform.Join(A_ScriptDir, "Resources", "Kanji.txt")
         if !FileExist(dataFile) {
             Logger.Debug("Kanji: Resources\Kanji.txt not found, simplified/traditional conversion disabled")
             return

@@ -2,16 +2,38 @@
 
 # Installation and upgrades
 
-## System requirements
+## Published Windows package requirements
 - Windows 10 or Windows 11 (64-bit)
-- Running from source needs [AutoHotkey v2](https://www.autohotkey.com/) 2.0 or later; the released exe doesn't
+- The published executable contains AutoHotkey; no separate interpreter is needed
 - No .NET, Electron or other runtime; the zip is under 1 MB and about 2 MB unpacked
 
-## Installing
+## Running the Keysharp source checkout
+
+This source checkout requires [Keysharp](https://github.com/keysharp-org/Keysharp) with its parser and compiler components. It uses `#Import`, conditional platform directives and managed helpers, so AutoHotkey v2 and Ahk2Exe cannot run or compile it. Install the Keysharp dependencies for your operating system, retain `ALTRun.ahk`, `ALTRun.Modules.ahk`, `Lib/`, `Src/` and `Resources/`, and run from the ALTRun folder:
+
+```powershell
+# Windows
+& 'C:\path\to\Keysharp.exe' .\ALTRun.ahk
+```
+
+```sh
+# Linux or macOS
+/path/to/Keysharp ALTRun.ahk
+```
+
+Linux/macOS use a standard-control interface. Linux discovers applications through XDG `.desktop` entries; macOS scans `.app` bundles. File browsing accepts `/absolute/paths/`, `~/` and `$HOME/`, and preserves case in Unix file identities. Installed terminals and `.sh`, `.py`, `.ps1`, `.ahk`/`.ks` scripts use platform interpreters and argument arrays; background scripts capture stdout/stderr and terminate their process tree on timeout. Captured output is decoded as UTF-8; Windows scripts invoking legacy OEM-encoded tools should convert their output to UTF-8. Keep the Keysharp compiler deployed for source scripts.
+
+The portable interface passed smoke checks on Windows and Ubuntu 24.04 under X11/Xvfb, covering search results, action panels, preferences and folder browsing. These checks do not establish native Wayland or global-hook integration. macOS support is experimental and unverified. Global shortcuts, tray support, window enumeration/activation and clipboard automation depend on the Keysharp desktop backend and session. A window manager may reserve `Alt+Space`; choose another hotkey in Preferences.
+
+Everything, Microsoft Store indexing, Explorer/Total Commander Quick Switch, Windows input-language/CapsLock handling, shell properties/elevation and Windows Startup/Start menu/Send To integration are Windows-only. Other platforms use the local file index, and these Windows integrations are disabled. Writable source folders keep `Data/` beside the program; otherwise user data uses the platform's application-data location (`$XDG_DATA_HOME/ALTRun` or `~/.local/share/ALTRun` on Linux, `~/Library/Application Support/ALTRun` on macOS).
+
+The existing downloadable executables, Scoop/winget packages and release workflow are AutoHotkey Windows builds, and do not package this Keysharp port. Keysharp update checks open the release page or suggest a source update; they never replace a Keysharp executable with an AutoHotkey package. Update this checkout from source. A Keysharp release needs a separate platform-specific packaging workflow.
+
+## Installing the published Windows package
 ALTRun is portable: there is nothing to install and nothing is written to the registry.
 
 1. Download the latest version from [Releases](https://github.com/zhugecaomao/ALTRun/releases/latest) and unzip it to any folder (for example `D:\Apps\ALTRun`)
-   - Or clone the repository and double-click `ALTRun.ahk` to run it with AutoHotkey v2
+   - To run this source checkout, follow the Keysharp instructions above
 2. The ALTRun icon appears in the notification area; press `Alt+Space` to open the search window
 3. The first run builds the app index in the background; after a few seconds your Start menu programs can be found
 

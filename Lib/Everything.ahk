@@ -17,11 +17,15 @@ class Everything {
     static _replyId := 0x414C5400, _pending := 0, _results := "", _listening := false
 
     static IsRunning() {
+        if !Platform.IsWindows
+            return false
         return DllCall("FindWindowW", "Str", "EVERYTHING_TASKBAR_NOTIFICATION", "Ptr", 0, "Ptr") != 0
     }
 
     ; 返回 [{Path, IsFolder}], Everything 没运行或超时返回空数组
     static Query(search, maxResults := 30, sort := 14, timeoutMs := 1000) {
+        if !Platform.IsWindows
+            return []
         everythingHwnd := DllCall("FindWindowW", "Str", "EVERYTHING_TASKBAR_NOTIFICATION", "Ptr", 0, "Ptr")
         if !everythingHwnd
             return []

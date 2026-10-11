@@ -61,18 +61,18 @@ class ActionCatalog {
         switch item.Kind {
             case "file":
                 add("Action.Open", target, (*) => ActionCatalog.OpenFile(target, item.Arguments), enter)
-                if RegExMatch(target, "i)\.(exe|lnk|bat|cmd|msc|ps1)$")
+                if (Platform.IsWindows && RegExMatch(target, "i)\.(exe|lnk|bat|cmd|msc|ps1)$"))
                     add("Action.RunAsAdmin", "res:imageres.dll,-78", (*) => ActionCatalog.RunAsAdmin(target, item.Arguments))
-                if FileExist(target)
+                if (Platform.IsWindows && FileExist(target))
                     add("Action.OpenWith", "res:shell32.dll,-16702", (*) => ActionCatalog.OpenWith(target))
                 add("Action.Reveal", "folder:", (*) => ActionCatalog.Reveal(target), "Ctrl+Enter")
                 add("Action.CopyPath", "res:imageres.dll,-5314", (*) => ActionCatalog.CopyText(target), "Alt+Enter")
                 add("Action.CopyName", "res:imageres.dll,-5314", (*) => ActionCatalog.CopyText(Path.Leaf(target)))
                 ActionCatalog._FileActions(list, target)
                 add("Action.OpenTerminal", "res:imageres.dll,-5323", (*) => TerminalProvider.OpenAt(ActionCatalog._ParentDir(target)))
-                if !ActionCatalog.IsShellItem(target)                       ; 应用商店应用 (shell:AppsFolder\...) 没有属性窗口
+                if (Platform.IsWindows && !ActionCatalog.IsShellItem(target))
                     add("Action.Properties", "res:imageres.dll,-81", (*) => ActionCatalog.ShowProperties(target))
-                if FileExist(target)
+                if (Platform.IsWindows && FileExist(target))
                     add("Action.Recycle", "res:shell32.dll,-32", (*) => ActionCatalog.Recycle(target))
             case "folder":
                 add("Action.Open", target, (*) => ActionCatalog.OpenFolder(target), enter)
@@ -80,8 +80,9 @@ class ActionCatalog {
                 add("Action.Reveal", "folder:", (*) => ActionCatalog.Reveal(target), "Ctrl+Enter")
                 add("Action.CopyPath", "res:imageres.dll,-5314", (*) => ActionCatalog.CopyText(target), "Alt+Enter")
                 ActionCatalog._FileActions(list, target)
-                add("Action.Properties", "res:imageres.dll,-81", (*) => ActionCatalog.ShowProperties(target))
-                if (FileExist(target) && !RegExMatch(RTrim(target, "\"), "^[A-Za-z]:$"))       ; 磁盘根目录不能删
+                if Platform.IsWindows
+                    add("Action.Properties", "res:imageres.dll,-81", (*) => ActionCatalog.ShowProperties(target))
+                if (Platform.IsWindows && FileExist(target) && !RegExMatch(RTrim(target, "\"), "^[A-Za-z]:$"))
                     add("Action.Recycle", "res:shell32.dll,-32", (*) => ActionCatalog.Recycle(target))
             case "url":
                 add("Action.Open", "url:", (*) => ActionCatalog.OpenUrl(target), enter)
@@ -117,19 +118,21 @@ class ActionCatalog {
         count := paths.Length
         add(I18n.T("Action.OpenAll", count), "res:imageres.dll,-5302", (*) => ActionCatalog.OpenMany(paths), "Enter")
         add(I18n.T("Action.CopyFiles", count), "res:imageres.dll,-5314", (*) => ActionCatalog.CopyFiles(paths), I18n.T("Action.CopyFile.Hint"))
-        add(I18n.T("Action.CutFiles", count), "res:imageres.dll,-5314", (*) => ActionCatalog.CopyFiles(paths, true), I18n.T("Action.CopyFile.Hint"))
+        if Platform.IsWindows
+            add(I18n.T("Action.CutFiles", count), "res:imageres.dll,-5314", (*) => ActionCatalog.CopyFiles(paths, true), I18n.T("Action.CopyFile.Hint"))
         joined := ""
         for markedPath in paths
             joined .= (joined = "" ? "" : "`r`n") markedPath
         add(I18n.T("Action.CopyPaths", count), "res:imageres.dll,-5314", (*) => ActionCatalog.CopyText(joined))
-        manager := QuickSwitch.FileManagerFolder()
+        manager := Platform.IsWindows ? QuickSwitch.FileManagerFolder() : ""
         destination := IsObject(manager) ? manager.Path : ""
         if (destination != "" && DirExist(destination)) {
             add(I18n.T("Action.CopyTo", manager.Tag), "folder:", (*) => ActionCatalog.CopyMany(paths, destination), destination)
             add(I18n.T("Action.MoveTo", manager.Tag), "folder:", (*) => ActionCatalog.CopyMany(paths, destination, true), destination)
         }
         add(I18n.T("Action.AddAllCommands"), "res:imageres.dll,-2", (*) => CustomCommandProvider.AddFromPaths(paths))
-        add(I18n.T("Action.RecycleAll", count), "res:shell32.dll,-32", (*) => ActionCatalog.RecycleMany(paths))
+        if Platform.IsWindows
+            add(I18n.T("Action.RecycleAll", count), "res:shell32.dll,-32", (*) => ActionCatalog.RecycleMany(paths))
         return list
     }
 
@@ -231,6 +234,11 @@ class ActionCatalog {
     ;---------------------------------------------------------------------------
     static OpenFile(target, arguments := "") {
         resolved := Path.Resolve(target)
+        if !Platform.IsWindows {
+            if RegExMatch(resolved, "i)\.(desktop|app)$")
+                return ApplicationProvider.Launch(resolved)
+            return Platform.Open(resolved, arguments)
+        }
         workDir := ActionCatalog._ParentDir(resolved)
         if RegExMatch(resolved, "i)^(shell:|::\{|[a-z]+:\/\/)") || !FileExist(resolved)
             return Run(Trim(resolved " " arguments))                        ; shell: 路径 / 协议 / PATH 里的程序名
@@ -238,11 +246,15 @@ class ActionCatalog {
     }
 
     static RunAsAdmin(target, arguments := "") {
+        if !Platform.IsWindows
+            return false
         Run(Trim('*RunAs "' Path.Resolve(target) '" ' arguments))
     }
 
     static OpenFolder(target) {
         resolved := Path.Resolve(target)
+        if !Platform.IsWindows
+            return Platform.Open(resolved)
         fileManager := AppSettings.General["FileManager"]
         if (fileManager = "" || InStr(fileManager, "explorer"))
             return Run('explorer.exe "' resolved '"')
@@ -251,6 +263,8 @@ class ActionCatalog {
 
     static Reveal(target) {
         resolved := Path.Resolve(target)
+        if !Platform.IsWindows
+            return Platform.Reveal(resolved)
         fileManager := AppSettings.General["FileManager"]
         if (fileManager = "" || InStr(fileManager, "explorer"))
             return Run('explorer.exe /select,"' resolved '"')
@@ -267,6 +281,8 @@ class ActionCatalog {
 
     ; 和资源管理器里 "右键 -> 属性" 一样。Run 的 properties 动词对网络盘上的文件夹等会失败, 所以用 SHObjectProperties
     static ShowProperties(target) {
+        if !Platform.IsWindows
+            return false
         target := Path.Resolve(target)
         if !DllCall("shell32\SHObjectProperties", "Ptr", 0, "UInt", 0x2, "WStr", target, "Ptr", 0)   ; 0x2 = SHOP_FILEPATH
             Run('properties "' target '"')
@@ -302,17 +318,22 @@ class ActionCatalog {
             A_Clipboard := savedClipboard
             return false
         }
-        SendInput("^v")
-        Sleep(delay)
-        A_Clipboard := savedClipboard
+        try {
+            SendInput(Platform.PasteShortcut)
+            Sleep(delay)
+        } finally {
+            A_Clipboard := savedClipboard
+        }
         return true
     }
 
     ; 复制 / 剪切文件, 复制 / 移动到文件管理器当前的文件夹 (真实存在的本地或网络路径才有)
     static _FileActions(list, target) {
-        if (!RegExMatch(target, "^([A-Za-z]:\\|\\\\)") || !FileExist(target))
+        if !FileExist(target)
             return
         list.Push(ResultItem(I18n.T("Action.CopyFile"), I18n.T("Action.CopyFile.Hint"), {Icon: "res:imageres.dll,-5314", OnRun: (*) => ActionCatalog.CopyFiles([target])}))
+        if !Platform.IsWindows
+            return
         list.Push(ResultItem(I18n.T("Action.CutFile"), I18n.T("Action.CopyFile.Hint"), {Icon: "res:imageres.dll,-5314", OnRun: (*) => ActionCatalog.CopyFiles([target], true)}))
         manager := QuickSwitch.FileManagerFolder()
         destination := IsObject(manager) ? manager.Path : ""

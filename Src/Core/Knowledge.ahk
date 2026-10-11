@@ -16,8 +16,8 @@
 ;===============================================================================
 
 class Knowledge {
-    static File        := AppSettings.DataDir "\Knowledge.json"
-    static Picks       := Map()      ; uid -> Map("Count", n, "Last", "yyyyMMddHHmmss")
+    static File        := Platform.Join(AppSettings.DataDir, "Knowledge.json")
+    static Picks       := Knowledge._UidMap() ; uid -> Map("Count", n, "Last", "yyyyMMddHHmmss")
     static QueryPicks  := Map()      ; 小写输入 -> Map(uid -> 次数)
     static History     := []
     static Recent      := []         ; 最近打开的项目 (新的在前), 见 RecentProvider
@@ -25,15 +25,19 @@ class Knowledge {
     static _saveTimer  := ""
 
     static Load() {
-        Knowledge.Picks := Map(), Knowledge.QueryPicks := Map(), Knowledge.History := [], Knowledge.Recent := []
+        Knowledge.Picks := Knowledge._UidMap(), Knowledge.QueryPicks := Map(), Knowledge.History := [], Knowledge.Recent := []
         if !FileExist(Knowledge.File)
             return
         try {
             data := JSON.Parse(FileRead(Knowledge.File, "UTF-8"))
             if (data.Has("Picks") && data["Picks"] is Map)
-                Knowledge.Picks := data["Picks"]
-            if (data.Has("QueryPicks") && data["QueryPicks"] is Map)
+                Knowledge.Picks := Knowledge._UidMap(data["Picks"])
+            if (data.Has("QueryPicks") && data["QueryPicks"] is Map) {
                 Knowledge.QueryPicks := data["QueryPicks"]
+                for query, picks in Knowledge.QueryPicks
+                    if (picks is Map)
+                        Knowledge.QueryPicks[query] := Knowledge._UidMap(picks)
+            }
             if (data.Has("History") && data["History"] is Array)
                 Knowledge.History := data["History"]
             if (data.Has("Recent") && data["Recent"] is Array)
@@ -53,6 +57,7 @@ class Knowledge {
 
     static Record(queryText, uid) {
         queryText := StrLower(Trim(queryText))
+        uid := Platform.Identity(uid)
         Knowledge.AddHistory(queryText)
         if (uid = "")
             return Knowledge._SaveLater()
@@ -63,7 +68,7 @@ class Knowledge {
         Knowledge.Picks[uid] := entry
 
         if (queryText != "" && StrLen(queryText) <= Knowledge.MaxQueryLen) {
-            picks := Knowledge.QueryPicks.Has(queryText) ? Knowledge.QueryPicks[queryText] : Map()
+            picks := Knowledge.QueryPicks.Has(queryText) ? Knowledge.QueryPicks[queryText] : Knowledge._UidMap()
             picks[uid] := (picks.Has(uid) ? picks[uid] : 0) + 1
             Knowledge.QueryPicks[queryText] := picks
         }
@@ -87,6 +92,7 @@ class Knowledge {
 
     ; 排序加分: 常用程度 (最多约 +25) + 最近用过 (+5) + 这个输入及其前缀选过它 (最多约 +60)
     static Boost(queryText, uid) {
+        uid := Platform.Identity(uid)
         if (uid = "" || !Knowledge.Picks.Has(uid))
             return 0
         entry := Knowledge.Picks[uid]
@@ -105,6 +111,15 @@ class Knowledge {
             }
         }
         return boost
+    }
+
+    static _UidMap(values := "") {
+        result := Map()
+        result.CaseSense := "On"
+        if (values is Map)
+            for uid, value in values
+                result[Platform.Identity(uid)] := value
+        return result
     }
 
     ; 连续执行多个命令时只写一次盘; 搜索窗口开着 (正在输入) 时先不写, 免得打字时卡一下

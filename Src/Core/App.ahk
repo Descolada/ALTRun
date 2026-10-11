@@ -24,12 +24,71 @@
 ;   App.Quit() / App.RebuildIndex()
 ;===============================================================================
 
+#CSharp
+private static System.Threading.Mutex ALTRunInstanceMutex;
+private static System.Threading.CancellationTokenSource ALTRunInstanceStop;
+private static readonly System.Collections.Concurrent.ConcurrentQueue<string> ALTRunInstanceRequests = new();
+
+public static bool ALTRunInstanceStart(string script, string request)
+{
+    string key = System.Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+        System.OperatingSystem.IsWindows() ? System.IO.Path.GetFullPath(script).ToUpperInvariant() : System.IO.Path.GetFullPath(script))))[..24];
+    string name = "ALTRun-" + key;
+    ALTRunInstanceMutex = new System.Threading.Mutex(false, name, out bool created);
+    if (!created)
+    {
+        using var client = new System.IO.Pipes.NamedPipeClientStream(".", name, System.IO.Pipes.PipeDirection.InOut);
+        client.Connect(3000);
+        var encoding = new System.Text.UTF8Encoding(false);
+        using var writer = new System.IO.StreamWriter(client, encoding, 1024, true) { AutoFlush = true };
+        using var reader = new System.IO.StreamReader(client, encoding, false, 1024, true);
+        using var document = System.Text.Json.JsonDocument.Parse(request);
+        writer.WriteLine(System.Text.Json.JsonSerializer.Serialize(document.RootElement));
+        using var timeout = new System.Threading.CancellationTokenSource(3000);
+        if (reader.ReadLineAsync(timeout.Token).AsTask().GetAwaiter().GetResult() != "OK")
+            throw new System.IO.IOException("Running ALTRun did not acknowledge the request.");
+        return true;
+    }
+    ALTRunInstanceStop = new System.Threading.CancellationTokenSource();
+    var cancellation = ALTRunInstanceStop.Token;
+    _ = System.Threading.Tasks.Task.Run(async () => {
+        while (!cancellation.IsCancellationRequested)
+        {
+            try
+            {
+                using var server = new System.IO.Pipes.NamedPipeServerStream(name, System.IO.Pipes.PipeDirection.InOut, 1,
+                    System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous | System.IO.Pipes.PipeOptions.CurrentUserOnly);
+                await server.WaitForConnectionAsync(cancellation);
+                var encoding = new System.Text.UTF8Encoding(false);
+                using var reader = new System.IO.StreamReader(server, encoding, false, 1024, true);
+                using var writer = new System.IO.StreamWriter(server, encoding, 1024, true) { AutoFlush = true };
+                string message = await reader.ReadLineAsync(cancellation);
+                if (message != null) ALTRunInstanceRequests.Enqueue(message);
+                await writer.WriteLineAsync("OK".AsMemory(), cancellation);
+            }
+            catch (System.OperationCanceledException) { break; }
+            catch (System.IO.IOException) { }
+        }
+    });
+    return false;
+}
+
+public static string ALTRunInstanceNext() => ALTRunInstanceRequests.TryDequeue(out var message) ? message : "";
+public static void ALTRunInstanceClose()
+{
+    ALTRunInstanceStop?.Cancel();
+    ALTRunInstanceMutex?.Dispose();
+    ALTRunInstanceMutex = null;
+}
+
+#EndCSharp
+
 class App {
     static Name    := "ALTRun"
     static Version := "2026.10.10.7"
     static RepoUrl := "https://github.com/zhugecaomao/ALTRun"
     static Website := "https://zhugecaomao.github.io/ALTRun/"
-    static IconFile := A_ScriptDir "\Resources\ALTRun.ico"                    ; 托盘、窗口、快捷方式 (编译后的 exe 里也有同一个图标)
+    static IconFile := Platform.Join(A_ScriptDir, "Resources", "ALTRun.ico")
     static PreviousWindow := 0
     static _settingsTime := ""
     static _watchTimer := ""
@@ -71,9 +130,11 @@ class App {
         App._RegisterHotkeys()
         Logger.Time("startup: tray, hotkeys", phase), phase := Logger.Ms()
         SnippetExpander.Init()
-        QuickSwitch.Init(AppSettings.Extension("QuickSwitch"))
-        AutoDate.Init(AppSettings.Extension("AutoDate"))
-        PTToolsWindow.Load(AppSettings.Extension("PTTools"))
+        if Platform.IsWindows {
+            QuickSwitch.Init(AppSettings.Extension("QuickSwitch"))
+            AutoDate.Init(AppSettings.Extension("AutoDate"))
+            PTToolsWindow.Load(AppSettings.Extension("PTTools"))
+        }
         Logger.Time("startup: snippets, extensions", phase), phase := Logger.Ms()
         App._UpdateShellShortcuts()
         OnExit((*) => App._OnExit())
@@ -93,19 +154,27 @@ class App {
         Logger.Time("startup: total", started)
         Logger.Flush(), Logger.Immediate := true                            ; 之后每条日志马上写入 (卡住被强制结束时也留得下)
         Logger.TraceUntil := A_TickCount + 60000                            ; 启动后 1 分钟内记下更细的步骤 (Logger.Trace)
-        OnMessage(0x4A, (p*) => App._OnCopyData(p*))                        ; 之后再启动的 ALTRun 交过来的命令行参数 (WM_COPYDATA)
+        SetTimer(() => App._PollRequests(), 100)
         App._HandleCommandLine(A_Args)
     }
 
     ;---------------------------------------------------------------------------
     ; Single instance
     ;---------------------------------------------------------------------------
-    ; 已经有 ALTRun (同一个程序文件) 在运行时, 把命令行参数交给它 (WM_COPYDATA), 返回 true: 这个进程退出。
-    ; 不像 #SingleInstance Force 那样关掉它, 正在编辑的偏好设置、打开的编辑框都不会丢。
-    ; 重新启动 (/restart: 应用设置、一键更新) 或者它没有回应 (卡住、不认识这条消息的旧版本) 时才替换它
+    ; 同一个源码路径共用互斥量和当前用户的命名管道, 新进程把参数交给原窗口。
     static CopyDataId := 0x414C5452                                         ; "ALTR": 和 Everything / TC 的 WM_COPYDATA 区分开
 
     static HandOff() {
+        return ALTRunInstanceStart(A_ScriptFullPath, JSON.Stringify(A_Args))
+    }
+
+    static _PollRequests() {
+        while ((request := ALTRunInstanceNext()) != "")
+            App._HandleCommandLine(JSON.Parse(request), true)
+    }
+
+    #if WINDOWS
+    static _NativeHandOff() {
         running := App._RunningInstance()
         if !running
             return false
@@ -134,6 +203,7 @@ class App {
         DetectHiddenWindows(saved)
         return found
     }
+    #endif
 
     ; 主窗口的标题: 运行源码时是 "路径 - AutoHotkey v2...", 编译后的 exe 只有路径;
     ; 不分大小写 (从快捷方式启动时路径的大小写可能不同)
@@ -147,6 +217,7 @@ class App {
     }
 
     ; 参数一行一个发过去; 对方回复 1 才算收到 (卡住 3 秒没回应、旧版本不认识时返回 false)
+    #if WINDOWS
     static SendArgs(hwnd, args) {
         text := ""
         for arg in args
@@ -189,6 +260,7 @@ class App {
         }
         DetectHiddenWindows(saved)
     }
+    #endif
 
     ;---------------------------------------------------------------------------
     ; Window focus / notifications
@@ -240,7 +312,7 @@ class App {
         if (App._watchTimer = "")
             App._watchTimer := () => App._CheckSettingsChanged()
         SetTimer(App._watchTimer, 1500)
-        Run('notepad.exe "' AppSettings.File '"')
+        Platform.Edit(AppSettings.File)
     }
 
     static _CheckSettingsChanged() {
@@ -253,13 +325,13 @@ class App {
     ; 3.1 起 Res\ 改名为 Resources\: 旧文件夹里用户自己放的文件 (例如 SPF2M 的 DOSBox.exe)
     ; 移到 Resources\, 新版本已经带有的文件 (Kanji.txt) 直接删掉旧的, 最后删除空的 Res\
     static _MoveLegacyResources() {
-        legacyDir := A_ScriptDir "\Res", newDir := A_ScriptDir "\Resources"
+        legacyDir := Platform.Join(A_ScriptDir, "Res"), newDir := Platform.Join(A_ScriptDir, "Resources")
         if !DirExist(legacyDir)
             return
         try {
             DirCreate(newDir)
-            Loop Files, legacyDir "\*", "FD" {
-                target := newDir "\" A_LoopFileName
+            Loop Files, Platform.Join(legacyDir, "*"), "FD" {
+                target := Platform.Join(newDir, A_LoopFileName)
                 if InStr(A_LoopFileAttrib, "D") {
                     if !DirExist(target)
                         DirMove(A_LoopFileFullPath, target)
@@ -287,10 +359,15 @@ class App {
 
     ; 重新启动 ALTRun, 带上命令行参数 (默认 -Reloaded: 不弹出搜索窗口)
     static Restart(arguments := "-Reloaded") {
+        args := StrSplit(arguments, " ")
         if A_IsCompiled
-            Run('"' A_ScriptFullPath '" /restart ' arguments)
-        else
-            Run('"' A_AhkPath '" /restart "' A_ScriptFullPath '" ' arguments)
+            executable := A_ScriptFullPath
+        else {
+            host := ProcessRunner.ScriptHost(A_ScriptFullPath, args)
+            executable := host.Executable, args := host.Arguments
+        }
+        ALTRunInstanceClose()
+        ProcessRunner.Start(executable, args, A_ScriptDir)
         ExitApp()
     }
 
@@ -352,7 +429,7 @@ class App {
         }
 
         capsLock := AppSettings.General.Has("CapsLock") ? AppSettings.General["CapsLock"] : ""
-        if CapsLockSwitch.IsMode(capsLock) {                                ; 按 CapsLock 切换输入法, 按住才是大写锁定
+        if (Platform.IsWindows && CapsLockSwitch.IsMode(capsLock)) {
             CapsLockSwitch.Mode := capsLock
             CapsLockSwitch.Register((key, fn) => App._TryHotkey(key, fn))
         }
@@ -390,7 +467,7 @@ class App {
         } catch as e {
             Logger.Error("App: cannot register hotkey " key " - " e.Message)
             if notify
-                MsgBox("Cannot register hotkey " key ":`n" e.Message, App.Name, "Icon! 0x40000")   ; 0x40000: 总在最前面
+                SetTimer(() => SearchWindow.Show(), -100)
             return false
         }
     }
@@ -437,6 +514,8 @@ class App {
     ; 开机启动 / 资源管理器 "发送到" / 开始菜单 三个快捷方式, 按设置创建或删除。
     ; 只删 ALTRun 自己建的 (见 IsOwnShortcut): 用户自己放在同一位置、同名的快捷方式不动
     static _UpdateShellShortcuts() {
+        if !Platform.IsWindows
+            return
         general := AppSettings.General
         target := A_IsCompiled ? A_ScriptFullPath : A_AhkPath
         prefix := A_IsCompiled ? "" : '"' A_ScriptFullPath '" '
@@ -535,6 +614,8 @@ class App {
 
     ; OnExit 回调返回非零值会取消退出, 所以这里不返回任何值
     static _OnExit() {
+        ALTRunInstanceClose()
+        ProcessRunner.CancelAll()
         Knowledge.Save()
         Usage.Save()
         ClipboardProvider.Save()

@@ -44,21 +44,12 @@ class Path {
         raw := Trim(raw)
         if (InStr(raw, "A_") = 1)
             raw := Path.Resolve(raw)
-        size := DllCall("ExpandEnvironmentStringsW", "WStr", raw, "Ptr", 0, "UInt", 0, "UInt")
-        buf := Buffer(size * 2)
-        DllCall("ExpandEnvironmentStringsW", "WStr", raw, "Ptr", buf, "UInt", size, "UInt")
-        raw := StrGet(buf)
-        if !RegExMatch(raw, "^([A-Za-z]:|\\\\)")
-            raw := RTrim(base, "\") "\" raw
-        buf := Buffer(32767 * 2)
-        if DllCall("GetFullPathNameW", "WStr", raw, "UInt", 32767, "Ptr", buf, "Ptr", 0, "UInt")
-            raw := StrGet(buf)
-        return RTrim(raw, "\")
+        return Platform.FullPath(raw, base)
     }
 
     ; 能不能在这个文件夹里写文件 (试着建一个临时文件再删掉)
     static IsWritable(dir) {
-        probe := dir "\ALTRun.write-test.tmp"
+        probe := Platform.Join(dir, "ALTRun.write-test." Platform.NewUuid() ".tmp")
         try {
             FileAppend("", probe)
             FileDelete(probe)
@@ -82,10 +73,9 @@ class Path {
 
         ; 形如 "A_ScriptDir\sub\x.exe" —— 必须以 A_ 开头才算, 否则像 "Plot A_IGLS" 会被误判
         if (InStr(raw, "A_") = 1) {
-            if (InStr(raw, "\")) {
-                parts := StrSplit(raw, "\",, 2)
+            if RegExMatch(raw, "^([^\\/]+)[\\/](.*)$", &parts) {
                 if (vars.Has(parts[1]))
-                    raw := vars[parts[1]] "\" (parts.Has(2) ? parts[2] : "")
+                    raw := Platform.Join(vars[parts[1]], parts[2])
             } else if (vars.Has(raw)) {
                 raw := vars[raw]
             }
@@ -95,16 +85,15 @@ class Path {
         raw := StrReplace(raw, "%Temp%"    , A_Temp)
         raw := StrReplace(raw, "%OneDrive%", EnvGet("OneDrive"))
         raw := StrReplace(raw, "%AppData%" , A_AppData)
-        raw := StrReplace(raw, "%UserProfile%", EnvGet("UserProfile"))
+        raw := StrReplace(raw, "%UserProfile%", Platform.Home)
+        raw := Platform.ExpandEnvironment(raw)
+        if !Platform.IsWindows
+            raw := StrReplace(raw, "\", "/")
 
         ; 裸文件名: 去 PATH 里搜, 没写扩展名时按 .exe 找 ("notepad" -> notepad.exe)
         ; 先判断有没有 "\": 完整路径不访问磁盘 (网络驱动器断开时 FileExist 会卡住)
-        if (!InStr(raw, "\") && !FileExist(raw)) {
-            buf := Buffer(260 * 2)
-            if DllCall("kernel32\SearchPathW", "Ptr", 0, "WStr", raw, "WStr", ".exe",
-                       "UInt", buf.Size // 2, "Ptr", buf, "Ptr", 0)
-                raw := StrGet(buf, "UTF-16")
-        }
+        if (!InStr(raw, "\") && !InStr(raw, "/") && (resolved := Platform.FindExecutable(raw)) != "")
+            raw := resolved
         return raw
     }
 
@@ -121,6 +110,8 @@ class Path {
     ; 只用于默认动作就是查看的类型 (.log .txt): 脚本 (.ahk .bat) 的默认动作是运行, .json 常常没有关联。
     ; runner 只在测试时传入 (代替 Run)
     static OpenText(file, runner := "") {
+        if (!Platform.IsWindows && !IsObject(runner))
+            return Platform.Edit(file)
         runner := IsObject(runner) ? runner : Run
         try
             runner('"' file '"')
@@ -149,6 +140,8 @@ class Fonts {
 
     ; 调用系统字体对话框, 返回 {name, opt} 或 false
     static Choose(initName := "", ownerHwnd := 0) {
+        if !Platform.IsWindows
+            return false
         lf := Buffer((A_PtrSize = 4) ? 60 : 92, 0)
         dc := DllCall("GetDC", "Ptr", 0, "Ptr")
         dpi := DllCall("GetDeviceCaps", "Ptr", dc, "UInt", 90, "Int")
@@ -184,6 +177,8 @@ class Fonts {
 class Win {
     ; Win11 圆角
     static SetCorner(hwnd, rounded := true) {
+        if !Platform.IsWindows
+            return
         static ATTR := 33, ROUND := 2, SQUARE := 1
         try DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", hwnd, "UInt", ATTR,
                     "Int*", rounded ? ROUND : SQUARE, "UInt", 4)
@@ -203,6 +198,8 @@ class Win {
 
     ; Win11 窗口边框颜色, color 为 "RRGGBB"
     static SetBorderColor(hwnd, color) {
+        if !Platform.IsWindows
+            return
         static ATTR := 34
         bgr := Win.ColorToBgr(color)
         try DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", hwnd, "UInt", ATTR,
@@ -287,6 +284,8 @@ class Win {
 
     ; Win10/11 深色标题栏
     static SetDarkTitleBar(hwnd, dark := true) {
+        if !Platform.IsWindows
+            return
         static ATTR := 20
         try DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", hwnd, "UInt", ATTR,
                     "Int*", dark ? 1 : 0, "UInt", 4)
@@ -294,11 +293,15 @@ class Win {
 
     ; 切到英文输入法 (US 键盘布局)
     static SwitchToEnglishIME() {
+        if !Platform.IsWindows
+            return
         try DllCall("ActivateKeyboardLayout", "UInt", 0x04090409, "UInt", 0)
     }
 
     ; 前台窗口切到下一个已安装的输入法 (和 Win+Space 一样); 返回切到的输入法 (HKL), 只有一个输入法时 0
     static NextInputLanguage() {
+        if !Platform.IsWindows
+            return
         if !(hwnd := WinExist("A"))
             return 0
         count := DllCall("GetKeyboardLayoutList", "Int", 0, "Ptr", 0, "Int")
@@ -325,6 +328,8 @@ class Win {
     ; 切换前台窗口里输入法的 中 / 英 模式 (和微软拼音里按 Shift 一样); 输入法关着时打开并切到中文。
     ; 返回 true = 发出了切换 (前台窗口没有输入法时 false)
     static ToggleImeMode() {
+        if !Platform.IsWindows
+            return
         static WM_IME_CONTROL := 0x283, IMC_GETCONVERSIONMODE := 1, IMC_SETCONVERSIONMODE := 2, IMC_GETOPENSTATUS := 5, IMC_SETOPENSTATUS := 6
         if !(hwnd := WinExist("A"))
             return false
@@ -351,12 +356,16 @@ class Win {
 
     ; 窗口 (所在线程) 正在用的输入法 (HKL); hwnd = 0: 当前线程
     static KeyboardLayout(hwnd := 0) {
+        if !Platform.IsWindows
+            return 0
         threadId := hwnd ? DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "Ptr", 0, "UInt") : 0
         return DllCall("GetKeyboardLayout", "UInt", threadId, "Ptr")
     }
 
     ; Windows 设置里打开了 "允许我为每个应用窗口使用不同的输入法" (SPI_GETTHREADLOCALINPUTSETTINGS)
     static PerWindowInputMethod() {
+        if !Platform.IsWindows
+            return false
         on := 0
         try DllCall("SystemParametersInfo", "UInt", 0x104E, "UInt", 0, "Int*", &on, "UInt", 0)
         return on != 0
@@ -579,17 +588,6 @@ class Calc {
 class Url {
     ; 按 UTF-8 做百分号编码, 用于把搜索词拼进 {query} 网址
     static Encode(text) {
-        out := ""
-        for ch in StrSplit(text) {
-            if RegExMatch(ch, "^[0-9A-Za-z\-_.~]$") {
-                out .= ch
-                continue
-            }
-            buf := Buffer(8, 0)
-            len := StrPut(ch, buf, "UTF-8") - 1
-            Loop len
-                out .= Format("%{:02X}", NumGet(buf, A_Index - 1, "UChar"))
-        }
-        return out
+        return Clr.System.Uri.EscapeDataString(text)
     }
 }

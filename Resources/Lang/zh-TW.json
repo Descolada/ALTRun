@@ -91,6 +91,7 @@
   "Files.OpenEverything": "在 Everything 中搜尋 '{1}'",
   "Files.TypeKeyword": "按類型尋找檔案: {1}",
   "Files.WindowsSearch": "用 Windows 搜尋 '{1}'",
+  "Files.OpenSearchFolder": "開啟 '{1}' 的搜尋資料夾",
   "Folders.Keyword": "按名稱尋找資料夾",
   "Help.About.Key": "F1",
   "Help.About.Text": "關於 ALTRun: 版本、檢查更新、專案首頁",

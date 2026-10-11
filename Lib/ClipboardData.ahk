@@ -2,6 +2,7 @@
 ; ClipboardData.ahk - 剪贴板里的图片和文件 (AutoHotkey v2)
 ;-------------------------------------------------------------------------------
 ; AutoHotkey 的 A_Clipboard 只处理文字; 这里补上图片 (存成 / 读回 PNG, 用 GDI+) 和文件列表 (CF_HDROP)。
+; Linux/macOS 使用 Keysharp Clipboard; 文件按复制处理, 不设置 Windows 的剪切标记。
 ;
 ; 用法:
 ;   ClipboardData.HasImage() / HasFiles()
@@ -17,10 +18,31 @@ class ClipboardData {
     static CF_BITMAP := 2, CF_DIB := 8, CF_HDROP := 15
     static _token := 0
 
-    static HasImage() => (DllCall("IsClipboardFormatAvailable", "UInt", ClipboardData.CF_DIB) || DllCall("IsClipboardFormatAvailable", "UInt", ClipboardData.CF_BITMAP)) ? true : false
-    static HasFiles() => DllCall("IsClipboardFormatAvailable", "UInt", ClipboardData.CF_HDROP) ? true : false
+    static HasImage() {
+        if !Platform.IsWindows {
+            try return Clipboard.Has("Image")
+            catch
+                return false
+        }
+        return (DllCall("IsClipboardFormatAvailable", "UInt", ClipboardData.CF_DIB) || DllCall("IsClipboardFormatAvailable", "UInt", ClipboardData.CF_BITMAP)) ? true : false
+    }
+
+    static HasFiles() {
+        if !Platform.IsWindows {
+            try return Clipboard.Has("Files")
+            catch
+                return false
+        }
+        return DllCall("IsClipboardFormatAvailable", "UInt", ClipboardData.CF_HDROP) ? true : false
+    }
 
     static Files() {
+        if !Platform.IsWindows {
+            try files := Clipboard.Files
+            catch
+                return []
+            return IsObject(files) ? files : []
+        }
         files := []
         if !ClipboardData.HasFiles()
             return files
@@ -32,6 +54,22 @@ class ClipboardData {
 
     ; 先读 CF_DIB (设备无关位图, 别的程序放的图片也能读), 读不到再读 CF_BITMAP
     static SaveImage(file) {
+        if !Platform.IsWindows {
+            image := ""
+            try {
+                image := Clipboard.Image
+                if !IsObject(image)
+                    return ""
+                size := {Width: image.Width, Height: image.Height}
+                image.Save(file)
+                return size
+            } catch {
+                return ""
+            } finally {
+                if IsObject(image)
+                    image.Dispose()
+            }
+        }
         if !ClipboardData.HasImage() || !ClipboardData.StartGdiplus() || !ClipboardData._Open()
             return ""
         bitmap := 0
@@ -83,6 +121,14 @@ class ClipboardData {
 
     ; 放进去的是 CF_DIB (所有程序都认), Windows 会自动提供 CF_BITMAP 等其他格式
     static SetImage(file) {
+        if !Platform.IsWindows {
+            if !FileExist(file)
+                return false
+            try Clipboard.Image := file
+            catch
+                return false
+            return true
+        }
         if !FileExist(file) || !ClipboardData.StartGdiplus()
             return false
         bitmap := 0, hbm := 0
@@ -122,6 +168,12 @@ class ClipboardData {
     ; DROPFILES 结构 (20 字节) + 以两个空字符结尾的 UTF-16 路径列表;
     ; cut = true 时再放一个 "Preferred DropEffect" = 移动, 资源管理器 / TC 粘贴时就是移动文件
     static SetFiles(paths, cut := false) {
+        if !Platform.IsWindows {
+            try Clipboard.Files := paths
+            catch
+                return false
+            return true
+        }
         size := 20 + 2
         for filePath in paths
             size += (StrLen(filePath) + 1) * 2
@@ -156,12 +208,18 @@ class ClipboardData {
     }
 
     static DropEffectFormat() {
-        static format := DllCall("RegisterClipboardFormat", "Str", "Preferred DropEffect", "UInt")
+        if !Platform.IsWindows
+            return 0
+        static format := 0
+        if !format
+            format := DllCall("RegisterClipboardFormat", "Str", "Preferred DropEffect", "UInt")
         return format
     }
 
     ; 剪贴板里的文件是剪切的 (粘贴时移动) 时返回 true
     static IsCut() {
+        if !Platform.IsWindows
+            return false
         if !DllCall("IsClipboardFormatAvailable", "UInt", ClipboardData.DropEffectFormat()) || !ClipboardData._Open()
             return false
         effect := 0
@@ -185,6 +243,8 @@ class ClipboardData {
 
     ; GDI+ 只需启动一次 (IconCache 画图片缩略图也用)
     static StartGdiplus() {
+        if !Platform.IsWindows
+            return false
         if ClipboardData._token
             return true
         DllCall("LoadLibrary", "Str", "gdiplus")

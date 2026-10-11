@@ -90,6 +90,7 @@
   "Files.OpenEverything": "在 Everything 中搜索 '{1}'",
   "Files.TypeKeyword": "按类型查找文件: {1}",
   "Files.WindowsSearch": "用 Windows 搜索 '{1}'",
+  "Files.OpenSearchFolder": "打开 '{1}' 的搜索文件夹",
   "Folders.Keyword": "按名称查找文件夹",
   "Help.About.Key": "F1",
   "Help.About.Text": "关于 ALTRun: 版本、检查更新、项目主页",
