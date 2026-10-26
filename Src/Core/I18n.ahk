@@ -1,34 +1,34 @@
 ;===============================================================================
-; I18n.ahk - 界面文字 (AutoHotkey v2)
+; I18n.ahk - UI text (AutoHotkey v2)
 ;-------------------------------------------------------------------------------
-; 英文原文编译在程序里 (下面的 _Build, 每条一个语义化的键名; {1} {2} ... 是参数占位符);
-; 其它语言是 Resources\Lang\<代码>.json 里的翻译 ({"键名": "文字", ...}), 代码用 BCP 47 写法:
-;   zh-CN.json 简体中文   zh-TW.json 繁體中文   ja.json 日本語
-; 文件开头以 "_" 开头的键是这种语言的信息:
-;   "_name"     偏好设置里显示的名称 (用这种语言自己的文字)
-;   "_font"     界面字体 (主题的 FontName 是 "auto" 时用), 不写用 Segoe UI
-;   "_fallback" 这个文件里没有的键先找哪种语言 (例如 zh-TW -> zh-CN), 最后都是英文
-; 加一种语言 = 放一个 JSON 文件, 偏好设置的语言列表会自动列出; 测试会检查每个键都有翻译、占位符一致。
-; 加一条界面文字 = 在 _Build 里加英文, 再在每个语言文件里加翻译。
+; The English text is compiled into the program (_Build below, one meaningful key per entry; {1} {2} ... are parameter placeholders);
+; other languages are translations in Resources\Lang\<code>.json ({"key": "text", ...}), with BCP 47 codes:
+;   zh-CN.json Simplified Chinese   zh-TW.json Traditional Chinese   ja.json Japanese
+; Keys at the top of a file starting with "_" describe the language:
+;   "_name"     the name shown in Preferences (in the language itself)
+;   "_font"     UI font (used when the theme's FontName is "auto"), Segoe UI if not given
+;   "_fallback" which language to try first for keys this file lacks (e.g. zh-TW -> zh-CN); English in the end
+; Adding a language = adding a JSON file; the language list in Preferences picks it up. Tests check every key is translated with the same placeholders.
+; Adding UI text = the English in _Build plus a translation in every language file.
 ;
-; 用法:
-;   I18n.Init("auto")                          启动时调用, "auto" 按 Windows 的显示语言选择
-;   I18n.T("Search.Placeholder")               取当前语言的文字
-;   I18n.T("Web.SearchFor", "Google", "abc")   带参数
+; Usage:
+;   I18n.Init("auto")                          at start-up; "auto" follows the Windows display language
+;   I18n.T("Search.Placeholder")               text in the current language
+;   I18n.T("Web.SearchFor", "Google", "abc")   with parameters
 ;===============================================================================
 
 class I18n {
-    static Lang := "en"                                                     ; 当前语言的代码
-    static Font := ""                                                       ; 当前语言的界面字体 ("" = Segoe UI)
-    static Texts := Map()                                                   ; 当前语言的翻译 (已经合并了 _fallback 的语言)
+    static Lang := "en"                                                     ; code of the current language
+    static Font := ""                                                       ; UI font of the current language ("" = platform default)
+    static Texts := Map()                                                   ; translations of the current language (with the _fallback languages merged in)
     static LangDir := Platform.Join(A_ScriptDir, "Resources", "Lang")
-    static Aliases := Map("zh", "zh-CN", "zh-SG", "zh-CN", "zh-HK", "zh-TW", "zh-MO", "zh-TW")   ; 以前的设置值 "zh"; 地区 -> 用哪个文件
+    static Aliases := Map("zh", "zh-CN", "zh-SG", "zh-CN", "zh-HK", "zh-TW", "zh-MO", "zh-TW")   ; the former setting "zh"; region -> which file
 
-    ; setting: "auto" 或语言代码; 没有这种语言的文件时按 Resolve 找最接近的, 都没有就用英文
+    ; setting: "auto" or a language code; without a file for it, Resolve finds the closest, English if none
     static Init(setting := "auto") {
         code := I18n.Normalize(setting)
         code := I18n.Resolve(code = "auto" ? I18n.SystemLocale() : code)
-        chain := []                                                         ; 这种语言, 然后是它的 _fallback ...
+        chain := []                                                         ; this language, then its _fallback ...
         while (code != "en" && chain.Length < 4) {
             data := I18n.ReadFile(code)
             if !data.Count
@@ -39,7 +39,7 @@ class I18n {
         I18n.Texts := Map(), I18n.Font := "", I18n.Lang := "en"
         if !chain.Length
             return I18n.Lang
-        Loop chain.Length {                                                 ; 从最后一个 _fallback 开始, 前面的语言覆盖后面的
+        Loop chain.Length {                                                 ; from the last _fallback on, earlier languages override later ones
             for key, text in chain[chain.Length - A_Index + 1]
                 if (SubStr(key, 1, 1) != "_")
                     I18n.Texts[key] := text
@@ -50,7 +50,7 @@ class I18n {
         return I18n.Lang := I18n.Normalize(chain[1]["_code"])
     }
 
-    ; "zh-tw" -> "zh-TW"; 以前的写法 (见 Aliases) 换成现在的代码; "" -> "auto"
+    ; "zh-tw" -> "zh-TW"; former forms (see Aliases) become today's codes; "" -> "auto"
     static Normalize(code) {
         code := Trim(code)
         if (code = "" || code = "auto")
@@ -64,7 +64,7 @@ class I18n {
         return I18n.Aliases.Get(code, code)
     }
 
-    ; 语言代码 -> 有文件的语言: 先找完全一样的, 再找只有语言部分的 ("ko-KR" -> "ko"), 都没有用 "en"
+    ; Language code -> a language with a file: an exact match first, then the language part alone ("ko-KR" -> "ko"), "en" if neither
     static Resolve(code) {
         if (code = "en")
             return "en"
@@ -75,13 +75,13 @@ class I18n {
         return "en"
     }
 
-    ; Windows 的显示语言 -> 语言代码 (例如 "zh-SG" 用简体中文, "zh-HK" 用繁體中文)
+    ; Windows display language -> language code (e.g. "zh-SG" uses Simplified Chinese, "zh-HK" Traditional Chinese)
     static SystemLocale() {
         name := Platform.Locale()
         return (name != "") ? I18n.Normalize(name) : "en"
     }
 
-    ; Resources\Lang\<代码>.json -> Map (读不了时为空); "_code" 是文件名里的代码
+    ; Resources\Lang\<code>.json -> Map (empty if it can't be read); "_code" is the code from the file name
     static ReadFile(code) {
         data := Map()
         try {
@@ -96,7 +96,7 @@ class I18n {
         return data
     }
 
-    ; 偏好设置的语言列表: [[代码, 名称], ...], 英文在最前, 其它按代码排序
+    ; The language list in Preferences: [[code, name], ...], English first, the rest by code
     static Languages() {
         found := Map()
         Loop Files, Platform.Join(I18n.LangDir, "*.json") {
@@ -104,7 +104,7 @@ class I18n {
             name := code
             try if RegExMatch(FileRead(A_LoopFileFullPath, "UTF-8"), '"_name"\s*:\s*"([^"]+)"', &m)
                 name := m[1]
-            found[code] := name                                             ; Map 按键排序
+            found[code] := name                                             ; Map sorted by key
         }
         list := [["en", "English"]]
         for code, name in found
@@ -124,12 +124,13 @@ class I18n {
 
     static Strings := I18n._Build()
 
-    ; 每条: 键名 -> 英文原文
+    ; each entry: key -> English text
     static _Build() {
         s := Map()
         ; --- App / tray ---
         s["App.Tagline"]               := "A lightweight launcher for Windows"
         s["App.Running"]               := "ALTRun is running. Press {1} to search."
+        s["App.HotkeyFailed"]          := "The hotkey {1} cannot be registered:`n{2}`n`nAnother program may be using it. Choose another one in Preferences → General."
         s["Tray.Show"]                 := "Show ALTRun"
         s["Tray.Preferences"]          := "Preferences..."
         s["Tray.RebuildIndex"]         := "Rebuild Index"
@@ -180,7 +181,7 @@ class I18n {
         s["Action.CopyingMany"]        := "Copying {1} items to {2}"
         s["Action.MovingMany"]         := "Moving {1} items to {2}"
         s["Search.MarkedItems"]        := "{1} marked items"
-        s["Search.TypeAfter"]          := "Type after '{1} ', then press Enter"         ; 等待参数: 关键字已经补全或还没输入参数时
+        s["Search.TypeAfter"]          := "Type after '{1} ', then press Enter"         ; waiting for arguments: when the keyword is complete or no argument is typed yet
         s["Search.TypeArgAfter"]       := "Type {2} after '{1} ', then press Enter"
         s["Action.Pin"]                := "Pin to Empty Search Box"
         s["Action.Unpin"]              := "Unpin"
@@ -190,6 +191,7 @@ class I18n {
         s["Action.CopyResult"]         := "Copy the result"
         s["Action.AddAllCommands"]     := "Add All to Custom Commands"
         s["Action.OpenWith"]           := "Open With..."
+        s["Action.EditFile"]           := "Edit"
         s["Action.CopyFile"]           := "Copy File"
         s["Action.CutFile"]            := "Cut File"
         s["Action.CopyFile.Hint"]      := "Then paste in Total Commander / Explorer"
@@ -217,7 +219,11 @@ class I18n {
         s["Calc.RebarArea"]            := "As = {1} mm²: {2}"
         s["Web.SearchFor"]             := "Search {1} for '{2}'"
         s["Web.SearchEmpty"]           := "Search {1} for '...'"
-        s["Web.Field.Url"]             := "{query} is replaced by the text typed after the keyword. With {query|8000}, 8000 is used when nothing is typed."
+        s["Web.SearchClipboardFor"]    := "Search {1} for clipboard: '{2}'"
+        s["Web.SearchClipboard"]       := "Search {1} for clipboard"
+        s["Web.ClipboardEmpty"]        := "The clipboard has no text"
+        s["Web.Field.Keyword"]         := "Type the keyword, a space and the search words: e.g. `"g hello`" searches Google for hello. Several keywords: separate them with commas, e.g. `"g, ㅎ`" (handy when you switch keyboard layouts)."
+        s["Web.Field.Url"]             := "The address of the results page, with {query} where the search words go, e.g. https://www.google.com/search?q={query}. When nothing is typed after the keyword and a space: {query|weather} searches `"weather`", {query|clipboard} searches the text on the clipboard."
         s["Web.Field.Icon"]            := "Optional: an .ico, .png or .exe file (a relative path starts from the Data folder). Download Site Icon visits the website in the URL once and saves its icon in Data\Icons. Empty = the built-in icon, or the browser icon."
         s["Web.IconDownload"]          := "Download Site Icon"
         s["Web.IconBadUrl"]            := "Enter the URL first (starting with http:// or https://)."
@@ -229,74 +235,89 @@ class I18n {
         s["Files.OpenSearchFolder"]    := "Open search folder for '{1}'"
         s["Files.Keyword"]             := "Find files by name"
         s["Folders.Keyword"]           := "Find folders by name"
+        s["Files.RecentKeyword"]       := "Find recently opened files and folders"
+        s["Files.RecentNone"]          := "No matching recent files"
         s["Files.TypeKeyword"]         := "Find files of type: {1}"
 
-        ; 速查表 (输入 ?) 和空搜索框里的使用提示, 见 HelpProvider。提示要放得进搜索框, 尽量短
+        ; The cheat sheet (type ?) and the usage tips in the empty search box, see HelpProvider. Tips must fit in the search box: keep them short
         s["Help.TipFormat"]            := "Tip: {1}  {2}"
         s["Help.Files.Key"]            := "Space + name"
         s["Help.Files.Text"]           := "search files and folders"
-        s["Help.Folders.Key"]          := "{1} bk"
+        s["Help.Pinyin.Key"]           := "cs"
+        s["Help.Pinyin.Text"]          := "pinyin initials find apps and files, e.g. 测试文件.zip"
+        s["Help.Folders.Key"]          := "{1} + name"
         s["Help.Folders.Text"]         := "search folders only"
-        s["Help.FileTypes.Key"]        := "{1} report"
-        s["Help.FileTypes.Text"]       := "search files of one type (documents, pictures, CAD...)"
+        s["Help.Recent.Key"]           := "{1} + name"
+        s["Help.Recent.Text"]          := "search files and folders you opened recently in any program"
+        s["Help.FileTypes.Key"]        := "{1} + name"
+        s["Help.FileTypes.Text"]       := "search one type of file only (documents, archives, CAD...)"
         s["Prefs.TypeFilters"]         := "File types"
-        s["Prefs.TypeFilters.Desc"]    := "One per line: keyword = extensions. e.g. doc report finds only documents (folders only: Folder keywords above)."
-        s["Help.FileKeyword.Key"]      := "'report  /  {1} report"
-        s["Help.FileKeyword.Text"]     := "search files, like Space"
+        s["Prefs.TypeFilters.Desc"]    := 'Keyword + name searches one type of file, e.g. "doc report" documents only, "zip backup" archives only.'
+        s["Prefs.TypeFilters.Help"]    := 'One rule per line: keyword = file extensions, separated by spaces (with or without the dot).`n`nType the keyword, a space and part of a name to search only those files: "doc report" finds documents, "pic logo" pictures, "cad plan" drawings. It also works after Space (file search mode). With Everything this is the same as ext:doc;docx;...`n`nLines without "=" are ignored. To search folders only, use the Folder keywords.'
+        s["Help.FileKeyword.Key"]      := "{1} + name"
+        s["Help.FileKeyword.Text"]     := "search files and folders, same as Space"
         s["Help.Actions.Key"]          := "→  /  right-click"
-        s["Help.Actions.Text"]         := "all actions for a result"
+        s["Help.Actions.Text"]         := "more actions for the selected item (run as admin, copy path...)"
+        s["Help.QuickSwitch.Key"]      := "{1} (in an Open / Save dialog)"
+        s["Help.QuickSwitch.Text"]     := "go to the folder of the file manager used last (TC / Opus / Explorer)"
         s["Help.Edit.Key"]             := "F3"
-        s["Help.Edit.Text"]            := "edit, or add as a custom command"
+        s["Help.Edit.Text"]            := "edit the selected item, or add it as a custom command"
         s["Help.Delete.Key"]           := "Ctrl+Del"
-        s["Help.Delete.Text"]          := "delete a result (apps: hide)"
+        s["Help.Delete.Text"]          := "delete the selected result (apps are hidden)"
         s["Help.Reveal.Key"]           := "Ctrl+Enter"
-        s["Help.Reveal.Text"]          := "show in the file manager"
+        s["Help.Reveal.Text"]          := "open the folder that contains the selected item"
         s["Help.Copy.Key"]             := "Alt+Enter"
-        s["Help.Copy.Text"]            := "copy the path, URL or text"
+        s["Help.Copy.Text"]            := "copy the path, link or text of the selected item"
         s["Help.Number.Key"]           := "Ctrl+1 ~ Ctrl+9"
-        s["Help.Number.Text"]          := "run row 1 ~ 9"
+        s["Help.Number.Text"]          := "open result 1 ~ 9 directly"
         s["Help.History.Key"]          := "Ctrl+↑ / Ctrl+↓"
-        s["Help.History.Text"]         := "previous / next search"
+        s["Help.History.Text"]         := "go back to earlier searches"
         s["Help.Tab.Key"]              := "Tab"
-        s["Help.Tab.Text"]             := "autocomplete"
+        s["Help.Tab.Text"]             := "complete the selected name; on a folder, browse into it"
+        s["Help.TabNext.Key"]          := "Tab / Shift+Tab"
+        s["Help.TabNext.Text"]         := "next / previous result; Ctrl+Tab autocompletes"
         s["Help.Browse.Key"]           := "C:\  /  ~\  /  \\server\share\"
         s["Help.Browse.Text"]          := "browse a folder: Tab opens the selected folder, Backspace goes up"
         s["Help.Mark.Key"]             := "Insert"
         s["Help.Mark.Text"]            := "mark files and folders, → acts on all marked"
         s["Help.Query.Key"]            := "ping 10.0.0.1  /  maps Changi"
-        s["Help.Query.Text"]           := "custom commands with {query} take the text after the keyword"
+        s["Help.Query.Text"]           := "custom commands with {query} use the text after the keyword"
         s["Help.Clipboard.Key"]        := "{1}  /  {2}"
-        s["Help.Clipboard.Text"]       := "clipboard history"
-        s["Help.Snippets.Key"]         := "{1}"
-        s["Help.Snippets.Text"]        := "text snippets"
+        s["Help.Clipboard.Text"]       := "clipboard history: paste something you copied earlier"
+        s["Help.Snippets.Key"]         := "{1} + name"
+        s["Help.Snippets.Text"]        := "search your text snippets and paste one"
         s["Help.Expand.Key"]           := "{1}keyword"
-        s["Help.Expand.Text"]          := "expands a snippet in any app"
+        s["Help.Expand.Text"]          := "type it in any app to expand a snippet"
         s["Help.Terminal.Key"]         := "{1}ipconfig"
-        s["Help.Terminal.Text"]        := "run in a terminal"
+        s["Help.Terminal.Text"]        := "run a command in the terminal"
         s["Help.Calculator.Key"]       := "12*(3+4)"
-        s["Help.Calculator.Text"]      := "calculate, Enter copies"
+        s["Help.Calculator.Text"]      := "calculate; Enter copies the result"
         s["Help.WebSearch.Key"]        := "{1} words"
-        s["Help.WebSearch.Text"]       := "web search"
+        s["Help.WebSearch.Text"]       := "search the web"
         s["Help.Convert.Key"]          := "10 km in mi  /  100 f to c"
-        s["Help.Convert.Text"]         := "unit conversion (currency: 100 usd to sgd)"
+        s["Help.Convert.Text"]         := "convert units (currency: 100 usd to sgd)"
         s["Help.Bookmarks.Key"]        := "{1} name"
         s["Help.Bookmarks.Text"]       := "search browser bookmarks (Chrome, Edge...)"
         s["Help.Scripts.Key"]          := "Scripts\"
-        s["Help.Scripts.Text"]         := "your own scripts (.ahk .ps1 .bat .py) as commands"
+        s["Help.Scripts.Text"]         := "put your scripts (.ahk .ps1 .bat .py) here to run them as commands"
+        s["Help.ScriptKeyword.Key"]    := "{1} + name"
+        s["Help.ScriptKeyword.Text"]   := "search your scripts only"
         s["Help.Windows.Key"]          := "{1} title"
         s["Help.Windows.Text"]         := "switch to an open window"
-        s["Help.Selection.Key"]        := "{1} (with something selected)"
-        s["Help.Selection.Text"]       := "actions for the selected text, files or link"
+        s["Help.Selection.Key"]        := "{1} (with text or files selected)"
+        s["Help.Selection.Text"]       := "actions for what you selected in any app"
         s["Help.CheckPaths.Key"]       := "Preferences → Custom Commands"
         s["Help.CheckPaths.Text"]      := "Check Paths"
         s["Help.LargeType.Key"]        := "Ctrl+L"
         s["Help.LargeType.Text"]       := "show in large type"
+        s["Help.EditFile.Key"]         := "Ctrl+E"
+        s["Help.EditFile.Text"]        := "edit the selected file in its editor (e.g. a script)"
         s["Help.Prefs.Key"]            := "F2  /  Ctrl+,"
-        s["Help.Prefs.Text"]           := "preferences"
+        s["Help.Prefs.Text"]           := "open Preferences"
         s["Help.EditJson.Key"]         := "F4"
         s["Help.EditJson.Text"]        := "edit the settings file (ALTRun.json)"
         s["Help.About.Key"]            := "F1"
-        s["Help.About.Text"]           := "about ALTRun: version, updates, project page"
+        s["Help.About.Text"]           := "about ALTRun: version, check for updates, website"
         s["Help.Help.Key"]             := "?"
         s["Help.Help.Text"]            := "all syntax and shortcuts"
         s["Terminal.Run"]              := "Run '{1}' in terminal"
@@ -327,7 +348,7 @@ class I18n {
         s["Cmd.Field.Type"]            := "File: open a file or run a program. Folder: open in the file manager. Command line: a program plus arguments. Web address / link: a web page, or a link such as ms-settings:windowsupdate or mailto:."
         s["Cmd.Field.Target"]           := "Path, program or web address. Variables work, e.g. A_Desktop\Projects or %OneDrive%\Documents. File and folder names are searched too."
         s["Cmd.Field.Arguments"]       := "Passed to the program, e.g. /k ipconfig /all. Usually empty for files, folders and web addresses. {query} in the target or arguments is replaced by the text typed after the keyword."
-        s["Cmd.Field.Keyword"]          := "Optional. Typing exactly this word puts the command first, e.g. np for Notepad."
+        s["Cmd.Field.Keyword"]          := "Optional. Typing exactly this word puts the command first, e.g. np for Notepad. Several keywords: separate with commas, e.g. np, ㅜㅔ."
         s["Index.Done"]                := "Index rebuilt: {1} applications."
 
         ; --- System commands ---
@@ -415,11 +436,15 @@ class I18n {
         s["Tool.WinVer"]               := "About Windows"
         s["Tool.Subtitle"]             := "Windows tool"
 
-        ; --- Windows 设置的页面 ---
+        ; --- Windows Settings pages ---
         s["Recent.PinnedHint"]         := "Pinned: {1} is shown when the search box is empty"
         s["Recent.ConfirmUnpin"]       := "Unpin '{1}'?"
         s["Recent.ConfirmForget"]      := "Remove '{1}' from the recent items?"
         s["Script.Subtitle"]           := "Script · {1}"
+        s["Scripts.Keyword"]           := "Find scripts by name"
+        s["Snippets.Keyword"]          := "Search snippets"
+        s["Clipboard.Keyword"]         := "Search clipboard history"
+        s["Bookmarks.Keyword"]         := "Search browser bookmarks"
         s["Script.Done"]               := "{1}: done"
         s["Win.Subtitle"]              := "{1} - switch to this window"
         s["Win.Gone"]                  := "That window has been closed"
@@ -480,6 +505,8 @@ class I18n {
         s["Prefs.Delete"]              := "Delete"
         s["Prefs.Filter"]              := "Filter"
         s["Prefs.Browse"]              := "..."
+        s["Prefs.EditList"]            := "Edit..."
+        s["Prefs.DefaultChoice"]       := "{1} (default)"                ; the default option in a drop-down
         s["Prefs.CheckTargets"]        := "Check Paths"
         s["Prefs.CheckAllOk"]          := "All {1} paths exist."
         s["Prefs.CheckResult"]         := "Not found: {1}`nLocation not reachable (drive or network share not connected?): {2}`n`nThey are marked in the Status column. Double-click a command to fix its path."
@@ -504,6 +531,7 @@ class I18n {
         s["Prefs.HotkeyClash"]         := "{1} is used twice: {2} and {3}. Only one of them will work.`n`nSave anyway?"
         s["Prefs.Page.General"]        := "General"
         s["Prefs.Page.Window"]         := "Search Window"
+        s["Prefs.Page.Keyboard"]       := "Keyboard"
         s["Prefs.Page.Appearance"]     := "Appearance"
         s["Prefs.Page.Features"]       := "Features"
         s["Prefs.Page.Applications"]   := "Applications"
@@ -511,22 +539,24 @@ class I18n {
         s["Prefs.FileInDefault"]       := "Also show matching files and folders in normal results"
         s["Prefs.FileDefaultLimit"]     := "Files in normal results"
         s["Prefs.FileMaxResults"]       := "Max results"
-        s["Prefs.UseEverything"]       := "Use Everything when it is running (whole disk)"
+        s["Prefs.UseEverything"]       := "Use Everything when it is running"
         s["Prefs.EverythingFilter"]     := "Filter"
         s["Prefs.EverythingFilter.Desc"] := "Added to every Everything search. ! excludes, e.g. !C:\Windows\"
         s["Prefs.ScopeFolders"]         := "Folders"
-        s["Prefs.ScopeFolders.Desc"]   := "One folder per line. Variables such as A_Desktop or %UserProfile% work."
+        s["Prefs.ScopeFolders.Desc"]   := "Folders the built-in index scans when Everything isn't running. Variables work."
+        s["Prefs.ScopeFolders.Help"]   := "One folder per line. When Everything isn't running, the built-in index scans these folders in the background (as deep and as many entries as set on the page) and file search uses it. It rescans a few seconds after files are added, removed or renamed.`n`nVariables work: A_Desktop, A_MyDocuments, and environment variables such as %UserProfile% or %OneDrive%. Large folders and network folders make scanning slower."
         s["Prefs.ScopeDepth"]          := "Subfolder depth"
+        s["Prefs.ScopeDepth.Desc"]     := "How many subfolder levels to scan. The index updates itself when files or folders are added, removed or renamed, or when these settings change; Rebuild File Index rescans right away."
         s["Prefs.RebuildFileIndex"]    := "Rebuild File Index"
         s["Prefs.FileMinLength"]        := "Min. letters"
         s["Prefs.FileMinLength.Desc"]   := "Files are searched in normal results only after this many letters."
         s["Prefs.ScopeExclude"]         := "Exclude (regex)"
         s["Prefs.ScopeExclude.Desc"]    := "Folders whose path matches this regular expression are skipped, e.g. node_modules and .git."
         s["Prefs.MaxEntries"]           := "Max entries"
-        s["Prefs.MaxEntries.Desc"]      := "Scanning stops after this many files and folders. The index refreshes itself in the background at this interval."
-        s["Prefs.EverythingStatus"]    := "Everything: {1}"
-        s["Prefs.Running"]             := "running - searching the whole disk"
-        s["Prefs.NotRunning"]          := "not running - using the built-in index"
+        s["Prefs.MaxEntries.Desc"]      := "Max entries: scanning stops after this many files and folders. Refresh every: as a safety net, an index older than this is also rescanned while the PC is idle."
+        s["Prefs.EverythingPinyin"]    := 'To find Chinese file names by pinyin, turn on pinyin in Everything first: <a href="{1}">how to</a>'
+        s["Prefs.Running"]             := "Everything is running - searching the whole disk"
+        s["Prefs.NotRunning"]          := "Everything is not running - using the built-in index"
         s["Prefs.Page.Commands"]       := "Custom Commands"
         s["Prefs.Page.Snippets"]       := "Snippets"
         s["Prefs.Page.Clipboard"]      := "Clipboard"
@@ -540,15 +570,18 @@ class I18n {
         s["Prefs.Page.FileIndex"]       := "Search Sources"
         s["Prefs.Page.Advanced"]       := "Advanced"
         s["Prefs.Page.Usage"]          := "Usage"
-        ; 两列表单左列的分组标签
+        ; group labels in the left column of two-column forms
         s["Prefs.Group.Startup"]          := "Startup"
         s["Prefs.Group.Integration"]      := "Windows"
         s["Prefs.Group.Updates"]          := "Updates"
         s["Prefs.Group.Diagnostics"]      := "Troubleshooting"
         s["Prefs.Group.Window"]           := "Window"
-        s["Prefs.Group.Typing"]           := "Typing"
+        s["Prefs.Group.InputMethod"]      := "Input method"
+        s["Prefs.Group.SearchKeys"]       := "Keys in the search box"
+        s["Prefs.Group.SpaceKey"]         := "Space key"
         s["Prefs.Group.CustomThemes"]     := "Custom themes"
         s["Prefs.Group.Dragging"]         := "Dragging"
+        s["Prefs.Group.Animation"]        := "Animation"
         s["Prefs.Group.SearchFeatures"]   := "Search features"
         s["Prefs.Group.Options"]          := "Options"
         s["Prefs.Group.StartFileSearch"]  := "Start with"
@@ -560,12 +593,13 @@ class I18n {
         s["Prefs.Group.Status"]           := "Status"
         s["Prefs.Group.DataFolder"]       := "Data folder"
         s["Prefs.Section.EmptyBox"]       := "Empty search box"
-        s["Prefs.Section.EmptyBox.Desc"]  := "What the window shows before you type: a usage tip, then your pinned items and recently opened items."
-        s["Prefs.Section.History"]        := "Search history"
+        s["Prefs.Section.EmptyBox.Desc"]  := "What the window shows before you type: your pinned items and recently opened items."
         s["Prefs.Section.Data"]           := "Settings and data"
         s["Prefs.Section.Reset"]          := "Reset"
         s["Prefs.Section.Theme"]          := "Theme"
         s["Prefs.Section.Size"]           := "Size"
+        s["Prefs.Placeholder"]            := "Placeholder text"
+        s["Prefs.Placeholder.Desc"]       := "Leave blank for the default; type a single space to show nothing."
         s["Prefs.Section.FeatureOptions"] := "Feature options"
         s["Prefs.Section.AppIndex"]       := "Index"
         s["Prefs.Section.AppResults"]     := "In search results"
@@ -575,6 +609,7 @@ class I18n {
         s["Prefs.Section.Browse.Desc"]    := "Type a folder path such as C:\, C:\Users\, ~\ (your user folder), %OneDrive%\ or \\server\share\ to list what is in it; the text after the last \ filters the list. Tab opens the selected folder (any folder in the results), Backspace goes back up. Insert marks files and folders, then → acts on all marked ones (open, copy, move to the Total Commander folder, recycle)."
         s["Prefs.Section.Everything"]     := "Everything (whole-disk search)"
         s["Prefs.Section.BuiltinIndex"]   := "Built-in index (when Everything is not running)"
+        s["Prefs.Section.BuiltinIndex.Desc"] := 'Chinese file names also match pinyin initials, e.g. "cs" finds 测试.docx. No setup needed.'
         s["Prefs.Section.Options"]        := "Options"
         s["Prefs.TypeShort.File"]         := "File"
         s["Prefs.TypeShort.Folder"]       := "Folder"
@@ -591,33 +626,65 @@ class I18n {
         s["Prefs.DoubleTap.Ctrl"]      := "Double-tap Ctrl"
         s["Prefs.DoubleTap.Shift"]     := "Double-tap Shift"
         s["Prefs.CapsLock"]            := "Caps Lock"
+        s["Menu.CheatSheet"]           := "Shortcuts and Syntax"
+        s["Status.Open"]               := "Open"
+        s["Status.Run"]                := "Run"
+        s["Status.Copy"]               := "Copy"
+        s["Status.Paste"]              := "Paste"
+        s["Status.Reveal"]             := "Reveal"
+        s["Status.Edit"]               := "Edit"
+        s["Status.Complete"]           := "Complete"
+        s["Status.Actions"]            := "Actions"
+        s["Status.Back"]               := "Esc  Back"
+        s["Status.FileMode"]           := "Searching files  ·  Backspace: all results"
         s["Caps.On"]                   := "Caps Lock On"
         s["Caps.Off"]                  := "Caps Lock Off"
         s["Prefs.CapsLock.Desc"]       := "Like on a Mac: press Caps Lock to switch the input method, hold it to turn caps lock on or off (a notice shows which). Shift+Caps Lock works as usual."
         s["Prefs.CapsLock.Off"]        := "As usual"
         s["Prefs.CapsLock.Layout"]     := "Press to switch input method"
         s["Prefs.CapsLock.Mode"]       := "Press to switch Chinese / English mode"
+        s["Prefs.CapsLockNotify"]      := "Show a notice when caps lock turns on or off"
+        s["Prefs.CapsLockElevated"]    := "Also in windows running as administrator"
+        s["Prefs.CapsLockElevated.Desc"] := "Runs a small helper with administrator rights that only handles Caps Lock (confirm once when turning it on). ALTRun itself keeps normal rights."
+        s["Prefs.CapsLockElevated.NeedsMode"] := "Choose how Caps Lock switches above first."
+        s["Prefs.CapsLockElevatedFailed"] := "Caps Lock for administrator windows could not be set up (the confirmation may have been cancelled). The option stays off."
+        s["Caps.HelperFailed"]         := "Caps Lock in administrator windows could not start. Turn the option off and on again in Preferences → Hotkeys."
         s["Prefs.SelectionHotkey"]     := "Selection hotkey"
-        s["Prefs.SelectionHotkey.Desc"] := "Select text, files or a link in any program and press this to show its actions."
+        s["Prefs.SelectionHotkey.Desc"] := 'Select text, files or a link in any program and press this to show its actions: search the web, change case, save as a snippet; for files, copy the path or open a terminal there. <a href="{1}">All actions</a>'
         s["Prefs.Language"]            := "Language"
         s["Prefs.Language.auto"]       := "Automatic"
         s["Prefs.Language.Desc"]       := "Automatic follows the Windows display language."
         s["Prefs.LaunchAtLogin"]       := "Launch ALTRun at login"
-        s["Prefs.LaunchAtLogin.Desc"]  := "ALTRun starts in the background when you sign in to Windows."
+        s["Prefs.LaunchAtLogin.Desc"]  := "ALTRun starts in the background when you sign in."
         s["Prefs.ShowTrayIcon"]        := "Show tray icon"
-        s["Prefs.ShowTrayIcon.Desc"]   := "Without the icon, press F2 in the search window to open Preferences."
+        s["Prefs.ShowTrayIcon.Desc"]   := "Without the icon, open Preferences with F2 in the search window or its status bar menu button."
         s["Prefs.HideOnDeactivate"]    := "Hide the window when it loses focus"
         s["Prefs.HideOnDeactivate.Desc"] := "Hides when you click another window or switch programs. When off, press Esc or the hotkey to hide."
-        s["Prefs.EnglishInput"]        := "Switch to English input when shown"
-        s["Prefs.EnglishInput.Desc"]   := "Uses the English (US) keyboard each time, so a Chinese input method does not catch your typing."
+        s["Prefs.Density"]             := "Density"
+        s["Prefs.Density.Comfortable"] := "Comfortable"
+        s["Prefs.Density.Normal"]      := "Normal"
+        s["Prefs.Density.Compact"]     := "Compact"
+        s["Prefs.Fade"]                := "Fade in and out when showing and hiding"
+        s["Prefs.Fade.Desc"]           := "The search box still gets focus at once: typing is never delayed."
+        s["Prefs.EnglishInput"]        := "Switch to English"
+        s["Prefs.EnglishInput.Desc"]   := "Switches when the window shows, so a Chinese input method doesn't catch your typing. English mode needs no keyboard added."
+        s["Prefs.EnglishInput.Off"]    := "Off"
+        s["Prefs.EnglishInput.Keyboard"] := "English (US) keyboard"
+        s["Prefs.EnglishInput.Mode"]   := "English mode of the current input method"
         s["Prefs.RestoreInput"]        := "Switch back when the window hides"
-        s["Prefs.RestoreInput.Desc"]   := "Other programs get the input method you were using before. Not needed when Windows uses a different input method for each app window."
+        s["Prefs.RestoreInput.Desc"]   := "Other programs get back the input method or mode you were using."
         s["Prefs.SpaceToRun"]          := "Space runs the selected result (Shift+Space types a space)"
         s["Prefs.SpaceToRun.Desc"]     := "After you type something, Space works like Enter. Space in an empty box still searches files."
+        s["Prefs.TabKey"]              := "Tab key"
+        s["Prefs.TabKey.Desc"]         := "Select next result: Tab / Shift+Tab go to the next / previous result, Ctrl+Tab autocompletes."
+        s["Prefs.TabKey.Complete"]     := "Autocomplete"
+        s["Prefs.TabKey.Next"]         := "Select next result"
         s["Prefs.KeepLastQuery"]       := "Keep the last search when the window opens"
-        s["Prefs.KeepLastQuery.Desc"]  := "The text, results and selected row come back with the text selected: Enter runs it again, typing starts over."
+        s["Prefs.KeepLastQuery.Desc"]  := "Comes back with the text selected: Enter runs it again, typing starts over."
         s["Prefs.ShowTips"]            := "Show a usage tip"
-        s["Prefs.ShowTips.Desc"]       := "A different tip each time the window opens. Type ? to see them all."
+        s["Prefs.ShowTips.Desc"]       := "In the empty search box, a different one each time. Type `"?`" to see all."
+        s["Prefs.StatusBar"]           := "Show the status bar"
+        s["Prefs.StatusBar.Desc"]      := "At the bottom when there are results: a menu button and what Enter, Ctrl+Enter, F3 and → do."
         s["Prefs.SendToMenu"]          := "Add to Explorer 'Send to' menu"
         s["Prefs.SendToMenu.Desc"]     := "Explorer → right-click → Send to → ALTRun adds custom commands: one item opens the editor, several are added at once."
         s["Prefs.StartMenu"]           := "Add to Start menu"
@@ -634,23 +701,25 @@ class I18n {
         s["Prefs.RecentCount.Desc"]    := "0 = none. Pinned items (→ Pin to Empty Search Box) are always shown first; Ctrl+Del removes one."
         ; Appearance
         s["Prefs.Width"]                := "Window width (px)"
-        s["Prefs.Width.Desc"]           := "The width grows with the Windows display scale. More results scroll with ↑ ↓; the window grows with the results."
-        s["Prefs.VisibleRows"]          := "Visible results (1-9)"
+        s["Prefs.Width.Desc"]           := "Scales with the Windows display scale. More results scroll with ↑ ↓."
+        s["Prefs.VisibleRows"]          := "Visible results"
         s["Prefs.CopyTheme"]           := "Copy as Custom Theme..."
         s["Prefs.CopyThemePrompt"]     := "Name of the new theme (saved in the Themes folder):"
         s["Prefs.ThemeExists"]         := "Theme '{1}' already exists. Replace it?"
         s["Theme.System"]              := "System (Light / Dark)"
         s["Theme.Light"]               := "Light"
         s["Theme.Dark"]                := "Dark"
-        s["Theme.DarkCompact"]         := "Dark Compact"
         s["Theme.Classic"]             := "Classic"
         s["Theme.Midnight"]            := "Midnight"
-        s["Theme.MidnightCompact"]     := "Midnight Compact"
         s["Theme.Frost"]               := "Frost"
         s["Theme.Graphite"]            := "Graphite"
         s["Theme.Ocean"]               := "Ocean"
         s["Theme.Paper"]               := "Paper"
-        s["Theme.LightCompact"]        := "Light Compact"
+        s["Theme.Lavender"]            := "Lavender"
+        s["Theme.Rose"]                := "Rose"
+        s["Theme.Forest"]              := "Forest"
+        s["Theme.Sunset"]              := "Sunset"
+        s["Theme.HighContrast"]        := "High Contrast"
         s["Theme.DarkModern"]          := "Dark Modern"
         s["Theme.LightModern"]         := "Light Modern"
         s["Theme.Monokai"]             := "Monokai"
@@ -668,9 +737,9 @@ class I18n {
         s["Prefs.ShowOn.Active"]       := "Screen with the active window"
         s["Prefs.ShowOn.Desc"]         := "Only matters with more than one screen."
         s["Prefs.RememberPosition"]    := "Remember the position after dragging the window"
-        s["Prefs.RememberPosition.Desc"] := "Drag the empty space around the search box. The position is kept relative to the screen, so it fits other screens too."
+        s["Prefs.RememberPosition.Desc"] := "Drag the space around the search box. Kept relative to the screen."
         s["Prefs.ResetPosition"]       := "Reset Window Position"
-        s["Prefs.ResetPosition.Desc"]  := "Centered, 20% from the top of the screen. Takes effect when you click OK or Apply."
+        s["Prefs.ResetPosition.Desc"]  := "Centered, 20% from the top. Takes effect after OK or Apply."
         ; Features
         s["Prefs.EnabledFeatures"]     := "Enabled features"
         s["Prefs.EnabledFeatures.Desc"] := "Turned-off features are left out of search results."
@@ -687,6 +756,7 @@ class I18n {
         s["Prefs.Feature.Recent"]      := "Pinned and recent items"
         s["Prefs.Feature.Scripts"]     := "Scripts"
         s["Prefs.Feature.Help"]         := "Help (?)"
+        s["Prefs.Feature.LargeType"]    := "Large type (Ctrl+L)"
         s["Prefs.Feature.Bookmarks"]   := "Browser bookmarks"
         s["Prefs.StructuralCalc"]      := "Add structural results (main bars / rebar area)"
         s["Prefs.StructuralCalc.Desc"] := "Two more rows under results above 2 × cover: the result as beam width (main bars and spacing) and as rebar area As (bars needed of each size)."
@@ -695,13 +765,17 @@ class I18n {
         s["Prefs.SettingsPages"]       := "Windows Settings pages"
         s["Prefs.ConfirmActions"]      := "Confirm system actions"
         s["Prefs.SysHidden"]           := "Hidden commands"
-        s["Prefs.SysHidden.Desc"]      := "Built-in commands removed by Ctrl+Del in search results, one ID per line. Delete a line to show the command again."
+        s["Prefs.SysHidden.Desc"]      := "Built-in commands removed with Ctrl+Del in search results."
+        s["Prefs.SysHidden.Help"]      := "Built-in commands you removed with Ctrl+Del in the search results, one command ID per line (for example Printers).`n`nDelete a line to show that command in the search results again. The command IDs are listed on the System Commands page of the Wiki."
         s["Prefs.ConfirmActions.Desc"] := "Asks before shut down, restart, sign out and emptying the Recycle Bin."
         s["Prefs.TerminalPrefix"]       := "Terminal prefix"
-        s["Prefs.TerminalPrefix.Desc"]  := "Type >command to run it in the shell, e.g. >ipconfig /all. 'Open terminal here' uses the same shell."
+        s["Prefs.TerminalPrefix.Desc"]  := "Type >command to run it in the shell, e.g. `">ipconfig /all`". 'Open terminal here' uses the same shell."
+        s["Prefs.ShowInNormal"]         := "Show in normal search"
+        s["Prefs.FeatureKeyword"]       := "Keyword"
+        s["Prefs.FeatureKeyword.Desc"]  := "Bookmarks come after apps and commands, windows only when the title matches well. bm <words> / w <title> search only them."
         s["Prefs.TerminalShell"]        := "Shell"
         s["Prefs.Section.Calculator"]   := "Calculator"
-        s["Prefs.Section.Calculator.Desc"] := "Type a calculation such as 12*(3+4) or =2^10, Enter copies the result. Also units (10 km in mi), number bases (255 in hex) and dates (today + 30 days)."
+        s["Prefs.Section.Calculator.Desc"] := 'Type a calculation such as "12*(3+4)" or "=2^10", Enter copies the result. Also units ("10 km in mi"), number bases ("255 in hex") and dates ("today + 30 days").'
         s["Prefs.Section.Structural"]   := "Structural results"
         s["Prefs.RebarCover"]           := "Rebar cover (mm)"
         s["Prefs.RebarCover.Desc"]      := "Each side, from the beam edge."
@@ -716,6 +790,8 @@ class I18n {
         s["Prefs.Section.Scripts"]      := "Script commands"
         s["Prefs.Section.Scripts.Desc"] := "Put .ahk, .ps1, .bat, .cmd or .py files in the Scripts folder and they become commands: search for the name or keyword and press Enter to run (like Raycast Script Commands). .ahk scripts run with ALTRun itself, .py needs Python. Changes take effect right away; turn the feature on or off in Features."
         s["Prefs.Group.ScriptsFolder"]  := "Folder"
+        s["Prefs.ScriptKeyword"]        := "Search keyword"
+        s["Prefs.ScriptKeyword.Desc"]   := '"script backup" searches only your scripts; "script " lists them all.'
         s["Prefs.Section.ScriptList"]   := "Scripts found"
         s["Prefs.NoScripts"]            := "(no scripts yet)"
         s["Prefs.ScriptsNote"]          := "Optional comments at the top of a script (; # REM :: // all work): @altrun.title name, @altrun.keyword ping, @altrun.argument host name (asks for text after the keyword), @altrun.mode window | silent | output. Double-click a script to edit it; F1 for details and examples."
@@ -723,8 +799,10 @@ class I18n {
         s["Script.Mode.Silent"]         := "Background, notify"
         s["Script.Mode.Output"]         := "Background, Notepad"
         s["Prefs.FileKeywords"]         := "File keywords"
-        s["Prefs.FileKeywords.Desc"]    := "e.g. open report: files and folders; folder bk: folders only. Comma-separated."
+        s["Prefs.FileKeywords.Desc"]    := 'File keywords: "open report" finds files and folders whose names contain "report". Folder keywords: "folder projects" finds folders only. Separate several keywords with commas.'
         s["Prefs.FolderKeywords"]       := "Folder keywords"
+        s["Prefs.RecentKeywords"]       := "Recent keywords"
+        s["Prefs.RecentKeywords.Desc"]  := '"recent report" finds files and folders you opened recently in any program (Windows Recent items), newest first.'
         s["Prefs.QuotePrefix"]         := "Typing ' first searches files"
         s["Prefs.SpacePrefix"]         := "Space in an empty search box searches files"
         s["Prefs.SpacePrefix.Desc"]    := "Like Alfred. Backspace goes back to normal search."
@@ -732,22 +810,30 @@ class I18n {
         s["Prefs.EverythingPath.Desc"] := "Only for 'Search in Everything'. Leave empty to find it automatically."
         ; Applications
         s["Prefs.AppFolders"]           := "Folders"
-        s["Prefs.AppFolders.Desc"]     := "One folder per line. Variables such as A_Desktop or %AppData% work."
+        s["Prefs.AppFolders.Desc"]     := "Folders searched for apps and shortcuts. Variables such as A_Desktop or %AppData% work."
+        s["Prefs.AppFolders.Help"]     := 'One folder per line. ALTRun indexes the apps and shortcuts in these folders and their subfolders (as deep as "Subfolder depth" on the page), and updates the index when something in them changes.`n`nVariables work: A_Programs and A_ProgramsCommon (Start menu), A_Desktop and A_DesktopCommon (desktop), and environment variables such as %AppData% or %OneDrive%. A network folder works too, but makes indexing slower.'
         s["Prefs.AppFileTypes"]        := "File types"
         s["Prefs.AppFileTypes.Desc"]   := "Separate with commas, e.g. *.lnk, *.exe"
         s["Prefs.AppDepth"]             := "Subfolder depth"
-        s["Prefs.AppDepth.Desc"]        := "Subfolder levels to scan. The index also refreshes itself at this interval."
+        s["Prefs.AppDepth.Desc"]        := "How many subfolder levels to scan. The index updates itself when shortcuts are added or removed, or when these settings change; Rebuild Index rescans right away."
         s["Prefs.AppExclude"]          := "Exclude (regex)"
         s["Prefs.AppExclude.Desc"]     := "Files whose names match this regular expression are skipped."
         s["Prefs.AppHidden"]           := "Hidden apps"
-        s["Prefs.AppHidden.Desc"]      := "Added by Ctrl+Del in search results. Delete a line to show the app again."
+        s["Prefs.AppHidden.Desc"]      := "Apps removed with Ctrl+Del in search results."
+        s["Prefs.AppHidden.Help"]      := "Apps you removed with Ctrl+Del in the search results, one path per line, for example:`n  C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Administrative Tools\Disk Cleanup.lnk`n  shell:AppsFolder\...!... (Microsoft Store apps)`n`nDelete a line to show that app in the search results again."
         s["App.ConfirmHide"]           := "Remove '{1}' from search results?`n`nThe program is not uninstalled. You can restore it in Preferences > Applications."
         s["Prefs.StoreApps"]           := "Include Microsoft Store apps"
         s["Prefs.StoreApps.Desc"]      := "Apps installed from the Microsoft Store, e.g. Calculator, Photos."
         s["Prefs.MatchPinyin"]         := "Match Chinese names by pinyin initials"
-        s["Prefs.MatchPinyin.Desc"]    := "e.g. wx finds 微信 (WeChat)."
+        s["Prefs.MatchPinyin.Desc"]    := 'e.g. "wx" finds 微信 (WeChat). File names always match pinyin.'
         s["Prefs.RefreshMinutes"]       := "Refresh every (min)"
         s["Prefs.RebuildIndex"]        := "Rebuild Index"
+        s["Prefs.RebuildUnsaved"]      := "Changes you haven't applied yet are not included; click Apply and the index is rescanned automatically."
+        s["Prefs.RebuildFileIndex.Everything"] := "Everything is running, so searches use Everything now; the built-in index is used when Everything is closed."
+        s["Prefs.RebuildFileIndex.Limit"] := "It reached Max entries ({1}), so the rest were not indexed. Increase Max entries or index fewer folders."
+        s["Prefs.RebuildFileIndex.Done"] := "The file index has been rebuilt: {1} files and folders."
+        s["Prefs.RebuildIndex.Done"]   := "The app index has been rebuilt: {1} apps found."
+        s["Prefs.Rebuilding"]          := "Rebuilding..."
         ; Lists
         s["Prefs.Col.Title"]           := "Title"
         s["Prefs.Col.Type"]            := "Type"
@@ -760,7 +846,7 @@ class I18n {
         s["Prefs.Col.Mode"]            := "Runs as"
         s["Prefs.Col.File"]            := "File"
         s["Prefs.Col.Text"]            := "Text"
-        s["Prefs.Col.Url"]             := "URL ({query} = search term)"
+        s["Prefs.Col.Url"]             := "URL"
         s["Prefs.Col.Id"]              := "Id"
         s["Prefs.Col.Icon"]            := "Icon"
         s["Prefs.Col.Key"]             := "Hotkey"
@@ -769,9 +855,23 @@ class I18n {
         s["Prefs.WinTitleHint"]         := "e.g. ahk_exe notepad.exe. ALTRun = only in the ALTRun search window."
         s["Prefs.Col.AutoExpand"]      := "Expand automatically when typed"
         s["Snippet.Hint.Name"]         := "Shown in search results and used for searching. Use words you would type to find it, e.g. PT quotation."
-        s["Snippet.Hint.Keyword"]      := "Optional short code, e.g. pq. An exact match ranks first; to auto-expand, type {1}pq in any app. Max {2} characters, no spaces."
+        s["Snippet.Hint.Keyword"]      := "Optional short code, e.g. pq. An exact match ranks first; to auto-expand, type {1}pq in any app. Several codes: separate with commas. Max {2} characters each, no spaces."
         s["Snippet.Hint.Text"]         := "Enter pastes it into the window you were in. Words in the text are searchable too (3+ characters). Placeholders, filled in when pasting:"
         s["Snippet.Hint.AutoExpand"]   := "Type {1} + keyword in any app and it is replaced by the text right away. Turn off to paste it only from the search window."
+        s["Snippet.ImportExport"]       := "Import/Export"
+        s["Snippet.Import"]             := "Import from a table..."
+        s["Snippet.Export"]             := "Export to CSV..."
+        s["Snippet.Import.Title"]       := "Import Snippets"
+        s["Snippet.Import.Help"]        := "Paste cells copied from Excel below, or click Open File to read a CSV / TSV file."
+        s["Snippet.Import.Columns"]     := "Columns: Name | Keyword | Text | Expand automatically (optional, 1 / 0). A header row is skipped; snippets with the same keyword are updated."
+        s["Snippet.Import.File"]        := "Open File..."
+        s["Snippet.Import.Ok"]          := "Import"
+        s["Snippet.Import.Filter"]      := "Tables (*.csv; *.tsv; *.txt)"
+        s["Snippet.Import.None"]        := "No snippets found. Each row needs the Name, Keyword and Text columns, and the text can't be empty."
+        s["Snippet.Import.Done"]        := "Added {1}, updated {2}.`n`nClick OK or Apply in Preferences to save them."
+        s["Snippet.Import.Skipped"]     := "Skipped {1} rows without text."
+        s["Snippet.Export.Filter"]      := "CSV (*.csv)"
+        s["Snippet.Export.Done"]        := "Exported {1} snippets to:`n{2}"
         s["Snippet.KeywordTooLong"]    := "This keyword cannot auto-expand: the prefix {1} plus the keyword can be at most {2} characters, without spaces.`n`nShorten the keyword, or turn off auto-expansion (the snippet can still be found by name and text)."
         s["Editor.SaveAnyway"]         := "Save anyway?"
         s["Prefs.Type.File"]           := "File / Program"
@@ -780,45 +880,50 @@ class I18n {
         s["Prefs.Type.Url"]            := "Web address / link"
         s["Prefs.CommandsNote"]        := "Double-click to edit. Check Paths finds commands whose file or folder was renamed or moved."
         s["Prefs.SnippetAutoExpand"]   := "Expand snippet keywords typed in any app"
-        s["Prefs.SnippetAutoExpand.Desc"] := "Type the prefix and keyword in any program (e.g. `;sig) and it is replaced by the text. Not in password boxes or the windows below (ahk_exe / ahk_class / title, separated by commas)."
+        s["Prefs.SnippetAutoExpand.Desc"] := 'Type the prefix and keyword in any program (e.g. "`;sig") and it is replaced by the text. Not in password boxes or the windows below.'
         s["Prefs.ExpandExclude"]       := "Don't expand in"
+        s["Prefs.ExpandExclude.Help"]  := "Snippets are not expanded in these windows, one per line: ahk_exe program.exe, ahk_class ClassName or part of the title, for example ahk_exe mstsc.exe (Remote Desktop) or ahk_exe KeePass.exe.`n`nSnippets are never expanded in password boxes or in ALTRun's own search window either."
         s["Prefs.ExpandPrefix"]        := "Keyword prefix"
-        s["Prefs.ExpandPrefix.Desc"]   := "Keeps normal typing from expanding by accident."
         s["Prefs.PasteMode"]           := "Paste by"
+        s["Prefs.PasteMode.Auto"]      := "Automatic"
         s["Prefs.PasteMode.Clipboard"] := "Clipboard + Ctrl+V"
         s["Prefs.PasteMode.Type"]      := "Typing the text"
-        s["Prefs.PasteMode.Desc"]       := "Typing is slower but works where pasting is blocked. Delay: wait before restoring the clipboard; raise it if the old clipboard gets pasted."
+        s["Prefs.PasteMode.Desc"]       := "Automatic types short single-line text and pastes longer text. Delay: wait before restoring the clipboard; raise it if the old clipboard gets pasted."
         s["Prefs.PasteDelay"]           := "Delay (ms)"
         s["Prefs.SnippetKeyword"]      := "Search keyword"
-        s["Prefs.SnippetKeyword.Desc"] := "e.g. snip sig searches only snippets; the keyword alone lists all."
+        s["Prefs.SnippetKeyword.Desc"] := 'Search keyword: "snip sig" searches only snippets, the keyword alone lists all. Keyword prefix: typed before a keyword to expand it, so normal typing does not expand by accident.'
         s["Prefs.SnippetSearchText"]   := "Also search snippet text"
         s["Prefs.SnippetSearchText.Desc"] := "With 3+ characters, text matches are listed too, after name and keyword matches."
         s["Prefs.ClipKeyword"]         := "Keyword"
-        s["Prefs.ClipKeyword.Desc"]    := "e.g. clip invoice searches the history."
         s["Prefs.ClipHotkey"]          := "Hotkey"
-        s["Prefs.ClipHotkey.Desc"]     := "Opens clipboard history directly."
+        s["Prefs.ClipHotkey.Desc"]     := 'Opens clipboard history directly. Or type the keyword, e.g. "clip invoice" searches the history.'
         s["Prefs.ClipMaxItems"]        := "Keep items"
         s["Prefs.ClipMaxItems.Desc"]    := "The oldest items are removed first. Texts longer than the max length are not recorded."
         s["Prefs.ClipMaxLength"]        := "Max length"
         s["Prefs.ClipPersist"]         := "Keep history after ALTRun quits"
-        s["Prefs.ClipPersist.Desc"]    := "Saved in Data\ClipboardHistory.json; images and long entries stay on this PC (%LOCALAPPDATA%\ALTRun\Clipboard). Off: memory only."
+        s["Prefs.ClipPersist.Desc"]    := "Saved to disk (see Save in below). Off: memory only, cleared when ALTRun quits."
         s["Prefs.ClipImages"]          := "Also record images"
         s["Prefs.ClipImages.Desc"]     := "Saved as PNG files with the long entries. Only while history is kept after quitting."
+        s["Prefs.ClipStorage"]         := "Save in"
+        s["Prefs.ClipStorage.Data"]    := "The Data folder"
+        s["Prefs.ClipStorage.Files"]   := "Images and long items on this PC only"
+        s["Prefs.ClipStorage.All"]     := "Everything on this PC only"
+        s["Prefs.ClipStorage.Desc"]    := "This PC = %LOCALAPPDATA%\ALTRun, not carried with a synced or portable Data folder; files move when changed."
         s["Prefs.ClipMaxImages"]       := "Keep images"
         s["Prefs.ClipMaxImages.Desc"]  := "The oldest images are removed first."
         s["Prefs.ClipMerge"]           := "Press Ctrl+C twice to append to the previous item"
         s["Prefs.ClipMerge.Desc"]      := "Copy one piece, then select the next and press Ctrl+C twice quickly: both become one item, also on the clipboard."
         s["Prefs.ClipIgnoreApps"]      := "Never record from"
-        s["Prefs.ClipIgnoreApps.Desc"] := "One process name per line, e.g. KeePass.exe. Nothing copied there is recorded."
+        s["Prefs.ClipIgnoreApps.Desc"] := "Nothing copied in these programs is recorded (password managers by default)."
+        s["Prefs.ClipIgnoreApps.Help"] := "One process name per line, for example KeePass.exe. Whatever you copy while one of these programs is in front is never recorded in the clipboard history.`n`nContent that a program marks as private (most password managers do) is never recorded anyway; this list is for programs that don't. Task Manager → Details shows the process names."
         s["Prefs.ClipClear"]           := "Clear History Now"
         s["Prefs.Fallbacks"]            := "Fallback searches"
         s["Prefs.Fallbacks.Desc"]       := "Shown when nothing matches: engine Ids (google, bing, baidu...) or files. Separate with commas."
         s["Prefs.HotkeysNote"]          := "Global hotkeys for ALTRun commands. Fill in the window to limit a hotkey to one program; ALTRun means only in the ALTRun search window."
         ; Extensions
         s["Prefs.QuickSwitch"]         := "File dialog quick switch"
-        s["Prefs.QuickSwitch.Desc"]    := "In Open / Save dialogs, jump to a folder open in Total Commander or Explorer."
-        s["Prefs.QSExplorer"]           := "Explorer hotkey"
-        s["Prefs.QSTotalCmd"]           := "Total Commander hotkey"
+        s["Prefs.QSHotkey"]             := "Hotkey"
+        s["Prefs.QSHotkey.Desc"]        := "Jumps to the folder of the Total Commander, Directory Opus or File Explorer window you used last."
         s["Prefs.QSMenu"]              := "Hotkey"
         s["Prefs.QSPanel"]             := "Show the folder panel below dialogs"
         s["Prefs.QSPanelSection"]      := "Folder panel"
@@ -831,33 +936,38 @@ class I18n {
         s["Prefs.QSPanelSearch.All"]   := "Folders and files"
         s["Prefs.QSPanelSearch.Folders"] := "Folders only"
         s["Prefs.QSRecent"]            := "Recent folders"
-        s["Prefs.QSAuto"]              := "Jump automatically when switching from Total Commander"
+        s["Prefs.QSAuto"]              := "Jump automatically when switching from TC / Opus / Explorer"
         s["Prefs.Section.QSDialogs"]    := "Dialogs"
         s["Prefs.Section.QSAuto"]       := "When a dialog opens"
         s["Prefs.Group.DialogWindows"]  := "Works in"
         s["Prefs.QSStandard"]           := "Standard Open / Save dialogs (ahk_class #32770)"
+        s["Prefs.QSBrowse"]             := "Browse for Folder dialogs (folder tree only)"
         s["Prefs.QSOtherDialogs"]       := "Other dialogs"
-        s["Prefs.QSOtherDialogs.Desc"]  := "One window per line, e.g. ahk_class Qt5QWindowIcon for WPS Office."
+        s["Prefs.QSOtherDialogs.Desc"]  := "Open / Save dialogs that programs draw themselves, e.g. WPS Office."
+        s["Prefs.QSOtherDialogs.Help"]  := "Open / Save dialogs that programs draw themselves (Qt, GTK, Java...), one per line, for example ahk_class Qt5QWindowIcon for WPS Office. Write ahk_class ClassName, ahk_exe program.exe or part of the title.`n`nALTRun types the folder path into the file name box and presses Enter, which works in most such dialogs. Standard Windows dialogs and Browse for Folder have their own checkboxes on the page."
         s["Prefs.QSExclude"]            := "Never in"
-        s["Prefs.QSExclude.Desc"]       := "Never switch in these. One per line: ahk_class, ahk_exe or a title."
+        s["Prefs.QSExclude.Desc"]       := "Never switch folders in these windows."
+        s["Prefs.QSExclude.Help"]       := "Windows where Quick Switch never acts, one per line:`n  ahk_exe 7zG.exe – a program (process name)`n  ahk_class SysListView32 – a window class`n  any other text – part of the window title`n`nUse it for windows that look like an Open / Save dialog but aren't, for example 7-Zip's extract dialog. Tools such as AutoHotkey's Window Spy show a window's class and process."
         s["Prefs.QSAutoExclude"]        := "No auto jump in"
-        s["Prefs.QSAutoExclude.Desc"]   := "The hotkeys still work there. One window per line, e.g. ahk_exe acad.exe"
+        s["Prefs.QSAutoExclude.Desc"]   := "No automatic jump in these dialogs; the hotkey still works there."
+        s["Prefs.QSAutoExclude.Help"]   := "Dialogs where Quick Switch doesn't jump on its own when they open, one per line: ahk_exe program.exe, ahk_class ClassName, or part of the title, for example ahk_exe acad.exe.`n`nThe hotkey and the dialog panel still work in these dialogs."
         s["Prefs.AutoDate"]             := "Date stamp"
-        s["Prefs.AutoDate.Desc"]        := "Press the hotkey (Ctrl+D by default) while renaming a file to add or update ' - date' before the extension; in a note box it adds the date at the end."
+        s["Prefs.AutoDate.Desc"]        := "Press the hotkey (Ctrl+D by default) to add ' - date' to a file name (an existing date becomes today's) or to the end of the text."
         s["Prefs.DateFormat"]          := "Date format"
         s["Prefs.DateFormat.Desc"]     := "e.g. dd.MM.yyyy or yyyy-MM-dd. Also used by {date} in snippets."
         s["Prefs.RenameHotkey"]         := "Hotkey"
-        s["Prefs.AppendHotkey"]         := "Hotkey"
-        s["Prefs.Section.DateRename"]   := "Rename files"
-        s["Prefs.Section.DateAppend"]   := "Note boxes"
+        s["Prefs.Section.DateRename"]   := "File names (before the extension)"
+        s["Prefs.Section.DateAppend"]   := "End of the text"
         s["Prefs.RenameWindows"]        := "Works in"
-        s["Prefs.RenameWindows.Desc"]   := "Windows where the hotkey renames, one per line, e.g. ahk_class CabinetWClass (Explorer), ahk_class TTOTAL_CMD (Total Commander)."
+        s["Prefs.RenameWindows.Desc"]   := "While renaming: Report.docx → Report - 16.10.2026.docx; an existing date becomes today's."
+        s["Prefs.RenameWindows.Help"]   := "Windows where the hotkey adds the date while you rename a file, one per line: ahk_class ClassName, ahk_exe program.exe or part of the title. The default list covers Explorer, the desktop, standard dialogs and Total Commander.`n`nThe date goes before the extension: Report.docx → Report - 16.10.2026.docx; a date that is already there becomes today's."
         s["Prefs.AppendWindows"]        := "Works in"
-        s["Prefs.AppendWindows.Desc"]   := "Windows where the hotkey adds the date at the end of the text, one per line, e.g. ahk_class TCmtEditForm (Total Commander comments)."
+        s["Prefs.AppendWindows.Desc"]   := "At the end of the current line: Checked → Checked - 16.10.2026."
+        s["Prefs.AppendWindows.Help"]   := "Windows where the hotkey adds the date at the end of the current line, one per line: ahk_class ClassName, ahk_exe program.exe or part of the title, for example ahk_class TCmtEditForm (Total Commander's comment box) or ahk_exe Notepad4.exe.`n`nChecked → Checked - 16.10.2026"
         s["Prefs.EnableExtension"]     := "Enabled"
         ; Advanced
         s["Prefs.EditJson"]            := "Edit ALTRun.json..."
-        s["Prefs.EditJson.Desc"]       := "Every setting, including ones not shown here. ALTRun reloads when you save."
+        s["Prefs.EditJson.Desc"]       := "Every setting is in it, even ones not shown here. ALTRun reloads when you save it."
         s["Prefs.OpenDataFolder"]      := "Open Data Folder"
         s["Prefs.ChangeDataFolder"]    := "Change Location..."
         s["Prefs.DataFolderPrompt"]    := "Folder for ALTRun's settings and data (for example in OneDrive, to share them between computers)"
@@ -900,9 +1010,17 @@ class I18n {
         s["Usage.Clear"]               := "Clear Usage Statistics"
         s["Usage.ClearConfirm"]        := "Clear all usage statistics?"
         s["Prefs.ResetLearning"]       := "Reset Learned Ranking"
-        s["Prefs.ResetLearning.Desc"]  := "Clears the learned result order and the search history."
+        s["Prefs.ResetLearning.Desc"]  := "Reset Learned Ranking clears the learned result order and search history. Restore Defaults keeps your commands, snippets, hotkeys, web searches and pinned items."
         s["Prefs.ResetDone"]           := "Learned ranking and search history cleared."
+        s["Prefs.RestoreDefaults"]     := "Restore Defaults..."
+        s["Prefs.RestoreDefaultsConfirm"] := "Restore all settings to their defaults?`n`nYour custom commands, snippets, hotkeys, web searches and pinned items are kept; learned ranking, clipboard history and usage statistics are not affected. The current ALTRun.json is saved as ALTRun.json.bak first, then ALTRun reloads."
+        s["Prefs.OpenLog"]             := "Open Log"
+        s["Prefs.OpenLog.Desc"]        := "For a problem report: the log (turn it on above, then reproduce the problem) and the system info (no file paths)."
+        s["Prefs.CopySystemInfo"]      := "Copy System Info"
+        s["Prefs.SystemInfoCopied"]    := "System info copied"
+        s["Prefs.NoLog"]               := 'There is no log yet. Tick "Write a debug log", click Apply, then reproduce the problem.'
         s["Prefs.Version"]             := "Version {1}"
+        s["App.Admin"]                 := "Administrator"
         s["Prefs.Homepage"]            := "Homepage"
         s["Prefs.ReportIssue"]         := "Report an Issue"
 
@@ -920,6 +1038,15 @@ class I18n {
         s["Update.AvailableVia"]       := "A new version {1} is available.`n`nALTRun was installed with a package manager - exit ALTRun, then run:`n`n    {2}`n`nOpen the release page to see what's new?"
         s["Update.Latest"]             := "You are running the latest version ({1})."
         s["Update.Failed"]             := "Could not check for updates:`n`n{1}"
+        s["Update.RateLimited"]        := "GitHub has limited the number of checks for now (too many checks from the same network). Please try again later."
+        s["Update.Offline"]            := "Could not reach GitHub. Check the network connection or proxy settings, then try again."
+        s["Update.ServerError"]        := "GitHub is having problems right now. Please try again later."
+        s["Update.NotFound"]           := "The release information or download could not be found on GitHub. Open the download page to have a look."
+        s["Update.Corrupt"]            := "The download was incomplete or changed (its checksum doesn't match), so it wasn't installed for safety. Please try again later."
+        s["Update.BadPackage"]         := "The update package is incomplete, so it wasn't installed."
+        s["Update.BadResponse"]        := "GitHub's answer was incomplete. Please try again later."
+        s["Update.Unknown"]            := "Something went wrong. Please try again later, or update by hand from the download page."
+        s["Update.Detail"]             := "Details: {1}"
         s["Update.AvailableSource"]    := "A new version {1} is available.`n`nYou are running the source code (ALTRun.ahk): update it with git pull, or download the new version.`n`nOpen the download page?"
         s["Update.ItemTitle"]          := "Update Available: ALTRun {1}"
         s["Update.ItemInstall"]        := "Current version {1}  ·  Enter: Install Update  ·  →: Release Notes, Skip This Version"
@@ -934,14 +1061,15 @@ class I18n {
         ; --- QuickSwitch (file dialog path sync) ---
         s["QuickSwitch.TagTC"]         := "Total Commander"
         s["QuickSwitch.TagTCOther"]    := "Total Commander (other panel)"
+        s["QuickSwitch.TagOpus"]       := "Directory Opus"
+        s["QuickSwitch.TagOpusOther"]  := "Directory Opus (other side)"
         s["QuickSwitch.TagExplorer"]   := "File Explorer"
         s["QuickSwitch.TagRecent"]     := "Recent"
         s["QuickSwitch.SearchCue"]     := "Search folders and files"
         s["QuickSwitch.SearchCueFolders"] := "Search folders"
         s["QuickSwitch.TagSearch"]     := "Search"
         s["QuickSwitch.TagFile"]       := "File"
-        s["QuickSwitch.NoTC"]          := "Total Commander is not running."
-        s["QuickSwitch.NoExplorer"]    := "No File Explorer window is open."
+        s["QuickSwitch.NoFileManager"] := "No Total Commander, Directory Opus or File Explorer window is open."
         return s
     }
 }

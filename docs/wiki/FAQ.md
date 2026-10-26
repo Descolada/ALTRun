@@ -1,69 +1,87 @@
-[English](en-FAQ) · **中文**
+**English** · [中文](FAQ-zh)
 
-# 常见问题
+# FAQ
 
-### 按 Alt+Space 没有反应
-- 确认托盘里有 ALTRun 图标 (没有的话重新运行)
-- 其它软件 (输入法、PowerToys Run、其它启动器) 可能占用了同一个热键。在 偏好设置 → 通用 换一个呼出热键, 或设一个 "第二个呼出热键"
-- 在以管理员身份运行的程序里, 普通权限的 ALTRun 收不到热键。需要时可以用管理员身份运行 ALTRun
+### Nothing happens when I press Alt+Space
+- Make sure the ALTRun icon is in the notification area (if not, run it again)
+- Another program (an input method, PowerToys Run, another launcher) may use the same hotkey. Pick another one in Preferences → General, or set a "Second hotkey"
+- Programs running as administrator don't pass hotkeys to an ALTRun running with normal rights. Run ALTRun as administrator if you need that
 
-### 搜不到某个程序
-1. 确认它的快捷方式在开始菜单或桌面里 (或把它所在的文件夹加到 偏好设置 → 应用搜索 → 索引的文件夹)
-2. 检查名称是不是被 "排除 (正则)" 过滤掉了, 或者在 "已删除的应用" 列表里
-3. 搜索 `rebuild` 执行 "重建 ALTRun 索引"
+### A program can't be found
+1. Make sure its shortcut is in the Start menu or on the desktop (or add its folder to Preferences → Applications → Folders)
+2. Check whether its name is filtered out by "Exclude (regex)", or whether it's in the "Hidden apps" list
+3. Search `rebuild` and run "Rebuild ALTRun Index"
 
-更简单的办法: 把它加为 [自定义命令](Commands-and-Snippets), 还可以设关键字。
+Simpler: add it as a [custom command](Custom-Commands), optionally with a keyword.
 
-### 搜不到文件
-普通搜索默认不显示文件, 要先在空的搜索框里按 `空格` (或用 `'报告` / `open 报告`) 进入文件搜索。Everything 没有运行时, ALTRun 只在 桌面、文档、下载 里找; 安装并运行 [Everything](https://www.voidtools.com/) 就能搜全盘, 详见 [文件搜索](File-Search)。
+### Files can't be found
+Normal searches don't show files by default. Press `Space` in an empty search box first (or use `'report` / `open report`) to start a file search. Without Everything running, ALTRun only looks in Desktop, Documents and Downloads; install and run [Everything](https://www.voidtools.com/) to search all disks. See [File search](File-Search).
 
-### 常用的结果排不到第一个
-多选几次, ALTRun 会记住你的选择 ([学习排序](Usage#学习排序))。也可以把它加为自定义命令并设一个短关键字: 输入完全相同的关键字时一定排第一。
+### The result I use most isn't first
+Pick it a few more times and ALTRun remembers your choice ([learned ranking](Usage#learned-ranking)). You can also add it as a custom command with a short keyword: typing exactly that keyword always puts it first.
 
-### 结果里有不需要的应用
-选中它按 `Ctrl+Del`。不会卸载程序, 可以在 偏好设置 → 应用搜索 → "已删除的应用" 里恢复。
+### Results include apps I don't want
+Select one and press `Ctrl+Del`. The program isn't uninstalled, and you can restore it in Preferences → Applications → "Hidden apps".
 
-### 杀毒软件报毒
-用 AutoHotkey 编译的程序有时会被误报。可以把 ALTRun 文件夹加入杀毒软件的信任列表, 或者安装 AutoHotkey v2 后直接运行源码 `ALTRun.ahk` (代码完全公开)。
+### My antivirus flags it
+Programs compiled with AutoHotkey are sometimes reported by mistake. Add the ALTRun folder to your antivirus' trusted list, or install AutoHotkey v2 and run the source `ALTRun.ahk` directly (the code is fully public).
 
-### 怎样提交调试日志
-1. 偏好设置 → 通用 → "写入调试日志"
-2. 重现问题
-3. 在搜索框输入 `log`, 运行 "打开 ALTRun 日志": `%Temp%\ALTRun.log` 会用 `.log` 文件的默认程序打开 (没改过就是记事本)
-4. 把出问题前后的几行复制到 [Issue](https://github.com/zhugecaomao/ALTRun/issues/new/choose) 里。日志不会记录你在搜索框里输入的文字, 但有文件路径和程序名, 请先删掉不想公开的内容
+### How do I send a debug log?
+1. Preferences → Advanced → Troubleshooting → tick "Write a debug log", click Apply
+2. Reproduce the problem
+3. Back in Preferences → Advanced, click "Open Log" (or type `log` in the search box and run "Open ALTRun Log"): `%Temp%\ALTRun.log` opens in the default program for `.log` files (Notepad unless you changed it)
+4. Copy the lines around the time of the problem into your [issue](https://github.com/zhugecaomao/ALTRun/issues/new/choose), and paste "Copy System Info" with them (versions, Windows version, display scale, language, theme; no file paths). The log never contains what you type in the search box, but it does contain file paths and program names: remove anything private first
 
-### 开机后 ALTRun 很慢或没有反应
-Windows 刚启动时, 资源管理器和 OneDrive (或别的同步软件) 往往要忙一阵。ALTRun 要向 Windows 读图标、建快捷方式, 所以也得等它们: 搜索窗口可能打开得慢, 或者几秒内不响应输入, 等系统空下来就自己恢复。想确认的话打开调试日志: `Perf: startup:` 开头的几行是启动各步骤的耗时, `Perf: icon ... ms` 是读得很慢的图标。如果每次开机都这样, 在任务管理器里看看开机后是谁在占用 CPU 或磁盘 (常见的是 OneDrive 在同步大量文件)。
+### ALTRun is slow or doesn't respond right after Windows starts
+Just after Windows starts, Explorer and OneDrive (or another sync tool) are often busy for a while. ALTRun asks Windows for icons and shortcuts, so it has to wait for them too: the search window may open slowly, or ignore typing for a few seconds. It recovers by itself once Windows has settled down. To check, turn on the debug log: lines starting with `Perf: startup:` show how long each startup step took, and `Perf: icon ... ms` lines show icons that took a long time to load. If it happens every time, look in Task Manager at what is using the CPU or disk after startup (OneDrive syncing many files is a common cause).
 
-### 中文输入法下搜索不方便
-在 偏好设置 → 搜索窗口 打开 "显示窗口时切换到英文输入法"。中文名称可以直接用拼音首字母搜索 ("wx" → 微信)。
+### Searching is awkward with a Chinese input method
+In Preferences → Keyboard, set "Switch to English" to "English (US) keyboard" (the keyboard needs to be added in Windows) or "English mode of the current input method" (keeps your input method and only turns it to English). Chinese names can also be searched by their pinyin initials ("wx" → 微信).
 
-### 片段自动展开不起作用
-- 确认 偏好设置 → 文字片段 里这条片段有关键字, 并且勾选了 "自动展开"
-- 要输入前缀: 默认是 `;关键字`
-- 有些程序 (游戏、远程桌面、以管理员身份运行的程序) 收不到模拟输入
+### Snippet expansion doesn't work
+- Make sure the snippet has a keyword in Preferences → Snippets and "Expand automatically when typed" is ticked
+- Type the prefix: `;keyword` by default
+- Some programs (games, Remote Desktop, programs running as administrator) don't receive simulated input
 
-### 设置改乱了, 怎么恢复默认
-退出 ALTRun, 把 `Data\ALTRun.json` 改名备份, 重新运行会生成默认设置。只想重置学习排序: 偏好设置 → 高级 → 重置学习排序。
+### Caps Lock and other features don't work in windows running as administrator
+Windows doesn't let programs with normal rights control windows running as administrator. While such a window is in front, switching the input method with Caps Lock, double-tapping Ctrl, snippet expansion, pasting a result into that window and Quick Switch for its dialogs don't work; showing ALTRun, searching and opening programs work as usual.
 
-### ALTRun 会联网或收集数据吗
-不收集、不上传任何数据。默认情况下联网只有检查更新 (启动时和每 6 小时一次) 和一键更新两种情况, 都只访问 GitHub (打开货币换算后, 每天还会从 frankfurter.dev 下载一次汇率; 编辑网页搜索时点 "下载网站图标" 才会访问那个网站一次); 一键更新下载后先核对 SHA256 再替换。剪贴板历史、使用统计、学习记录都只保存在本机的 `Data\` 文件夹里。详见 [安全策略](https://github.com/zhugecaomao/ALTRun/blob/main/SECURITY.md)。
+**Just switching the input method with Caps Lock**: tick "Also in windows running as administrator" in Preferences → Keyboard. Only a small helper that handles Caps Lock runs as administrator; ALTRun itself keeps normal rights, without the side effects below. See [Caps Lock switches the input method](Hotkeys#caps-lock-switches-the-input-method).
 
-### 怎样升级到新版本
-ALTRun 在启动时和之后每 6 小时在后台检查一次, 有新版本时呼出搜索窗口就能看到 "发现新版本: ALTRun x", 按 `Enter` 即可 (也可以托盘图标 → 检查更新), 设置和数据都保留; 用 Scoop 安装的用 `scoop update altrun`。详见 [安装与升级](Installation#升级)。
+If you need the other features often too, run all of ALTRun as administrator:
+- **As administrator at sign-in** (no UAC prompt): turn off "Launch ALTRun at login" in Preferences → General, then open Task Scheduler → Create Task:
+  - General: tick "Run with highest privileges"
+  - Triggers: New → Begin the task "At log on"
+  - Actions: New → Start a program, program `ALTRun.exe`, arguments `-Startup`
+  - Conditions: untick "Start the task only if the computer is on AC power"
+  - Settings: untick "Stop the task if it runs longer than"
+- **Just this once**: right-click `ALTRun.exe` → Run as administrator (it replaces the ALTRun that's running)
 
-### 在多台电脑上使用同一份设置
-两种做法:
-- **只同步设置和数据**: 偏好设置 → 高级 → 数据 → **更改位置...**, 选同步盘 (OneDrive、Dropbox...) 里的一个文件夹。现在的设置和数据会复制过去, ALTRun 重新载入后改用那里; 在另一台电脑上选同一个文件夹, 提示 "已经有 ALTRun 的设置" 时选 **是** 就会用那里的设置。选的位置记在默认位置 `Data\ALTRun.json` 的 `"DataLocation"` 里 (可以写 `%OneDrive%\ALTRun` 这样的环境变量, 每台电脑的 OneDrive 路径不同也能用); 在 更改位置 里选回原来的 `Data\` 文件夹, 或者删掉这一项, 就回到默认位置
-- **整个文件夹放在 U 盘或同步盘里**: ALTRun 是绿色软件, 程序和 `Data\` 一起带走
+When ALTRun runs as administrator, the tray icon tooltip and the version in Preferences → Advanced show "(Administrator)". Keep in mind:
+- Programs opened from ALTRun run as administrator too: they don't see network drives mapped with normal rights (create the DWORD value `EnableLinkedConnections` = 1 under `HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System` and restart), and dragging files into them from Explorer is refused
+- Any program can edit ALTRun's settings file (for example add a custom command), and what you open from ALTRun then runs as administrator. Use normal rights when you don't need this
 
-同步盘里的数据最好不要在两台电脑上同时打开 ALTRun 修改, 否则同步盘可能生成冲突副本。路径尽量用 [路径变量](Commands-and-Snippets#路径里可以用的变量) (例如 `A_Desktop`、`%OneDrive%`), 换电脑也能用。
+### I messed up my settings; how do I go back to the defaults?
+Preferences → Advanced → "Restore Defaults...": every option goes back to its default, while your custom commands, snippets, hotkeys, web searches and pinned items are kept; the old settings are saved as `Data\ALTRun.json.bak` first (to go back, quit ALTRun and rename it to `ALTRun.json`). To reset only the learned ranking: Preferences → Advanced → Reset Learned Ranking.
 
-### 剪贴板历史会跟着 Data 文件夹走吗
-一部分会。文字历史保存在 `Data\ClipboardHistory.json`, 把文件夹复制到 U 盘或放在同步盘里时会一起带走; 图片和很长的条目默认只存在这台电脑上 (`%LOCALAPPDATA%\ALTRun\Clipboard`, 见 [剪贴板设置](Configuration#clipboard-剪贴板历史) 的 `LocalFiles`)。完全不想在磁盘上留下历史, 把 `Persist` 设为 0: 只放在内存里, 退出 ALTRun 就清空。`IgnoreApps` 里的程序 (默认是几个密码管理器) 和程序标记为隐私的内容不会被记录。
+### Does ALTRun go online or collect data?
+It doesn't collect or upload any data. By default it only goes online to check for updates (at startup and every 6 hours) and for one-key updates, both only to GitHub (with currency conversion on, it also downloads exchange rates from frankfurter.dev once a day; "Download Site Icon" in a web search's editor visits that site once, only when you click it); a one-key update checks the SHA256 checksum before replacing anything. Clipboard history, usage statistics and the learned ranking stay in the `Data\` folder on your PC. The full list (where each kind of network access goes and how to turn it off, which files are stored locally) is in [Privacy and network access](Privacy).
 
-### 从 2.x 升级后命令不见了
-2.x 的用户命令会从 `ALTRun.ini` 导入为自定义命令, 内置命令由 [系统命令](Extensions#系统命令) 取代。导入只在还没有 `ALTRun.json` 时进行一次: 如果想重新导入, 退出 ALTRun, 把 `Data\ALTRun.json` 改名, 再运行。`ALTRun.ini` 始终保持不变, 详见 [安装与升级](Installation#从-2x-v20260812-及更早-升级到-30)。
+### How do I upgrade to a new version?
+ALTRun checks in the background at startup and every 6 hours after. When there's a new version, open the search window to see "Update Available: ALTRun x" and press `Enter` (or tray icon → Check for Updates); settings and data are kept. With Scoop, use `scoop update altrun`. See [Installation and upgrades](Installation#upgrading).
+
+### Using the same settings on several PCs
+Two ways:
+- **Sync only the settings and data**: Preferences → Advanced → Settings and data → **Change Location...**, and pick a folder in a synced drive (OneDrive, Dropbox...). Your current settings and data are copied there, and ALTRun reloads and uses that folder. On the other PC, pick the same folder; when it says the folder already has ALTRun settings, choose **Yes** to use them. The location is kept in `"DataLocation"` in `Data\ALTRun.json` at the default location (environment variables such as `%OneDrive%\ALTRun` work, so it's fine if the OneDrive path differs between PCs); pick the original `Data\` folder again in Change Location..., or delete that entry, to go back to the default location
+- **Keep the whole folder on a USB stick or a synced drive**: ALTRun is portable, so the program and `Data\` travel together
+
+Avoid running ALTRun and changing settings on two PCs at the same time with data in a synced folder, or the sync service may create conflicting copies. Use [path variables](Custom-Commands#variables-in-paths) (for example `A_Desktop`, `%OneDrive%`) where you can, so paths work on every PC.
+
+### Does clipboard history travel with the Data folder?
+Partly. Text history is saved in `Data\ClipboardHistory.json`, so it goes along when you copy the folder to a USB stick or keep it in a synced drive. Images and very long items are kept on this PC by default (`%LOCALAPPDATA%\ALTRun\Clipboard`). To keep the text history on this PC only as well, set Preferences → Clipboard → "Save in" to "Everything on this PC only" (see `LocalFiles` in [Clipboard settings](Configuration#clipboard)). To keep no history on disk at all, set `Persist` to 0: it stays in memory and is gone when ALTRun quits. Programs listed in `IgnoreApps` (password managers by default), and content that apps mark as private, are never recorded.
+
+### My commands are gone after upgrading from 2.x
+User commands from 2.x are imported from `ALTRun.ini` as custom commands, and the built-in commands are replaced by [system commands](System-Commands#system-commands). The import happens only once, when there's no `ALTRun.json` yet: to import again, quit ALTRun, rename `Data\ALTRun.json` and run it again. `ALTRun.ini` is never changed; see [Installation and upgrades](Installation#upgrading-from-2x-v20260812-and-earlier-to-30).
 
 ---
-没有找到答案? 请 [提交 Issue](https://github.com/zhugecaomao/ALTRun/issues/new/choose) 或在 [Discussions](https://github.com/zhugecaomao/ALTRun/discussions) 提问。
+Didn't find an answer? [Open an issue](https://github.com/zhugecaomao/ALTRun/issues/new/choose) or ask in [Discussions](https://github.com/zhugecaomao/ALTRun/discussions).

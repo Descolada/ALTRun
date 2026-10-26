@@ -4,6 +4,11 @@ class LargeType {
     static Gui := ""
     static _handlersReady := false
 
+    static Enabled() {
+        try return AppSettings.Feature("LargeType")["Enabled"] ? true : false
+        return false
+    }
+
     static Show(text) {
         LargeType.Close()
         if (Trim(text) = "")

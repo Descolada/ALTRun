@@ -1,28 +1,21 @@
 ;===============================================================================
-; ActionCatalog.ahk - 结果的操作: 打开 / 显示位置 / 复制 / 粘贴 ... (AutoHotkey v2)
+; ActionCatalog.ahk - what running a result does, and the operations behind it: open / reveal / copy / paste ...
+;   (AutoHotkey v2)
 ;-------------------------------------------------------------------------------
-; 按 Alfred 的习惯:
-;   Enter        默认操作  (文件/程序: 打开, 文件夹: 打开, 网址: 打开, 文字: 复制)
-;   Ctrl+Enter   文件/文件夹: 在文件管理器中显示;  文字: 粘贴到前台窗口
-;   Alt+Enter    复制 (路径 / 网址 / 文字)
-;   →            打开操作面板, 列出这一项全部可用的操作 (ListFor)
-;   F3           编辑这一项 (EditItem): 自定义命令 / 片段 / 搜索引擎 直接修改;
-;                应用 / 文件 / 文件夹 / 网址 新建一条自定义命令 (预先填好)
-;   Ctrl+Del     删除这一项 (DeleteItem): 自定义命令 / 片段 / 搜索引擎 / 剪贴板历史;
-;                应用: 从搜索结果中隐藏
-; 文件 / 文件夹的操作面板里还有 (和 Listary 一样): 复制 / 剪切文件 (到 TC、资源管理器里粘贴)、打开方式、
-; 复制 / 移动到 TC (或资源管理器) 当前打开的文件夹、移到回收站
+; As in Alfred:
+;   Enter        the default action (file / program / folder / URL: open; text: copy)
+;   Ctrl+Enter   file / folder: reveal in the file manager; text: paste into the foreground window
+;   Alt+Enter    copy (path / URL / text)
+; The actions panel (→), F3 edit and Ctrl+Del delete are built on these in Src\UI\ResultActions.ahk.
 ;
-; 用法:
+; Usage:
 ;   ActionCatalog.RunDefault(item)
 ;   ActionCatalog.RunModifier(item, "ctrl" | "alt")
-;   ActionCatalog.ListFor(item)           -> [ResultItem...] 操作面板的内容
-;   ActionCatalog.CanEdit(item) / EditItem(item) / CanDelete(item) / DeleteItem(item)
 ;   ActionCatalog.OpenFile(path) / OpenFolder(path) / Reveal(path) / CopyText(text) / PasteText(text) ...
+;   ActionCatalog.OpenMany(paths) / CopyMany(paths, folder) / RecycleMany(paths)   several marked files
 ;===============================================================================
 
 class ActionCatalog {
-
     static RunDefault(item) {
         if IsObject(item.OnRun)
             return item.OnRun.Call(item)
@@ -47,102 +40,15 @@ class ActionCatalog {
         ActionCatalog.RunDefault(item)
     }
 
-    ; 操作面板: 第一项是默认操作, 然后是这一类结果的通用操作, 再加上结果自带的操作
-    static ListFor(item) {
-        list := []
-        add(titleKey, icon, fn, hint := "") => list.Push(ResultItem(I18n.T(titleKey), hint, {Icon: icon, OnRun: fn}))
-        target := item.Arg
-        enter := "Enter"
-        if (item.RunTitle != "" && IsObject(item.OnRun)) {                   ; 结果自己的默认操作 (例如剪贴板历史里的图片: 粘贴)
-            list.Push(ResultItem(item.RunTitle, "Enter", {Icon: item.Icon, OnRun: (*) => item.OnRun.Call(item)}))
-            enter := ""
-        }
-
-        switch item.Kind {
-            case "file":
-                add("Action.Open", target, (*) => ActionCatalog.OpenFile(target, item.Arguments), enter)
-                if (Platform.IsWindows && RegExMatch(target, "i)\.(exe|lnk|bat|cmd|msc|ps1)$"))
-                    add("Action.RunAsAdmin", "res:imageres.dll,-78", (*) => ActionCatalog.RunAsAdmin(target, item.Arguments))
-                if (Platform.IsWindows && FileExist(target))
-                    add("Action.OpenWith", "res:shell32.dll,-16702", (*) => ActionCatalog.OpenWith(target))
-                add("Action.Reveal", "folder:", (*) => ActionCatalog.Reveal(target), "Ctrl+Enter")
-                add("Action.CopyPath", "res:imageres.dll,-5314", (*) => ActionCatalog.CopyText(target), "Alt+Enter")
-                add("Action.CopyName", "res:imageres.dll,-5314", (*) => ActionCatalog.CopyText(Path.Leaf(target)))
-                ActionCatalog._FileActions(list, target)
-                add("Action.OpenTerminal", "res:imageres.dll,-5323", (*) => TerminalProvider.OpenAt(ActionCatalog._ParentDir(target)))
-                if (Platform.IsWindows && !ActionCatalog.IsShellItem(target))
-                    add("Action.Properties", "res:imageres.dll,-81", (*) => ActionCatalog.ShowProperties(target))
-                if (Platform.IsWindows && FileExist(target))
-                    add("Action.Recycle", "res:shell32.dll,-32", (*) => ActionCatalog.Recycle(target))
-            case "folder":
-                add("Action.Open", target, (*) => ActionCatalog.OpenFolder(target), enter)
-                add("Action.OpenTerminal", "res:imageres.dll,-5323", (*) => TerminalProvider.OpenAt(target))
-                add("Action.Reveal", "folder:", (*) => ActionCatalog.Reveal(target), "Ctrl+Enter")
-                add("Action.CopyPath", "res:imageres.dll,-5314", (*) => ActionCatalog.CopyText(target), "Alt+Enter")
-                ActionCatalog._FileActions(list, target)
-                if Platform.IsWindows
-                    add("Action.Properties", "res:imageres.dll,-81", (*) => ActionCatalog.ShowProperties(target))
-                if (Platform.IsWindows && FileExist(target) && !RegExMatch(RTrim(target, "\"), "^[A-Za-z]:$"))
-                    add("Action.Recycle", "res:shell32.dll,-32", (*) => ActionCatalog.Recycle(target))
-            case "url":
-                add("Action.Open", "url:", (*) => ActionCatalog.OpenUrl(target), enter)
-                add("Action.CopyUrl", "res:imageres.dll,-5314", (*) => ActionCatalog.CopyText(target), "Alt+Enter")
-            case "text":
-                add("Action.Copy", "res:imageres.dll,-5314", (*) => ActionCatalog.CopyText(target), enter)
-                add("Action.Paste", "res:imageres.dll,-5314", (*) => ActionCatalog.PasteText(target), "Ctrl+Enter")
-            default:
-                add("Action.Run", item.Icon, (*) => ActionCatalog.RunDefault(item), enter)
-        }
-
-        for extra in item.Actions
-            list.Push(extra)
-
-        if ActionCatalog._ProviderCan(item, "EditItem")
-            add("Action.Edit", "res:imageres.dll,-5306", (*) => SearchWindow.EditItem(item), "F3")
-        else if ActionCatalog.CanEdit(item)
-            add("Action.AddCommand", "res:imageres.dll,-2", (*) => SearchWindow.EditItem(item), "F3")
-        if ActionCatalog.CanDelete(item)
-            add("Action.Delete", "res:shell32.dll,-240", (*) => SearchWindow.DeleteItem(item), "Ctrl+Del")
-        if (item.Provider = RecentProvider.Id && item.HasOwnProp("Pinned") && item.Pinned)
-            add("Action.Unpin", IconCache.Own("Pinned", "res:imageres.dll,-5303"), (*) => RecentProvider.Unpin(item.Uid))
-        else if (RecentProvider.CanPin(item) && !RecentProvider.IsPinned(item))
-            add("Action.Pin", IconCache.Own("Pinned", "res:imageres.dll,-5303"), (*) => RecentProvider.Pin(item))
-        add("Action.LargeType", "res:imageres.dll,-183", (*) => LargeType.Show(item.DisplayText()), "Ctrl+L")
-        return list
-    }
-
-    ; 标记的多个文件 / 文件夹 (搜索窗口里 Insert 标记) 一起操作
-    static ListForMany(paths) {
-        list := []
-        add(title, icon, fn, hint := "") => list.Push(ResultItem(title, hint, {Icon: icon, OnRun: fn}))
-        count := paths.Length
-        add(I18n.T("Action.OpenAll", count), "res:imageres.dll,-5302", (*) => ActionCatalog.OpenMany(paths), "Enter")
-        add(I18n.T("Action.CopyFiles", count), "res:imageres.dll,-5314", (*) => ActionCatalog.CopyFiles(paths), I18n.T("Action.CopyFile.Hint"))
-        if Platform.IsWindows
-            add(I18n.T("Action.CutFiles", count), "res:imageres.dll,-5314", (*) => ActionCatalog.CopyFiles(paths, true), I18n.T("Action.CopyFile.Hint"))
-        joined := ""
-        for markedPath in paths
-            joined .= (joined = "" ? "" : "`r`n") markedPath
-        add(I18n.T("Action.CopyPaths", count), "res:imageres.dll,-5314", (*) => ActionCatalog.CopyText(joined))
-        manager := Platform.IsWindows ? QuickSwitch.FileManagerFolder() : ""
-        destination := IsObject(manager) ? manager.Path : ""
-        if (destination != "" && DirExist(destination)) {
-            add(I18n.T("Action.CopyTo", manager.Tag), "folder:", (*) => ActionCatalog.CopyMany(paths, destination), destination)
-            add(I18n.T("Action.MoveTo", manager.Tag), "folder:", (*) => ActionCatalog.CopyMany(paths, destination, true), destination)
-        }
-        add(I18n.T("Action.AddAllCommands"), "res:imageres.dll,-2", (*) => CustomCommandProvider.AddFromPaths(paths))
-        if Platform.IsWindows
-            add(I18n.T("Action.RecycleAll", count), "res:shell32.dll,-32", (*) => ActionCatalog.RecycleMany(paths))
-        return list
-    }
-
     static OpenMany(paths) {
         for markedPath in paths
             InStr(FileExist(markedPath), "D") ? ActionCatalog.OpenFolder(markedPath) : ActionCatalog.OpenFile(markedPath)
     }
 
-    ; 复制 / 移动到一个文件夹 (Windows 自己的复制, 有进度和重名提示); 不能复制到自己或自己的子文件夹里
+    ; Copy / move into a folder (Windows' own copy, with progress and name-conflict prompts); not into itself or its own subfolders
     static CopyMany(paths, destination, move := false) {
+        if !Platform.IsWindows
+            return false
         folder := ComObject("Shell.Application").NameSpace(RTrim(destination, "\") (RegExMatch(destination, "^[A-Za-z]:\\?$") ? "\" : ""))
         if !IsObject(folder)
             return false
@@ -157,13 +63,19 @@ class ActionCatalog {
         return done > 0
     }
 
-    ; 一起移到回收站: 先确认一次 (可以从回收站还原)
+    ; Move to the Recycle Bin together: confirm once first (they can be restored from the Recycle Bin)
     static RecycleMany(paths) {
+        if !ActionCatalog.CanRecycle
+            return false
         if (MsgBox(I18n.T("Action.ConfirmRecycleAll", paths.Length), App.Name, "YesNo Icon? Default2") != "Yes")
             return false
         failed := 0
         for markedPath in paths
-            try FileRecycle(markedPath)
+            try {
+                if !ActionCatalog.CanRecyclePath(markedPath)
+                    throw Error("This path cannot be moved to the trash.")
+                FileRecycle(markedPath)
+            }
             catch
                 failed += 1
         if failed
@@ -172,65 +84,7 @@ class ActionCatalog {
     }
 
     ;---------------------------------------------------------------------------
-    ; 编辑 / 删除 (交给结果所属的 Provider 的 EditItem / DeleteItem)
-    ;---------------------------------------------------------------------------
-    static CanEdit(item) {
-        if ActionCatalog._ProviderHas(item, "EditItem")                     ; 结果所属的 Provider 自己决定 (剪贴板历史里的图片不能编辑)
-            return ActionCatalog._ProviderCan(item, "EditItem")
-        return item.Valid && item.Arg != "" && RegExMatch(item.Kind, "^(file|folder|url)$")
-    }
-
-    static CanDelete(item) {
-        return ActionCatalog._ProviderCan(item, "DeleteItem")
-    }
-
-    ; 返回 true = 已保存修改
-    static EditItem(item) {
-        if ActionCatalog._ProviderCan(item, "EditItem")
-            return ProviderRegistry.ById(item.Provider).EditItem(item)
-        if ActionCatalog.CanEdit(item)
-            return ActionCatalog.AddAsCommand(item)
-        return false
-    }
-
-    static DeleteItem(item) {
-        if !ActionCatalog.CanDelete(item)
-            return false
-        return ProviderRegistry.ById(item.Provider).DeleteItem(item)
-    }
-
-    ; 删除前的确认文字; Provider 可以用 DeletePrompt(item) 说明删除的实际效果
-    static DeletePrompt(item) {
-        provider := ProviderRegistry.ById(item.Provider)
-        if (IsObject(provider) && HasMethod(provider, "DeletePrompt"))
-            return provider.DeletePrompt(item)
-        return I18n.T("Search.ConfirmDelete", item.Title)
-    }
-
-    ; 应用 / 文件 / 文件夹 / 网址 -> 打开编辑对话框新建一条自定义命令 (可以再加关键字等)
-    static AddAsCommand(item) {
-        commandType := (item.Kind = "folder") ? "Folder" : (item.Kind = "url") ? "Url" : "File"
-        return CustomCommandProvider.Edit("", Map("Title", item.Title, "Type", commandType, "Target", item.Arg, "Arguments", item.Arguments))
-    }
-
-    ; 结果带着 Source (设置里对应的那一条), 且所属 Provider 实现了 method 时才能编辑 / 删除
-    ; Provider 还可以用 CanEditItem(item) / CanDeleteItem(item) 只让其中一部分结果编辑 / 删除
-    static _ProviderCan(item, method) {
-        if !ActionCatalog._ProviderHas(item, method)
-            return false
-        provider := ProviderRegistry.ById(item.Provider)
-        return HasMethod(provider, "Can" method) ? (provider.%"Can" method%(item) ? true : false) : true
-    }
-
-    static _ProviderHas(item, method) {
-        if (item.Provider = "" || !IsObject(item.Source))
-            return false
-        provider := ProviderRegistry.ById(item.Provider)
-        return IsObject(provider) && HasMethod(provider, method)
-    }
-
-    ;---------------------------------------------------------------------------
-    ; 具体操作
+    ; Operations
     ;---------------------------------------------------------------------------
     static OpenFile(target, arguments := "") {
         resolved := Path.Resolve(target)
@@ -239,9 +93,9 @@ class ActionCatalog {
                 return ApplicationProvider.Launch(resolved)
             return Platform.Open(resolved, arguments)
         }
-        workDir := ActionCatalog._ParentDir(resolved)
+        workDir := ActionCatalog.ParentDir(resolved)
         if RegExMatch(resolved, "i)^(shell:|::\{|[a-z]+:\/\/)") || !FileExist(resolved)
-            return Run(Trim(resolved " " arguments))                        ; shell: 路径 / 协议 / PATH 里的程序名
+            return Run(Trim(resolved " " arguments))                        ; shell: paths / protocols / program names in PATH
         Run(Trim('"' resolved '" ' arguments), DirExist(workDir) ? workDir : "")
     }
 
@@ -269,17 +123,17 @@ class ActionCatalog {
         if (fileManager = "" || InStr(fileManager, "explorer"))
             return Run('explorer.exe /select,"' resolved '"')
         if InStr(fileManager, "totalcmd")
-            return Run(fileManager ' /P "' resolved '"')                   ; Total Commander: 打开所在文件夹并选中这个文件
-        Run(fileManager ' "' ActionCatalog._ParentDir(resolved) '"')        ; 其它文件管理器的参数各不相同: 打开所在文件夹
+            return Run(fileManager ' /P "' resolved '"')                   ; Total Commander: open the containing folder and select the file
+        Run(fileManager ' "' ActionCatalog.ParentDir(resolved) '"')        ; other file managers take different arguments: open the containing folder
     }
 
     static OpenUrl(address) {
         if !RegExMatch(address, "i)^[a-z][a-z0-9+.\-]*:")
             address := "https://" address
-        Run(address)
+        Platform.Open(address)
     }
 
-    ; 和资源管理器里 "右键 -> 属性" 一样。Run 的 properties 动词对网络盘上的文件夹等会失败, 所以用 SHObjectProperties
+    ; Like "right-click -> Properties" in Explorer. Run's properties verb fails for folders on network drives etc., so SHObjectProperties is used
     static ShowProperties(target) {
         if !Platform.IsWindows
             return false
@@ -295,9 +149,9 @@ class ActionCatalog {
         App.Notify(I18n.T("Search.Copied", ActionCatalog._Preview(text)))
     }
 
-    ; 把文字粘贴到呼出 ALTRun 之前的那个窗口 (focusPrevious = false 时粘贴到当前窗口)。
-    ; 粘贴方式见 Features.Snippets.PasteMode: "Clipboard" = 临时借用剪贴板 + Ctrl+V
-    ; (之后还原, 这段时间剪贴板历史不记录); "Type" = 逐字输入
+    ; Pastes text into the window that was active before ALTRun was shown (focusPrevious = false: into the current window).
+    ; Paste mode, see Features.Snippets.PasteMode: "Clipboard" = borrow the clipboard + Ctrl+V
+    ; (restored afterwards; the clipboard history doesn't record it meanwhile); "Type" = typed character by character
     static PasteText(text, focusPrevious := true) {
         snippetSettings := AppSettings.Feature("Snippets")
         mode  := snippetSettings["PasteMode"]
@@ -306,11 +160,11 @@ class ActionCatalog {
         if focusPrevious
             App.FocusPreviousWindow()
         Win.WaitModifiersUp()
-        if (mode = "Type") {
+        if ActionCatalog.TypesText(text, mode) {
             SendInput("{Text}" text)
             return true
         }
-        ClipboardProvider.PauseRecording(delay + 1000)
+        ClipboardData.Borrow(delay + 1000)
         savedClipboard := ClipboardAll()
         A_Clipboard := ""
         A_Clipboard := text
@@ -327,40 +181,79 @@ class ActionCatalog {
         return true
     }
 
-    ; 复制 / 剪切文件, 复制 / 移动到文件管理器当前的文件夹 (真实存在的本地或网络路径才有)
-    static _FileActions(list, target) {
-        if !FileExist(target)
-            return
-        list.Push(ResultItem(I18n.T("Action.CopyFile"), I18n.T("Action.CopyFile.Hint"), {Icon: "res:imageres.dll,-5314", OnRun: (*) => ActionCatalog.CopyFiles([target])}))
-        if !Platform.IsWindows
-            return
-        list.Push(ResultItem(I18n.T("Action.CutFile"), I18n.T("Action.CopyFile.Hint"), {Icon: "res:imageres.dll,-5314", OnRun: (*) => ActionCatalog.CopyFiles([target], true)}))
-        manager := QuickSwitch.FileManagerFolder()
-        destination := IsObject(manager) ? manager.Path : ""
-        if (destination = "" || !DirExist(destination))
-            return
-        parent := RTrim(ActionCatalog._ParentDir(RTrim(target, "\")), "\")
-        inside := (InStr(RTrim(destination, "\") "\", RTrim(target, "\") "\") = 1)   ; 不能把文件夹复制到它自己里面
-        if (StrLower(RTrim(destination, "\")) = StrLower(parent) || inside)
-            return
-        list.Push(ResultItem(I18n.T("Action.CopyTo", manager.Tag), destination, {Icon: "folder:", OnRun: (*) => ActionCatalog.CopyTo(target, destination)}))
-        list.Push(ResultItem(I18n.T("Action.MoveTo", manager.Tag), destination, {Icon: "folder:", OnRun: (*) => ActionCatalog.CopyTo(target, destination, true)}))
+    ; Paste mode (Features.Snippets.PasteMode) -> whether this text is typed:
+    ;   Auto (default)  short (at most AutoTypeMax characters) single-line text is typed: it appears at once, leaves the clipboard alone, no wait to restore it;
+    ;                   multi-line text (a typed line break is Enter, which may send a chat message), text with Tabs, very long text or emoji and other supplementary-plane characters use the clipboard
+    ;   Clipboard       always the clipboard + Ctrl+V
+    ;   Type            always typed character by character (for programs that don't accept pasting)
+    static AutoTypeMax := 100
+
+    static TypesText(text, mode) {
+        if (mode = "Type")
+            return true
+        if (mode != "Auto")
+            return false
+        return StrLen(text) <= ActionCatalog.AutoTypeMax && !RegExMatch(text, "[\r\n\t]|[^\x{0}-\x{FFFF}]")
     }
 
-    ; 把文件放进剪贴板 (剪贴板历史照常记录), 在 TC / 资源管理器里 Ctrl+V 粘贴
+    ; Puts files on the clipboard (the clipboard history records them as usual), to paste with Ctrl+V in TC / Explorer
     static CopyFiles(paths, cut := false) {
         if !ClipboardData.SetFiles(paths, cut)
             return false
-        App.Notify(I18n.T(cut ? "Action.FileCut" : "Action.FileCopied", Path.Leaf(RTrim(paths[1], "\"))))
+        App.Notify(I18n.T(cut ? "Action.FileCut" : "Action.FileCopied", Path.Leaf(RTrim(paths[1], "\/"))))
         return true
     }
 
-    static OpenWith(target) {
-        Run("rundll32.exe shell32.dll,OpenAs_RunDLL " Path.Resolve(target))    ; 路径不加引号 (OpenAs_RunDLL 取整个剩余的命令行)
+    ; The "Edit" program Windows has registered for this file type ("Edit" in the context menu) -> {Name, Icon}; "" if none
+    static EditorFor(target) {
+        if !Platform.IsWindows
+            return ""
+        static ASSOCSTR_COMMAND := 1, ASSOCSTR_EXECUTABLE := 2, ASSOCSTR_FRIENDLYAPPNAME := 4
+        SplitPath(target, , , &ext)
+        attributes := FileExist(target)
+        if (ext = "" || attributes = "" || InStr(attributes, "D"))
+            return ""
+        if (ActionCatalog.AssocString(ASSOCSTR_COMMAND, "." ext, "edit") = "")
+            return ""
+        exe := ActionCatalog.AssocString(ASSOCSTR_EXECUTABLE, "." ext, "edit")
+        return {Name: ActionCatalog.AssocString(ASSOCSTR_FRIENDLYAPPNAME, "." ext, "edit")
+              , Icon: (exe != "" && FileExist(exe)) ? exe : A_WinDir "\notepad.exe"}
     }
 
-    ; 用 Windows 自己的复制 / 移动 (有进度窗口、重名时询问、可以撤销), 在后台进行, 不会卡住 ALTRun
+    ; AssocQueryStringW: the command, program or program name of a verb ("edit") of a file type (".ahk"); "" if none
+    static AssocString(kind, ext, verb) {
+        if !Platform.IsWindows
+            return ""
+        static ASSOCF_NOTRUNCATE := 0x20, ASSOCF_INIT_IGNOREUNKNOWN := 0x400   ; unregistered types must not fall back to the "Open with" settings
+        size := 0
+        DllCall("shlwapi\AssocQueryStringW", "UInt", ASSOCF_NOTRUNCATE | ASSOCF_INIT_IGNOREUNKNOWN, "UInt", kind, "WStr", ext, "WStr", verb
+            , "Ptr", 0, "UInt*", &size)
+        if (size <= 1)
+            return ""
+        buf := Buffer(size * 2, 0)
+        if (DllCall("shlwapi\AssocQueryStringW", "UInt", ASSOCF_NOTRUNCATE | ASSOCF_INIT_IGNOREUNKNOWN, "UInt", kind, "WStr", ext, "WStr", verb
+            , "Ptr", buf, "UInt*", &size) != 0)
+            return ""
+        return StrGet(buf)
+    }
+
+    ; Opens with the registered editor (like "Edit" in the context menu)
+    static EditFile(target) {
+        if !Platform.IsWindows
+            return Platform.Edit(Path.Resolve(target))
+        Run('edit "' Path.Resolve(target) '"')
+    }
+
+    static OpenWith(target) {
+        if !Platform.IsWindows
+            return false
+        Run("rundll32.exe shell32.dll,OpenAs_RunDLL " Path.Resolve(target))    ; the path isn't quoted (OpenAs_RunDLL takes the whole rest of the command line)
+    }
+
+    ; Windows' own copy / move (progress window, asks on name conflicts, can be undone), in the background so ALTRun doesn't hang
     static CopyTo(target, destination, move := false) {
+        if !Platform.IsWindows
+            return false
         folder := ComObject("Shell.Application").NameSpace(RTrim(destination, "\") (RegExMatch(destination, "^[A-Za-z]:\\?$") ? "\" : ""))
         if !IsObject(folder)
             return false
@@ -369,8 +262,31 @@ class ActionCatalog {
         return true
     }
 
-    ; 移到回收站: 用 Windows 的 "删除" (会先确认, 可以从回收站还原)
+    ; Move to the Recycle Bin with Windows' "Delete" (confirms first; can be restored from the Recycle Bin)
+    static CanRecycle => Platform.IsWindows || Platform.IsMac || Platform.FindExecutable("gio") != ""
+
+    static CanRecyclePath(target) {
+        if (!ActionCatalog.CanRecycle || InStr(target, "*") || InStr(target, "?") || !FileExist(target))
+            return false
+        full := Platform.FullPath(target)
+        return Platform.Identity(full) != Platform.Identity(Clr.System.IO.Path.GetPathRoot(full))
+    }
+
     static Recycle(target) {
+        if !ActionCatalog.CanRecyclePath(target)
+            return false
+        if !Platform.IsWindows {
+            if (MsgBox(I18n.T("Action.ConfirmRecycleAll", 1), App.Name, "YesNo Icon? Default2") != "Yes")
+                return false
+            try {
+                FileRecycle(Path.Resolve(target))
+                return true
+            } catch as e {
+                Logger.Error("Recycle: " e.Message)
+                App.Notify(I18n.T("Action.RecycleFailed", 1))
+                return false
+            }
+        }
         SplitPath(RTrim(target, "\"), &name, &dir)
         try {
             folderItem := ComObject("Shell.Application").NameSpace(RegExMatch(dir, "^[A-Za-z]:$") ? dir "\" : dir).ParseName(name)
@@ -380,7 +296,7 @@ class ActionCatalog {
         return false
     }
 
-    static _ParentDir(target) {
+    static ParentDir(target) {
         SplitPath(target, , &dir)
         return dir
     }

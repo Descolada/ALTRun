@@ -4,7 +4,7 @@ class PreferencesWindow {
     static Gui := "", Working := "", Pages := [], Binds := [], PageList := ""
     static _lists := Map()                                                  ; 列表页的设置路径 (例如 "CustomCommands") -> 加入 / 编辑项目的方法
     static PageKeys := ["Prefs.Page.General", "Prefs.Page.Window", "Prefs.Page.Appearance", "Prefs.Page.Features", "Prefs.Page.Applications"
-        , "Prefs.Page.FileSearch", "Prefs.Page.Commands", "Prefs.Page.Snippets", "Prefs.Page.WebSearch", "Prefs.Page.Calculator"
+        , "Prefs.Page.FileSearch", "Prefs.Page.Commands", "Prefs.Page.Snippets", "Prefs.Page.Clipboard", "Prefs.Page.WebSearch", "Prefs.Page.Calculator"
         , "Prefs.Page.Scripts", "Prefs.Page.Hotkeys", "Prefs.Page.Advanced"]
     static _page := 0, _y := 0
     static _dirty := false, _ready := false, ApplyButton := ""
@@ -189,6 +189,7 @@ class PreferencesWindow {
         PreferencesWindow._BuildFileSearch()
         PreferencesWindow._BuildCommands()
         PreferencesWindow._BuildSnippets()
+        PreferencesWindow._BuildClipboard()
         PreferencesWindow._BuildWebSearch()
         PreferencesWindow._BuildCalculator()
         PreferencesWindow._BuildScripts()
@@ -201,6 +202,8 @@ class PreferencesWindow {
         PreferencesWindow._Field("General.Hotkey", "Prefs.Hotkey", "M", "hotkey")
         PreferencesWindow._Field("General.SecondaryHotkey", "Prefs.SecondaryHotkey", "M", "hotkey")
         PreferencesWindow._Choice("General.Language", "Prefs.Language", PreferencesWindow._LanguageValues(), PreferencesWindow._LanguageLabels())
+        if (Platform.IsWindows || Platform.IsLinux)
+            PreferencesWindow._Check("General.LaunchAtLogin", "Prefs.LaunchAtLogin")
         PreferencesWindow._Check("General.ShowTrayIcon", "Prefs.ShowTrayIcon")
         PreferencesWindow._Check("General.SaveLog", "Prefs.SaveLog")
         PreferencesWindow._Field("General.FileManager", "Prefs.FileManager", "L")
@@ -211,6 +214,7 @@ class PreferencesWindow {
         PreferencesWindow._Check("General.HideOnDeactivate", "Prefs.HideOnDeactivate")
         PreferencesWindow._Check("General.KeepLastQuery", "Prefs.KeepLastQuery")
         PreferencesWindow._Check("General.SpaceToRun", "Prefs.SpaceToRun")
+        PreferencesWindow._Choice("General.TabKey", "Prefs.TabKey", ["Complete", "Next"], [I18n.T("Prefs.TabKey.Complete"), I18n.T("Prefs.TabKey.Next")])
         PreferencesWindow._Check("General.ShowTips", "Prefs.ShowTips")
         PreferencesWindow._Field("Features.Recent.RecentCount", "Prefs.RecentCount", "S", "number")
         PreferencesWindow._Field("General.HistorySize", "Prefs.HistorySize", "S", "number")
@@ -222,6 +226,9 @@ class PreferencesWindow {
         for name in themes
             labels.Push(PreferencesWindow._ThemeLabel(name))
         PreferencesWindow._Choice("Appearance.Theme", "Prefs.Section.Theme", themes, labels)
+        PreferencesWindow._Choice("Appearance.Density", "Prefs.Density", ThemeManager.Densities
+            , [I18n.T("Prefs.Density.Comfortable"), I18n.T("Prefs.Density.Normal"), I18n.T("Prefs.Density.Compact")])
+        PreferencesWindow._Field("Appearance.Placeholder", "Prefs.Placeholder", "M")
         PreferencesWindow._Field("Appearance.Width", "Prefs.Width", "S", "number")
         PreferencesWindow._Field("Appearance.VisibleRows", "Prefs.VisibleRows", "S", "number")
         PreferencesWindow._Choice("Appearance.ShowOn", "Prefs.ShowOn", ["Mouse", "Primary", "Active"]
@@ -287,10 +294,25 @@ class PreferencesWindow {
 
     static _BuildFeatures() {
         PreferencesWindow._BeginPage("Prefs.Page.Features", 140)
-        for feature in ["Applications", "CustomCommands", "Snippets", "Calculator", "WebSearch", "Recent", "FileSearch", "Scripts", "Terminal", "System", "Help"]
-            PreferencesWindow._Check("Features." feature ".Enabled", "Prefs.Feature." feature)
+        features := ["Applications", "CustomCommands", "Snippets", "Calculator", "WebSearch", "Recent", "FileSearch", "Scripts", "Terminal", "System", "Help", "Clipboard", "Windows", "Bookmarks", "LargeType"]
+        top := PreferencesWindow._y
+        for index, feature in features
+            PreferencesWindow._FeatureCheck(feature, PreferencesWindow.ContentX + Mod(index - 1, 2) * 280, top + ((index - 1) // 2) * 30)
+        PreferencesWindow._y := top + Ceil(features.Length / 2) * 30 + 8
+        PreferencesWindow._Check("Features.Windows.InDefaultResults", "Prefs.ShowInNormal", , , "Prefs.Feature.Windows")
+        PreferencesWindow._Field("Features.Windows.Keyword", "Prefs.Feature.Windows", "M")
+        PreferencesWindow._Check("Features.Bookmarks.InDefaultResults", "Prefs.ShowInNormal", , , "Prefs.Feature.Bookmarks")
+        PreferencesWindow._Field("Features.Bookmarks.Keyword", "Prefs.Feature.Bookmarks", "M")
         PreferencesWindow._Field("Features.Terminal.Prefix", "Prefs.TerminalPrefix", "S")
         PreferencesWindow._Field("Features.Terminal.Shell", "Prefs.TerminalShell", "M")
+    }
+
+    static _FeatureCheck(feature, x, y) {
+        PreferencesWindow._y := y
+        path := "Features." feature ".Enabled"
+        control := PreferencesWindow._Add("Checkbox", "x" x " w265", I18n.T("Prefs.Feature." feature))
+        control.Value := PreferencesWindow.GetPath(PreferencesWindow.Working, path) ? 1 : 0
+        PreferencesWindow._Bind(path, () => control.Value)
     }
 
     static _BuildApplications() {
@@ -299,7 +321,6 @@ class PreferencesWindow {
         PreferencesWindow._Csv("Features.Applications.FileTypes", "Prefs.AppFileTypes", "L")
         PreferencesWindow._Field("Features.Applications.Exclude", "Prefs.AppExclude", "L")
         PreferencesWindow._Field("Features.Applications.Depth", "Prefs.AppDepth", "S", "number")
-        PreferencesWindow._Field("Features.Applications.RefreshMinutes", "Prefs.RefreshMinutes", "S", "number")
         PreferencesWindow._Check("Features.Applications.MatchPinyin", "Prefs.MatchPinyin")
         PreferencesWindow._Button("Prefs.RebuildIndex", (*) => App.RebuildIndex())
     }
@@ -333,9 +354,22 @@ class PreferencesWindow {
         PreferencesWindow._Field("Features.Snippets.Keyword", "Prefs.SnippetKeyword", "M")
         PreferencesWindow._Check("Features.Snippets.AutoExpand", "Prefs.SnippetAutoExpand", , , "Prefs.Group.AutoExpand")
         PreferencesWindow._Field("Features.Snippets.ExpandPrefix", "Prefs.ExpandPrefix", "S")
-        PreferencesWindow._Field("Features.Snippets.ExpandExclude", "Prefs.ExpandExclude", "L")
-        PreferencesWindow._Pair(["Features.Snippets.PasteMode", "Prefs.PasteMode", "M", "choice", ["Clipboard", "Type"], [I18n.T("Prefs.PasteMode.Clipboard"), I18n.T("Prefs.PasteMode.Type")]]
+        PreferencesWindow._Lines("Features.Snippets.ExpandExclude", "Prefs.ExpandExclude", 2)
+        PreferencesWindow._Pair(["Features.Snippets.PasteMode", "Prefs.PasteMode", "M", "choice", ["Auto", "Clipboard", "Type"], [I18n.T("Prefs.PasteMode.Auto"), I18n.T("Prefs.PasteMode.Clipboard"), I18n.T("Prefs.PasteMode.Type")]]
             , ["Features.Snippets.PasteDelay", "Prefs.PasteDelay", "S", "number"])
+    }
+
+    static _BuildClipboard() {
+        PreferencesWindow._BeginPage("Prefs.Page.Clipboard", 120)
+        PreferencesWindow._Pair(["Features.Clipboard.Hotkey", "Prefs.ClipHotkey", "K", "hotkey"], ["Features.Clipboard.Keyword", "Prefs.ClipKeyword", "S"])
+        PreferencesWindow._Pair(["Features.Clipboard.MaxItems", "Prefs.ClipMaxItems", "S", "number"], ["Features.Clipboard.MaxItemLength", "Prefs.ClipMaxLength", "S", "number"])
+        PreferencesWindow._Check("Features.Clipboard.Persist", "Prefs.ClipPersist")
+        PreferencesWindow._Check("Features.Clipboard.Images", "Prefs.ClipImages")
+        PreferencesWindow._Field("Features.Clipboard.MaxImages", "Prefs.ClipMaxImages", "S", "number")
+        PreferencesWindow._Choice("Features.Clipboard.LocalFiles", "Prefs.ClipStorage", [0, 1, 2]
+            , [I18n.T("Prefs.ClipStorage.Data"), I18n.T("Prefs.ClipStorage.Files"), I18n.T("Prefs.ClipStorage.All")], "L")
+        PreferencesWindow._Check("Features.Clipboard.MergeDoubleCopy", "Prefs.ClipMerge")
+        PreferencesWindow._Lines("Features.Clipboard.IgnoreApps", "Prefs.ClipIgnoreApps", 2)
     }
 
     static _BuildWebSearch() {
@@ -416,7 +450,7 @@ class PreferencesWindow {
 
     static _usage := ""
     static _ResetLearning() {
-        Knowledge.Picks := Map(), Knowledge.QueryPicks := Map(), Knowledge.History := [], Knowledge.Recent := []
+        Knowledge.Picks := Knowledge._UidMap(), Knowledge.QueryPicks := Map(), Knowledge.History := [], Knowledge.Recent := []
         Knowledge.Save()
         MsgBox(I18n.T("Prefs.ResetDone"), App.Name, 64)
     }

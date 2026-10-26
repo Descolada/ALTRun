@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ALTRun — A lightweight launcher for Windows</title>
-<meta name="description" content="ALTRun: a lightweight, open-source Alfred-style launcher for Windows. Apps, files, clipboard history, snippets and Quick Switch for Open / Save dialogs; under 1 MB, no installation. 轻量、开源的 Windows 启动器。">
+<meta name="description" content="ALTRun: a lightweight, open-source Alfred-style launcher for Windows. Apps, files, clipboard history, snippets and Quick Switch for Open / Save dialogs; about 2.5 MB, no installation. 轻量、开源的 Windows 启动器。">
 <link rel="canonical" href="{{SITE_URL}}">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="ALTRun">
@@ -45,7 +45,7 @@
       <a href="#themes"><span lang="zh">主题</span><span lang="en">Themes</span></a>
       <a href="#download"><span lang="zh">下载</span><span lang="en">Download</span></a>
       <a lang="zh" href="https://github.com/{{REPO}}/wiki">文档</a>
-      <a lang="en" href="https://github.com/{{REPO}}/wiki/en-Home">Docs</a>
+      <a lang="en" href="https://github.com/{{REPO}}/wiki/Home">Docs</a>
       <a href="https://github.com/{{REPO}}">GitHub</a>
     </nav>
     <button class="lang" type="button" id="lang-toggle" aria-label="切换语言 / Switch language">EN</button>
@@ -68,14 +68,13 @@
       </p>
       <div class="cta">
         <a class="btn primary" href="{{DOWNLOAD_URL}}">
-          <span lang="zh">下载 {{VERSION}}</span><span lang="en">Download {{VERSION}}</span>
-          <small>{{SIZE}} · zip</small>
+          <span lang="zh">下载</span><span lang="en">Download</span>
         </a>
-        <a class="btn" href="https://github.com/{{REPO}}"><span lang="zh">查看源码</span><span lang="en">View on GitHub</span></a>
+        <a class="btn" href="https://github.com/{{REPO}}"><span lang="zh">查看源码</span><span lang="en">View source</span></a>
       </div>
       <p class="meta">
-        <span lang="zh">Windows 10 / 11 · 不需要 .NET 或其他运行库 · GPL-3.0</span>
-        <span lang="en">Windows 10 / 11 · No .NET or other runtime · GPL-3.0</span>
+        <span lang="zh">最新版&nbsp;{{VERSION}} · Windows&nbsp;10&nbsp;/&nbsp;11 · 不需要 .NET 或其他运行库 · GPL&#8209;3.0</span>
+        <span lang="en">Latest&nbsp;{{VERSION}} · Windows&nbsp;10&nbsp;/&nbsp;11 · No .NET or other runtime · GPL&#8209;3.0</span>
       </p>
     </div>
     <div class="hero-shot">
@@ -89,7 +88,7 @@
     <div><strong>{{SIZE}}</strong><span lang="zh">下载大小</span><span lang="en">Download size</span></div>
     <div><strong>0</strong><span lang="zh">需要安装的运行库</span><span lang="en">Runtimes to install</span></div>
     <div><strong>{{THEME_COUNT}}</strong><span lang="zh">套内置主题</span><span lang="en">Built-in themes</span></div>
-    <div><strong>7000+</strong><span lang="zh">项自动测试</span><span lang="en">Automated tests</span></div>
+    <div><strong>8000+</strong><span lang="zh">项自动测试</span><span lang="en">Automated tests</span></div>
     <div><strong>{{DOWNLOADS}}</strong><span lang="zh">次下载</span><span lang="en">Downloads</span></div>
   </div>
 </section>
@@ -100,8 +99,8 @@
     <div class="grid features">
       <article>
         <h3><span lang="zh">小巧</span><span lang="en">Tiny</span></h3>
-        <p><span lang="zh">下载不到 1 MB，解压后约 2 MB。一个 exe 加少量资源文件，不需要 .NET、Electron 或其他运行库。</span>
-           <span lang="en">Under 1 MB to download, about 2 MB unpacked. One exe plus a few resource files — no .NET, Electron or other runtime.</span></p>
+        <p><span lang="zh">约 2.5 MB。一个 exe 加少量资源文件，不需要 .NET、Electron 或其他运行库。</span>
+           <span lang="en">About 2.5 MB. One exe plus a few resource files — no .NET, Electron or other runtime.</span></p>
       </article>
       <article>
         <h3><span lang="zh">快速响应</span><span lang="en">Instant</span></h3>
@@ -110,8 +109,8 @@
       </article>
       <article>
         <h3><span lang="zh">越用越懂你</span><span lang="en">Smart ranking</span></h3>
-        <p><span lang="zh">记住每次的选择，常用的自动排第一；支持单词首字母（<code>vsc</code> → Visual Studio Code）和拼音首字母（<code>wx</code> → 微信），并高亮匹配的字。</span>
-           <span lang="en">Learns what you pick for each query. Matches word initials (<code>vsc</code> → Visual Studio Code) and pinyin initials, and highlights the matched characters.</span></p>
+        <p><span lang="zh">记住每次的选择，常用的自动排第一；支持单词首字母（<code>vsc</code> → Visual Studio Code）和拼音首字母（<code>wx</code> → 微信，文件也可以：<code>cs</code> → 测试文件.zip；繁体字、生僻字也认得），并高亮匹配的字。</span>
+           <span lang="en">Learns what you pick for each query. Matches word initials (<code>vsc</code> → Visual Studio Code) and pinyin initials for app and file names (traditional and uncommon characters too), and highlights the matched characters.</span></p>
       </article>
       <article>
         <h3><span lang="zh">不只是启动</span><span lang="en">Beyond launching</span></h3>
@@ -152,15 +151,19 @@
     <h2><span lang="zh">看看它能做什么</span><span lang="en">See it in action</span></h2>
     <div class="tabs" role="tablist">
       <button role="tab" aria-selected="true" data-shot="actions"><span lang="zh">操作面板</span><span lang="en">Action panel</span></button>
-      <button role="tab" aria-selected="false" data-shot="quickswitch"><span lang="zh">对话框快速跳转</span><span lang="en">Quick Switch</span></button>
       <button role="tab" aria-selected="false" data-shot="files"><span lang="zh">文件搜索</span><span lang="en">File search</span></button>
-      <button role="tab" aria-selected="false" data-shot="clipboard"><span lang="zh">剪贴板历史</span><span lang="en">Clipboard</span></button>
+      <button role="tab" aria-selected="false" data-shot="filetype"><span lang="zh">按类型搜索</span><span lang="en">Search by type</span></button>
       <button role="tab" aria-selected="false" data-shot="calculator"><span lang="zh">计算器</span><span lang="en">Calculator</span></button>
+      <button role="tab" aria-selected="false" data-shot="pinyin"><span lang="zh">拼音首字母</span><span lang="en">Pinyin</span></button>
+      <button role="tab" aria-selected="false" data-shot="clipboard"><span lang="zh">剪贴板历史</span><span lang="en">Clipboard</span></button>
       <button role="tab" aria-selected="false" data-shot="empty"><span lang="zh">置顶和最近使用</span><span lang="en">Pinned &amp; recent</span></button>
       <button role="tab" aria-selected="false" data-shot="browse"><span lang="zh">浏览文件夹</span><span lang="en">Browse folders</span></button>
-      <button role="tab" aria-selected="false" data-shot="pinyin"><span lang="zh">拼音首字母</span><span lang="en">Pinyin</span></button>
       <button role="tab" aria-selected="false" data-shot="websearch"><span lang="zh">网页搜索</span><span lang="en">Web search</span></button>
+      <button role="tab" aria-selected="false" data-shot="quickswitch"><span lang="zh">对话框快速跳转</span><span lang="en">Quick Switch</span></button>
+      <button role="tab" aria-selected="false" data-shot="windows"><span lang="zh">窗口切换</span><span lang="en">Switch windows</span></button>
+      <button role="tab" aria-selected="false" data-shot="sendto"><span lang="zh">右键发送到</span><span lang="en">Send to</span></button>
       <button role="tab" aria-selected="false" data-shot="prefs-general"><span lang="zh">偏好设置</span><span lang="en">Preferences</span></button>
+      <button role="tab" aria-selected="false" data-shot="prefs-snippets"><span lang="zh">文字片段</span><span lang="en">Snippets</span></button>
     </div>
     <div class="shot-frame">
       <img id="shot" src="images/actions.png" alt="ALTRun screenshot">
@@ -172,8 +175,8 @@
 <section id="themes" class="section">
   <div class="wrap">
     <h2><span lang="zh">{{THEME_COUNT}} 套内置主题</span><span lang="en">{{THEME_COUNT}} built-in themes</span></h2>
-    <p class="sub"><span lang="zh">也可以复制一套改成自己的配色，见 <a href="https://github.com/{{REPO}}/wiki/Themes">主题文档</a>。</span>
-       <span lang="en">Or copy one and make it your own — see the <a href="https://github.com/{{REPO}}/wiki/en-Themes">theme docs</a>.</span></p>
+    <p class="sub"><span lang="zh">也可以复制一套改成自己的配色，见 <a href="https://github.com/{{REPO}}/wiki/Themes-zh">主题文档</a>。</span>
+       <span lang="en">Or copy one and make it your own — see the <a href="https://github.com/{{REPO}}/wiki/Themes">theme docs</a>.</span></p>
     <div class="grid themes">
 {{THEMES}}
     </div>
@@ -194,8 +197,8 @@
           <li><span lang="zh">输入 <code>?</code> 查看全部语法和快捷键</span>
               <span lang="en">Type <code>?</code> for every syntax and shortcut</span></li>
         </ol>
-        <p class="note"><span lang="zh">如果 Windows SmartScreen 提示“Windows 已保护你的电脑”，点 <b>更多信息</b> → <b>仍要运行</b>；杀毒软件误报见<a href="https://github.com/{{REPO}}/wiki/FAQ#杀毒软件报毒">常见问题</a>。</span>
-           <span lang="en">If Windows SmartScreen says “Windows protected your PC”, click <b>More info</b> → <b>Run anyway</b>; for antivirus warnings see the <a href="https://github.com/{{REPO}}/wiki/en-FAQ#my-antivirus-flags-it">FAQ</a>.</span></p>
+        <p class="note"><span lang="zh">如果 Windows SmartScreen 提示“Windows 已保护你的电脑”，点 <b>更多信息</b> → <b>仍要运行</b>；杀毒软件误报见<a href="https://github.com/{{REPO}}/wiki/FAQ-zh#杀毒软件报毒">常见问题</a>。</span>
+           <span lang="en">If Windows SmartScreen says “Windows protected your PC”, click <b>More info</b> → <b>Run anyway</b>; for antivirus warnings see the <a href="https://github.com/{{REPO}}/wiki/FAQ#my-antivirus-flags-it">FAQ</a>.</span></p>
       </article>
       <article>
         <h3>Scoop</h3>
@@ -207,7 +210,7 @@ scoop install altrun</code></pre>
         <h3><span lang="zh">从源码运行</span><span lang="en">From source</span></h3>
         <p><span lang="zh">装了 <a href="https://www.autohotkey.com/">AutoHotkey v2</a> 时，克隆仓库后直接运行 <code>ALTRun.ahk</code>。</span>
            <span lang="en">With <a href="https://www.autohotkey.com/">AutoHotkey v2</a> installed, clone the repository and run <code>ALTRun.ahk</code>.</span></p>
-        <p><a lang="zh" href="https://github.com/{{REPO}}/wiki/Installation">安装与升级说明 →</a><a lang="en" href="https://github.com/{{REPO}}/wiki/en-Installation">Installation guide →</a></p>
+        <p><a lang="zh" href="https://github.com/{{REPO}}/wiki/Installation-zh">安装与升级说明 →</a><a lang="en" href="https://github.com/{{REPO}}/wiki/Installation">Installation guide →</a></p>
       </article>
     </div>
     <div class="signing" id="code-signing">
@@ -238,7 +241,7 @@ scoop install altrun</code></pre>
     <nav>
       <a href="https://github.com/{{REPO}}">GitHub</a>
       <a lang="zh" href="https://github.com/{{REPO}}/wiki">使用文档</a>
-      <a lang="en" href="https://github.com/{{REPO}}/wiki/en-Home">Docs</a>
+      <a lang="en" href="https://github.com/{{REPO}}/wiki/Home">Docs</a>
       <a href="https://github.com/{{REPO}}/releases"><span lang="zh">所有版本</span><span lang="en">Releases</span></a>
       <a href="https://github.com/{{REPO}}/issues"><span lang="zh">反馈问题</span><span lang="en">Issues</span></a>
       <a href="https://github.com/{{REPO}}/discussions"><span lang="zh">讨论区</span><span lang="en">Discussions</span></a>

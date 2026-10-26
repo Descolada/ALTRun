@@ -1,11 +1,11 @@
 ;===============================================================================
-; TerminalProvider.ahk - 在终端里运行命令 (AutoHotkey v2)
+; TerminalProvider.ahk - runs commands in a terminal (AutoHotkey v2)
 ;-------------------------------------------------------------------------------
 ; 输入 ">ipconfig /all" (前缀见 Features.Terminal.Prefix) 在终端里运行这条命令,
 ; 窗口保持打开。Windows 使用配置的命令行程序，其它平台使用已安装的终端和 shell。
 ;
-; 用法 (其它模块里):
-;   TerminalProvider.OpenAt(folder)          在指定文件夹打开终端
+; Usage (from other modules):
+;   TerminalProvider.OpenAt(folder)          opens a terminal in the folder
 ;   TerminalProvider.RunCommand(command)
 ;===============================================================================
 
@@ -27,7 +27,7 @@ class TerminalProvider {
         actions.Push(ResultItem(I18n.T("Action.RunAsAdmin"), "", {Icon: "res:imageres.dll,-78", OnRun: (*) => TerminalProvider.RunCommand(command, true)}))
 #endif
         return [ResultItem(I18n.T("Terminal.Run", command), options["Shell"], {
-            Icon: icon, Score: 150, Uid: "terminal:" StrLower(command), Arg: command, Exclusive: true,
+            Icon: icon, Score: 150, Uid: "terminal:" (Platform.IsWindows ? StrLower(command) : command), Arg: command, Exclusive: true,
             OnRun: (*) => TerminalProvider.RunCommand(command),
             Actions: actions
         })]
@@ -98,7 +98,7 @@ class TerminalProvider {
         configured := options.Has("Terminal") ? options["Terminal"] : EnvGet("TERMINAL")
         terminal := (configured != "" && configured != "auto") ? Platform.FindExecutable(configured) : ""
         if (terminal = "") {
-            for candidate in ["x-terminal-emulator", "gnome-terminal", "konsole", "kitty", "alacritty", "xterm"] {
+            for candidate in ["x-terminal-emulator", "gnome-terminal", "konsole", "kgx", "xfce4-terminal", "mate-terminal", "tilix", "kitty", "alacritty", "wezterm", "foot", "qterminal", "lxterminal", "terminator", "xterm", "urxvt", "st"] {
                 terminal := Platform.FindExecutable(candidate)
                 if (terminal != "")
                     break
@@ -109,10 +109,17 @@ class TerminalProvider {
         args := []
         SplitPath(terminal, &name)
         switch name {
-            case "gnome-terminal": args := ["--working-directory=" folder, "--"]
+            case "gnome-terminal", "kgx": args := ["--working-directory=" folder, "--"]
+            case "xfce4-terminal": args := ["--working-directory=" folder, "--disable-server", "-x"]
+            case "mate-terminal": args := ["--working-directory=" folder, "-x"]
+            case "tilix": args := ["--working-directory=" folder, "-e"]
             case "konsole": args := ["--workdir", folder, "-e"]
             case "kitty": args := ["--directory", folder]
             case "alacritty": args := ["--working-directory", folder, "-e"]
+            case "wezterm": args := ["start", "--cwd", folder, "--"]
+            case "foot": args := ["--working-directory=" folder, "--"]
+            case "qterminal": args := ["--workdir", folder, "-e"]
+            case "lxterminal": args := ["--working-directory=" folder, "-e"]
             default: args := ["-e"]
         }
         args.Push(shell)
@@ -128,7 +135,7 @@ class TerminalProvider {
 #endif
     }
 
-    ; 资源管理器 / Total Commander 当前打开的文件夹 (呼出 ALTRun 前的那个窗口)
+    ; The folder open in Explorer / Total Commander (the window active before ALTRun was shown)
     static OpenAtCurrentFolder() {
 #if WINDOWS
         folder := QuickSwitch.FolderOfWindow(App.PreviousWindow)

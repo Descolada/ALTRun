@@ -1,16 +1,22 @@
 ;===============================================================================
-; LargeType.ahk - 大字显示 (AutoHotkey v2)
+; LargeType.ahk - Large Type (AutoHotkey v2)
 ;-------------------------------------------------------------------------------
-; 和 Alfred 的 Large Type 一样: 屏幕中央用超大字号显示一段文字 (电话号码、
-; 计算结果、密码...), 按任意键、点击或切换窗口后关闭。字号按文字长度自动选。
+; Like Alfred's Large Type: shows text in a huge font in the middle of the screen (phone numbers,
+; calculation results, passwords...); any key, a click or switching windows closes it. The font size follows the text length.
+; Can be turned off in Preferences → Features (Features.LargeType.Enabled, off for new installs): then Ctrl+L does nothing and the actions panel doesn't list it.
 ;
-; 用法:
+; Usage:
 ;   LargeType.Show("138 0013 8000")
 ;===============================================================================
 
 class LargeType {
     static Gui := ""
     static _handlersReady := false
+
+    static Enabled() {
+        try return AppSettings.Feature("LargeType")["Enabled"] ? true : false
+        return false
+    }
 
     static Show(text) {
         LargeType.Close()
@@ -31,7 +37,7 @@ class LargeType {
         maxW := Round(areaW * 0.85) - 2 * pad
         label := g.AddText("Center", text)
         label.GetPos(, , &textW)
-        if (textW > maxW) {                                                 ; 太宽就按最大宽度自动换行 (控件不能单独删除, 先藏起来)
+        if (textW > maxW) {                                                 ; too wide: wrap at the maximum width (controls can't be deleted one by one, so it is hidden first)
             label.Visible := false
             label := g.AddText("xm ym Center w" maxW, text)
         }

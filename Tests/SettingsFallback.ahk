@@ -44,6 +44,7 @@ class SettingsFallback {
         I18n.Init("en")
         SettingsFallback.StockDefaults()
         SettingsFallback.CustomDefaults()
+        SettingsFallback.MigrationPaths()
         SettingsFallback.FileIdentities()
         SettingsFallback.KnowledgeIdentities()
         SettingsFallback.Mark("complete " (A_TickCount - SettingsFallback.Started) "ms")
@@ -120,6 +121,36 @@ class SettingsFallback {
         SettingsFallback.Mark("custom choices remain intact")
     }
 
+    static MigrationPaths() {
+        folder := Platform.Join(SettingsFallback.Folder, "Migration")
+        DirCreate(folder)
+        settings := Platform.Join(folder, "ALTRun.json")
+        legacy := Platform.Join(folder, "ALTRun.ini")
+        backup := Platform.Join(folder, "ALTRun.v5.backup.json")
+        JSON.WriteFile(settings, Map("SchemaVersion", 5, "Fixture", "migration backup"))
+        FileAppend("[Config]`nFixture=migration legacy`n", legacy, "UTF-8-RAW")
+        SettingsFallback.Assert(SchemaMigration.LegacyIniFile(settings) == legacy, "Legacy INI discovery must use a native path.")
+        SettingsFallback.Assert(SchemaMigration.ReadLegacyIni(SchemaMigration.LegacyIniFile(settings))["Config"]["Fixture"] == "migration legacy", "The adjacent legacy INI must be readable.")
+        SettingsFallback.Assert(SchemaMigration.BackupFile(settings, 5) == backup, "Migration backups must use a native path.")
+        SettingsFallback.Assert(SchemaMigration.Backup(settings, 5) == backup && FileExist(backup), "The migration backup must be created in the settings folder.")
+        SettingsFallback.Assert(FileRead(backup, "UTF-8") == FileRead(settings, "UTF-8"), "The migration backup must preserve the original settings.")
+        previousThemes := AppSettings.ThemesDir
+        try {
+            AppSettings.ThemesDir := Platform.Join(folder, "Themes")
+            DirCreate(AppSettings.ThemesDir)
+            JSON.WriteFile(Platform.Join(AppSettings.ThemesDir, "DarkCompact.json"), Map("Base", "Dark", "Background", "ABCDEF"))
+            custom := Map("Appearance", Map("Theme", "DarkCompact", "Density", "Comfortable"))
+            SchemaMigration._From5(custom)
+            SettingsFallback.Assert(custom["Appearance"]["Theme"] == "DarkCompact" && custom["Appearance"]["Density"] == "Comfortable", "A custom Compact theme must survive migration.")
+            builtin := Map("Appearance", Map("Theme", "LightCompact", "Density", "Comfortable"))
+            SchemaMigration._From5(builtin)
+            SettingsFallback.Assert(builtin["Appearance"]["Theme"] == "Light" && builtin["Appearance"]["Density"] == "Normal", "A removed built-in Compact theme must migrate to its replacement.")
+        } finally {
+            AppSettings.ThemesDir := previousThemes
+        }
+        SettingsFallback.Mark("migration legacy paths, native backups and custom Compact themes")
+    }
+
     static FileIdentities() {
         folder := Platform.Join(SettingsFallback.Folder, "Files")
         upper := Platform.Join(folder, "Foo.txt"), lower := Platform.Join(folder, "foo.txt")
@@ -146,6 +177,8 @@ class SettingsFallback {
             SettingsFallback.Assert(paths.Count = 2 && paths.Has(lower), "The Linux index merged distinct Foo/foo files.")
         else
             SettingsFallback.Assert(paths.Count = 1, "The isolated scan returned unexpected files.")
+        FileIndex.SavePending()
+        SettingsFallback.Assert(!FileIndex._savePending && FileExist(FileIndex.File), "The deferred index cache did not persist.")
         FileIndex.Paths := []
         SettingsFallback.Assert(FileIndex._LoadCache(), "The current-platform index cache did not load.")
         SettingsFallback.Assert(FileIndex.Paths.Length = paths.Count, "The cached paths did not retain their identities.")
@@ -190,6 +223,10 @@ class SettingsFallback {
         try {
             if (FileIndex._timer != "")
                 SetTimer(FileIndex._timer, 0)
+            if (FileIndex._saveTimer != "")
+                SetTimer(FileIndex._saveTimer, 0)
+            if (FileIndex._initialsTimer != "")
+                SetTimer(FileIndex._initialsTimer, 0)
             if (Knowledge._saveTimer != "")
                 SetTimer(Knowledge._saveTimer, 0)
             prefix := Platform.FullPath(Platform.Join(A_Temp, "ALTRun-SettingsFallback-"))

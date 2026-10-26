@@ -131,6 +131,54 @@ public static string ALTRunPosixQuote(string Value) => "'" + Value.Replace("'", 
 public static string ALTRunAppleScriptQuote(string Value)
     => "\"" + Value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n") + "\"";
 
+public static string ALTRunScriptInterpreter(string Filename)
+{
+    using var reader = new StreamReader(Filename, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+    var first = reader.ReadLine() ?? "";
+    if (!first.StartsWith("#!", StringComparison.Ordinal)) return "{}";
+    var command = first[2..].Trim();
+    var end = command.IndexOfAny([' ', '\t']);
+    var executable = end < 0 ? command : command[..end];
+    if (!System.IO.Path.IsPathRooted(executable))
+        throw new FormatException("The script's interpreter must be an absolute path.");
+    var optional = end < 0 ? "" : command[end..].Trim();
+    return JsonSerializer.Serialize(new { Executable = executable, Arguments = optional.Length == 0 ? Array.Empty<string>() : new[] { optional } });
+}
+
+private static string ALTRunDesktopUnescape(string Value)
+{
+    var text = new StringBuilder();
+    for (var index = 0; index < Value.Length; index++)
+    {
+        if (Value[index] != '\\' || index + 1 == Value.Length)
+        {
+            text.Append(Value[index]);
+            continue;
+        }
+        var next = Value[index + 1];
+        switch (next)
+        {
+            case 's': text.Append(' '); break;
+            case 'n': text.Append('\n'); break;
+            case 't': text.Append('\t'); break;
+            case 'r': text.Append('\r'); break;
+            case '\\': text.Append('\\'); break;
+            default: text.Append('\\').Append(next); break;
+        }
+        index++;
+    }
+    return text.ToString();
+}
+
+public static string ALTRunDesktopLocale(string Fallback)
+{
+    if (!OperatingSystem.IsWindows())
+        foreach (var variable in new[] { "LC_ALL", "LC_MESSAGES", "LANG" })
+            if (Environment.GetEnvironmentVariable(variable) is { Length: > 0 } value)
+                return value;
+    return Fallback;
+}
+
 public static string ALTRunDesktopRead(string Filename, string Locale, string CurrentDesktop)
 {
     var values = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -152,14 +200,20 @@ public static string ALTRunDesktopRead(string Filename, string Locale, string Cu
         || (Get("OnlyShowIn") != "" && !Matches(Get("OnlyShowIn")))
         || (Get("NotShowIn") != "" && Matches(Get("NotShowIn"))))
         return "{}";
-    var name = Get("Name");
-    var locale = Locale.Replace('-', '_').Split('.')[0];
+    var localeParts = Locale.Replace('-', '_').Split('@', 2);
+    var locale = localeParts[0].Split('.')[0];
     var language = locale.Split('_')[0];
-    if (Get("Name[" + language + "]") is { Length: > 0 } languageName) name = languageName;
-    if (Get("Name[" + locale + "]") is { Length: > 0 } localName) name = localName;
-    string Unescape(string value) => value.Replace("\\s", " ").Replace("\\n", "\n").Replace("\\t", "\t").Replace("\\r", "\r").Replace("\\\\", "\\");
-    return JsonSerializer.Serialize(new { Name = Unescape(name), Exec = Get("Exec"), Icon = Unescape(Get("Icon")),
-        Path = Unescape(Get("Path")), TryExec = Unescape(Get("TryExec")), Terminal = IsTrue("Terminal") });
+    var modifier = localeParts.Length > 1 ? "@" + localeParts[1] : "";
+    string Localized(string key)
+    {
+        foreach (var suffix in new[] { locale + modifier, locale, language + modifier, language })
+            if (Get(key + "[" + suffix + "]") is { Length: > 0 } translated)
+                return ALTRunDesktopUnescape(translated);
+        return ALTRunDesktopUnescape(Get(key));
+    }
+    return JsonSerializer.Serialize(new { Name = Localized("Name"), Exec = ALTRunDesktopUnescape(Get("Exec")), Icon = Localized("Icon"),
+        GenericName = Localized("GenericName"), Keywords = Localized("Keywords").Replace(';', ' '), Comment = Localized("Comment"),
+        Path = ALTRunDesktopUnescape(Get("Path")), TryExec = ALTRunDesktopUnescape(Get("TryExec")), Terminal = IsTrue("Terminal") });
 }
 
 public static string ALTRunDesktopCommand(string Command, string Filename, string Name, string Icon)
@@ -174,7 +228,11 @@ public static string ALTRunDesktopCommand(string Command, string Filename, strin
         if (character == '"') { quoted = !quoted; started = true; continue; }
         if (character == '\\' && index + 1 < Command.Length)
         {
-            token.Append(Command[++index]); started = true; continue;
+            var next = Command[index + 1];
+            if (!quoted || next is '"' or '`' or '$' or '\\')
+            {
+                token.Append(next); index++; started = true; continue;
+            }
         }
         if (char.IsWhiteSpace(character) && !quoted)
         {
@@ -200,7 +258,7 @@ public static string ALTRunDesktopCommand(string Command, string Filename, strin
                 case '%': argument.Append('%'); break;
                 case 'c': argument.Append(Name); break;
                 case 'k': argument.Append(Filename); break;
-                case 'f': case 'F': case 'u': case 'U': break;
+                case 'f': case 'u': case 'd': case 'D': case 'n': case 'N': case 'v': case 'm': break;
                 default: throw new FormatException("Unsupported field code in the desktop entry: %" + value[index]);
             }
         }
@@ -208,6 +266,94 @@ public static string ALTRunDesktopCommand(string Command, string Filename, strin
     }
     if (expanded.Count == 0 || expanded[0].Length == 0) throw new FormatException("The desktop entry has no executable.");
     return JsonSerializer.Serialize(new { Executable = expanded[0], Arguments = expanded.GetRange(1, expanded.Count - 1) });
+}
+
+private static readonly Dictionary<string, string> ALTRunDesktopIcons = new(StringComparer.Ordinal);
+
+public static object ALTRunDesktopClearIcons()
+{
+    ALTRunDesktopIcons.Clear();
+    return null;
+}
+
+public static string ALTRunDesktopIcon(string Icon, int Size, string DataHome, string DataDirectories)
+{
+    if (Icon.Length == 0) return "";
+    if (System.IO.Path.IsPathRooted(Icon)) return File.Exists(Icon) ? Icon : "";
+    if (Icon.Contains('/') || Icon.Contains('\\')) return "";
+    var key = Icon + "\n" + Size + "\n" + DataHome + "\n" + DataDirectories + "\n" + Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+    if (ALTRunDesktopIcons.TryGetValue(key, out var cached)) return cached;
+    var roots = new List<string> { System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".icons"),
+        System.IO.Path.Combine(DataHome, "icons") };
+    var dataRoots = new List<string> { DataHome };
+    dataRoots.AddRange(DataDirectories.Split(':', StringSplitOptions.RemoveEmptyEntries));
+    foreach (var root in dataRoots)
+        if (!roots.Contains(System.IO.Path.Combine(root, "icons"))) roots.Add(System.IO.Path.Combine(root, "icons"));
+    var themes = new List<string>();
+    void AddTheme(string name)
+    {
+        if (name.Length == 0 || name is "." or ".." || name.Contains('/') || name.Contains('\\') || themes.Contains(name)) return;
+        themes.Add(name);
+        foreach (var root in roots)
+        {
+            var index = System.IO.Path.Combine(root, name, "index.theme");
+            try
+            {
+                if (!File.Exists(index)) continue;
+                foreach (var line in File.ReadLines(index))
+                    if (line.StartsWith("Inherits=", StringComparison.Ordinal))
+                        foreach (var inherited in line[9..].Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+                            AddTheme(inherited);
+                break;
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+    foreach (var version in new[] { "gtk-4.0", "gtk-3.0" })
+    {
+        var config = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+        if (string.IsNullOrEmpty(config)) config = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
+        try
+        {
+            var settings = System.IO.Path.Combine(config, version, "settings.ini");
+            if (File.Exists(settings))
+                foreach (var line in File.ReadLines(settings))
+                    if (line.StartsWith("gtk-icon-theme-name=", StringComparison.Ordinal)) AddTheme(line[20..].Trim());
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+    AddTheme("Adwaita");
+    themes.Remove("hicolor");
+    AddTheme("hicolor");
+    var sizes = new List<int> { Size };
+    foreach (var size in new[] { 32, 48, 64, 24, 16, 128, 256, 512 })
+        if (!sizes.Contains(size)) sizes.Add(size);
+    var extensions = System.IO.Path.GetExtension(Icon).ToLowerInvariant() is ".png" or ".ico" or ".jpg" or ".bmp" or ".gif"
+        ? new[] { "" } : new[] { ".png", ".ico", ".jpg", ".bmp", ".gif" };
+    foreach (var theme in themes)
+        foreach (var size in sizes)
+            foreach (var root in roots)
+                foreach (var context in new[] { "apps", "applications", "mimetypes", "categories", "places", "devices", "status", "actions", "" })
+                    foreach (var extension in extensions)
+                    {
+                        var file = System.IO.Path.Combine(root, theme, size + "x" + size, context, Icon + extension);
+                        if (File.Exists(file)) return ALTRunDesktopIcons[key] = file;
+                    }
+    foreach (var root in roots)
+        foreach (var extension in extensions)
+        {
+            var file = System.IO.Path.Combine(root, Icon + extension);
+            if (File.Exists(file)) return ALTRunDesktopIcons[key] = file;
+        }
+    foreach (var root in dataRoots)
+        foreach (var extension in extensions)
+        {
+            var file = System.IO.Path.Combine(root, "pixmaps", Icon + extension);
+            if (File.Exists(file)) return ALTRunDesktopIcons[key] = file;
+        }
+    return ALTRunDesktopIcons[key] = "";
 }
 #EndCSharp
 
@@ -226,7 +372,17 @@ class ProcessRunner {
     static QuoteShell(value) => ALTRunPosixQuote(value)
     static QuoteAppleScript(value) => ALTRunAppleScriptQuote(value)
 
-    static DesktopEntry(filename) => JSON.Parse(ALTRunDesktopRead(filename, Platform.Locale(), EnvGet("XDG_CURRENT_DESKTOP")))
+    static DesktopEntry(filename) => JSON.Parse(ALTRunDesktopRead(filename, ALTRunDesktopLocale(Platform.Locale()), EnvGet("XDG_CURRENT_DESKTOP")))
+
+    static DesktopIcon(icon, size := 32) => Platform.IsLinux ? ALTRunDesktopIcon(icon, size, Platform.UserDataDir,
+        EnvGet("XDG_DATA_DIRS") != "" ? EnvGet("XDG_DATA_DIRS") : "/usr/local/share:/usr/share") : icon
+
+    static ClearDesktopIcons() => ALTRunDesktopClearIcons()
+
+    static ScriptInterpreter(filename) {
+        spec := JSON.Parse(ALTRunScriptInterpreter(filename))
+        return spec.Has("Executable") ? {Executable: spec["Executable"], Arguments: spec["Arguments"]} : ""
+    }
 
     static DesktopCommand(entry, filename) {
         spec := JSON.Parse(ALTRunDesktopCommand(entry["Exec"], filename, entry["Name"], entry["Icon"]))

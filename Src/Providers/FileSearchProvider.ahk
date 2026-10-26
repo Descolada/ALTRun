@@ -1,28 +1,30 @@
 ;===============================================================================
-; FileSearchProvider.ahk - 文件 / 文件夹搜索 (AutoHotkey v2)
+; FileSearchProvider.ahk - File / folder search (AutoHotkey v2)
 ;-------------------------------------------------------------------------------
-; 两种用法 (和 Alfred 一样):
-;   1. 默认结果 (InDefaultResults, 默认关闭): 直接输入名称, 匹配的文件和文件夹显示在
-;      应用和命令下面 (最多 DefaultResultsLimit 条, 至少输入 MinQueryLength 个字)
-;   2. 专门搜索文件:  空的搜索框里先按空格 (SpacePrefix, 见 SearchWindow) 再输入 report
-;                     (已经输入了 report 时光标移到最前面再按空格也可以),
-;                     或  'report  /  open report  /  find report
-;   3. 只搜文件夹:    folder bk (FolderKeywords), 文件搜索模式里也可以写 "folder bk"
-;   4. 按类型搜索:    doc 报告 / pic logo / cad 平面图 ... (TypeFilters: "关键字 = 扩展名 扩展名 ..."),
-;                     和 Listary 的文件类型筛选一样; 文件搜索模式里也可以写 "doc 报告"
-;   5. 浏览文件夹:    输入路径 C:\  D:\Projects\rep  \\server\share\  ~\  %OneDrive%\ ,
-;                     Linux/macOS: /home/user/、~/、$HOME/; 列出内容 (最后一段过滤), 文件夹在前;
-;                     Tab 进入选中的文件夹, Backspace 回到上一级
-;                     (和 PowerToys Run / Flow Launcher 的文件夹浏览一样)。隐藏和系统文件不列出
-; 结果按名称匹配程度排序 (完全相同 > 名称开头 > 单词开头 > 包含), 同分时文件夹在前,
-; 再按修改时间。Everything 的语法 (folder:、ext:、path:...) 原样传给 Everything。
+; Ways to use it (as in Alfred):
+;   1. Default results (InDefaultResults, off by default): type a name, and matching files and folders show
+;      below apps and commands (at most DefaultResultsLimit, from MinQueryLength characters)
+;   2. Files only:      press Space in the empty search box first (SpacePrefix, see SearchWindow), then type report
+;                       (with report already typed, move the cursor to the start and press Space),
+;                       or  'report  /  open report  /  find report  /  file report
+;   3. Folders only:    folder budget (FolderKeywords); "folder budget" also works in file search mode
+;   4. One file type:   doc report / pic logo / cad plan ... (TypeFilters: "keyword = ext ext ..."),
+;                       like Listary's file type filters; "doc report" also works in file search mode
+;   4b. Recent files:   recent report (RecentKeywords): files and folders opened recently in any program (Windows "Recent
+;                       items"), newest first, without Everything or the index; "recent " alone lists the newest
+;   5. Browse a folder: type a path such as C:\  D:\Projects\rep  \\server\share\  ~\  %OneDrive%\ to list
+;                       that folder (the last part filters), folders first; Tab opens the selected folder, Backspace goes up
+;                       (like folder browsing in PowerToys Run / Flow Launcher). Hidden and system files are not listed
+; Results are sorted by how well the name matches (exact > start of the name > start of a word > contains), folders
+; first on ties, then by modification time. Everything syntax (folder:, ext:, path:...) is passed to Everything as is.
+; Linux/macOS folder browsing also accepts /home/user/, ~/ and $HOME/.
 ;
-; 数据来源 (自动选择):
-;   - Everything 在运行: 通过 IPC 直接查询 (Lib\Everything.ahk), 全盘, 不需要额外文件
-;   - 否则: 内置索引 (Src\Core\FileIndex.ahk), 只包括 ScopeFolders 里的文件夹
+; Sources (chosen automatically):
+;   - Everything running: queried directly over IPC (Lib\Everything.ahk), the whole disk, no extra files needed
+;   - Otherwise: the built-in index (Src\Core\FileIndex.ahk), covering only the ScopeFolders
 ;
-; 设置 (ALTRun.json -> Features.FileSearch):
-;   Keywords / FolderKeywords / TypeFilters / SpacePrefix / QuotePrefix / MaxResults / InDefaultResults / DefaultResultsLimit /
+; Settings (ALTRun.json -> Features.FileSearch):
+;   Keywords / FolderKeywords / RecentKeywords / TypeFilters / SpacePrefix / QuotePrefix / MaxResults / InDefaultResults / DefaultResultsLimit /
 ;   MinQueryLength / UseEverything / EverythingFilter / EverythingPath /
 ;   ScopeFolders / ScopeDepth / ScopeExclude / MaxEntries / RefreshMinutes
 ;===============================================================================
@@ -36,25 +38,47 @@ class FileSearchProvider {
 
     static Search(query) {
         options := AppSettings.Feature("FileSearch")
-        term := ""
+        term := "", typed := ""
         if IsObject(browse := FileSearchProvider.BrowsePath(query.Raw))
             return FileSearchProvider.BrowseResults(browse)
         if (options["QuotePrefix"] && query.MatchPrefix("'", &term))
             return FileSearchProvider._KeywordResults(term, options, false, true)
-        ; open / find / folder: 输入空格之后才只显示文件结果; 只输入 "folder" 时名字带 folder 的命令照常显示
-        if query.MatchKeyword(options["Keywords"], &term)
-            return FileSearchProvider._KeywordResults(term, options, false, query.HasRest)
-        if query.MatchKeyword(options["FolderKeywords"], &term)
-            return FileSearchProvider._KeywordResults(term, options, true, query.HasRest)
+        ; open / find / file / folder: only after a space do just file results show; typing only "folder" still shows commands with folder in their name
+        if query.MatchKeyword(options["Keywords"], &term, &typed)
+            return FileSearchProvider._KeywordResults(term, options, false, query.HasRest, typed)
+        if query.MatchKeyword(options["FolderKeywords"], &term, &typed)
+            return FileSearchProvider._KeywordResults(term, options, true, query.HasRest, typed)
+        if query.MatchKeyword(options["RecentKeywords"], &term, &typed)
+            return FileSearchProvider.RecentResults(term, options, query.HasRest, typed)
         if IsObject(filter := FileSearchProvider.MatchType(query, &term))
-            return FileSearchProvider._KeywordResults(term, options, filter, query.HasRest)
+            return FileSearchProvider._KeywordResults(term, options, filter, query.HasRest, filter.Keyword)
+        results := FileSearchProvider._PrefixHints(query, options)
         if (options["InDefaultResults"] && StrLen(query.Text) >= options["MinQueryLength"] && !Calc.Looks(query.Text))
-            return FileSearchProvider._DefaultResults(query.Text, options)
-        return []
+            results.Push(FileSearchProvider._DefaultResults(query.Text, options)*)
+        return results
     }
 
-    ; 搜索窗口的文件搜索模式 (空格开头) 调用: 只搜文件, 空文字不返回结果; "folder bk" 只搜文件夹, "doc 报告" 只搜文档
-    static SearchFiles(term) {
+    ; "fol" / "rec" / "vid": a keyword not typed in full yet gets its hint at the end of the list (Enter / Tab complete "folder " ...)
+    static _PrefixHints(query, options) {
+        hints := [], keyword := ""
+        if query.StartsKeyword(options["Keywords"], &keyword)
+            hints.Push(FileSearchProvider._KeywordResults("", options, false, false, keyword)*)
+        if query.StartsKeyword(options["FolderKeywords"], &keyword)
+            hints.Push(FileSearchProvider._KeywordResults("", options, true, false, keyword)*)
+        if query.StartsKeyword(options["RecentKeywords"], &keyword)
+            hints.Push(FileSearchProvider.RecentResults("", options, false, keyword)*)
+        for filter in FileSearchProvider.TypeFilters()
+            if query.StartsKeyword([filter.Keyword], &keyword) {
+                hints.Push(FileSearchProvider._KeywordResults("", options, filter, false, keyword)*)
+                break
+            }
+        for hint in hints
+            hint.Score := ResultItem.KeywordPrefixHintScore
+        return hints
+    }
+
+    ; ProviderRegistry.SearchOnly: the search window's file search mode (starting with Space): files only, nothing for empty text; "folder budget" searches folders only, "doc report" documents only
+    static SearchOnly(term) {
         term := Trim(term)
         if (term = "")
             return []
@@ -64,14 +88,16 @@ class FileSearchProvider {
         query := SearchQuery(term), rest := ""
         if (query.HasRest && query.MatchKeyword(options["FolderKeywords"], &rest) && rest != "")
             return FileSearchProvider._KeywordResults(rest, options, true, true)
+        if (query.HasRest && query.MatchKeyword(options["RecentKeywords"], &rest))
+            return FileSearchProvider.RecentResults(rest, options, true)
         if (query.HasRest && IsObject(filter := FileSearchProvider.MatchType(query, &rest)) && rest != "")
             return FileSearchProvider._KeywordResults(rest, options, filter, true)
         return FileSearchProvider._KeywordResults(term, options, false, true)
     }
 
-    ; 输入的是文件夹路径时返回 {Dir: "C:\Projects\", Filter: "rep"}, 否则 ""; 文件夹不存在时 {Dir, Filter, Missing: true}
-    ;   C:\ / C:\Projects\rep / \\server\share\ / ~\ (用户文件夹) / %OneDrive%\ (环境变量)
-    ;   中文输入法打出的 "D：、" (全角冒号、顿号) 也当作 "D:\"
+    ; When the input is a folder path returns {Dir: "C:\Projects\", Filter: "rep"}, otherwise ""; {Dir, Filter, Missing: true} when the folder doesn't exist
+    ;   C:\ / C:\Projects\rep / \\server\share\ / ~\ (user folder) / %OneDrive%\ (environment variable)
+    ;   "D：、" typed with a Chinese IME (full-width colon, ideographic comma) counts as "D:\" too
     static BrowsePath(text) {
         text := LTrim(text)
 #if WINDOWS
@@ -102,9 +128,9 @@ class FileSearchProvider {
         return {Dir: dir, Filter: filter}
     }
 
-    ; 文件夹里的内容 (文件夹在前), 按最后一段过滤; 文件夹的 Tab 补全成 "路径\", 进入下一级
+    ; The folder's contents (folders first), filtered by the last part; Tab on a folder completes to "path\" to go one level down
     static BrowseResults(browse) {
-        if browse.HasOwnProp("Missing")                                     ; 例如没有 D 盘: 提示, 而不是什么都不显示
+        if browse.HasOwnProp("Missing")                                     ; e.g. no drive D: show a hint rather than nothing
             return [ResultItem(I18n.T("Files.FolderNotFound"), browse.Dir, {Icon: "folder:", Valid: false, Score: 150, Exclusive: true})]
         entries := FileSearchProvider.ListFolder(browse.Dir)
         needle := StrLower(browse.Filter), scores := Map()
@@ -128,7 +154,7 @@ class FileSearchProvider {
         return results
     }
 
-    ; 文件夹的内容 [{Name, Path, IsFolder}], 文件夹在前; 3 秒内再次浏览同一个文件夹时直接用 (边打字边过滤)
+    ; The folder's contents [{Name, Path, IsFolder}], folders first; reused when the same folder is browsed again within 3 s (filtering while typing)
     static ListFolder(dir) {
         static cache := Map()
         key := Platform.Identity(dir)
@@ -143,7 +169,7 @@ class FileSearchProvider {
                     continue
                 entry := {Name: A_LoopFileName, Path: A_LoopFileFullPath, IsFolder: InStr(A_LoopFileAttrib, "D") ? true : false}
                 (entry.IsFolder ? folders : files).Push(entry)
-                if (folders.Length + files.Length >= 5000)                  ; 特别大的文件夹只列前 5000 项
+                if (folders.Length + files.Length >= 5000)                  ; very large folders list only the first 5000 entries
                     break
             }
         }
@@ -155,7 +181,7 @@ class FileSearchProvider {
         return folders
     }
 
-    ; 文件类型筛选: 第一个词是 TypeFilters 里的关键字时返回 {Keyword, Extensions: Map, Everything: "ext:a;b"}
+    ; File type filter: when the first word is a keyword in TypeFilters returns {Keyword, Extensions: Map, Everything: "ext:a;b"}
     static MatchType(query, &term) {
         term := ""
         for filter in FileSearchProvider.TypeFilters()
@@ -164,7 +190,7 @@ class FileSearchProvider {
         return ""
     }
 
-    ; TypeFilters ("doc = doc docx pdf ...", 每行一个) 解析后的列表; 设置没变时不重新解析
+    ; TypeFilters ("doc = doc docx pdf ...", one per line) parsed into a list; not parsed again while the setting is unchanged
     static TypeFilters() {
         static source := "", parsed := []
         options := AppSettings.Feature("FileSearch")
@@ -181,7 +207,7 @@ class FileSearchProvider {
         return parsed
     }
 
-    ; "doc = doc docx .pdf, xls" -> {Keyword: "doc", Extensions: Map, Everything: "ext:doc;docx;pdf;xls"}; 写错时返回 ""
+    ; "doc = doc docx .pdf, xls" -> {Keyword: "doc", Extensions: Map, Everything: "ext:doc;docx;pdf;xls"}; "" if it is malformed
     static ParseTypeFilter(line) {
         if !RegExMatch(line, "^\s*([^=\s]+)\s*=\s*(.+)$", &m)
             return ""
@@ -195,20 +221,23 @@ class FileSearchProvider {
         return extensions.Count ? {Keyword: StrLower(m[1]), Extensions: extensions, Everything: "ext:" list} : ""
     }
 
-    ; 'xxx / open xxx / folder xxx / doc xxx: 只显示文件 (或文件夹、某类文件) 搜索结果
-    ; scope: false = 文件和文件夹, true = 只要文件夹, 或者 TypeFilters 里的一项
-    ; exclusive: 已经输入了关键字后面的空格, 只显示这些结果
-    static _KeywordResults(term, options, scope, exclusive) {
+    ; 'xxx / open xxx / folder xxx / doc xxx: show only file (or folder, or one kind of file) results
+    ; scope: false = files and folders, true = folders only, or an entry of TypeFilters
+    ; exclusive: the space after the keyword is typed: show only these results
+    ; typed: the keyword typed; the hint for the keyword alone completes to it and a space (Enter / Tab / click)
+    static _KeywordResults(term, options, scope, exclusive, typed := "") {
         if (term = "") {
             if IsObject(scope)
-                hint := ResultItem(I18n.T("Files.TypeKeyword", StrReplace(SubStr(scope.Everything, 5), ";", " ")), scope.Keyword " ...", {Icon: "folder:", Valid: false})
+                title := I18n.T("Files.TypeKeyword", StrReplace(SubStr(scope.Everything, 5), ";", " ")), subtitle := scope.Keyword " ..."
             else {
                 keywords := options[scope ? "FolderKeywords" : "Keywords"]
                 keyword := keywords.Length ? keywords[1] : ""
-                hint := scope ? ResultItem(I18n.T("Folders.Keyword"), keyword " ...", {Icon: "folder:", Valid: false})
-                              : ResultItem(I18n.T("Files.Keyword"), "'..." (keyword != "" ? " / " keyword " ..." : ""), {Icon: "folder:", Valid: false})
+                title := I18n.T(scope ? "Folders.Keyword" : "Files.Keyword")
+                subtitle := scope ? keyword " ..." : "'..." (keyword != "" ? " / " keyword " ..." : "")
             }
-            hint.Score := exclusive ? 150 : 5                               ; 还没输入空格时排在后面, 不挡住其它结果
+            hint := ResultItem.KeywordHint(title, typed, "folder:", false, subtitle)   ; before the space is typed, names starting with the word still come first
+            if exclusive                                                    ; "folder " / "'": only this row, nothing to complete
+                hint.Score := 150, hint.AutoComplete := ""
             hint.Exclusive := exclusive
             return [hint]
         }
@@ -225,7 +254,39 @@ class FileSearchProvider {
         return results
     }
 
-    ; 默认结果: 分数压低 (最高约 40), 排在应用 / 命令后面
+    ;---------------------------------------------------------------------------
+    ; Recent files: Windows "Recent items" or the Linux desktop's XBEL history.
+    ;---------------------------------------------------------------------------
+    ; "recent report": the recent files and folders whose names match, newest first on ties; "recent " alone lists the
+    ; newest; "recent" without the space is only a hint (ResultItem.KeywordHintScore). Only the newest RecentScan shortcuts
+    static RecentScan := 300
+    static RecentResults(term, options, exclusive, typed := "") {
+        keywords := options["RecentKeywords"], keyword := keywords.Length ? keywords[1] : ""
+        if !exclusive
+            return [ResultItem.KeywordHint(I18n.T("Files.RecentKeyword"), typed, "folder:", false, keyword " ...")]
+        items := WindowsRecent.Items(FileSearchProvider.RecentScan)
+        needle := StrLower(Trim(term)), scores := Map()
+        for index, item in items {
+            score := (needle = "") ? 100 : FuzzyMatcher.Score(needle, item.Name)
+            if (score > 0)
+                scores[index] := score - index * 0.001                      ; the newer one first on ties
+        }
+        results := []
+        for index in FuzzyMatcher.TopIndexes(scores, options["MaxResults"]) {
+            item := items[index]
+            SplitPath(item.Path, , &dir)
+            results.Push(ResultItem(item.Name, dir, {
+                Kind: item.IsFolder ? "folder" : "file", Arg: item.Path, Icon: item.IsFolder ? "folder:" : item.Path,
+                Uid: "file:" Platform.Identity(item.Path), Score: 150 + scores[index] / 1000, Exclusive: true,
+                AutoComplete: item.IsFolder ? RTrim(item.Path, "\/") (Platform.IsWindows ? "\" : "/") : ""
+            }))
+        }
+        if !results.Length
+            results.Push(ResultItem(I18n.T("Files.RecentNone"), keyword " " term, {Icon: "folder:", Valid: false, Score: 150, Exclusive: true}))
+        return results
+    }
+
+    ; default results: scores lowered (at most about 40), after applications / commands
     static _DefaultResults(text, options) {
         results := []
         for found in FileSearchProvider.Query(text, options["DefaultResultsLimit"], true)
@@ -233,11 +294,11 @@ class FileSearchProvider {
         return results
     }
 
-    ; 返回 [{Path, IsFolder, Score}], 按匹配程度排序
-    ; preferPrefix: 默认结果只要名称开头 / 单词开头匹配的, 避免一大堆只是 "包含" 的文件
-    ; scope:        true = 只要文件夹 (folder bk); TypeFilters 里的一项 = 只要这些扩展名的文件 (doc 报告)
-    ; Everything 按修改时间返回; 只取前 limit 条的话, 名称最匹配但不是最近修改的文件夹 (例如
-    ; "bk" 匹配到大量文件时) 就排不进来, 所以多取一些 (EverythingFetch 条), 再按名称匹配程度挑
+    ; Returns [{Path, IsFolder, Score}], sorted by how well they match
+    ; preferPrefix: default results keep only name-start / word-start matches, avoiding piles of files that merely "contain" the text
+    ; scope:        true = folders only (folder budget); an entry of TypeFilters = only files with those extensions (doc report)
+    ; Everything returns results by modification time; taking only the first limit, the folder with the best name match but not
+    ; modified recently (e.g. when a short word matches lots of files) would not get in, so fetch more (EverythingFetch) and pick by name match
     static Query(term, limit, preferPrefix, scope := false) {
         options := AppSettings.Feature("FileSearch")
         needle := StrLower(Trim(term))
@@ -251,20 +312,20 @@ class FileSearchProvider {
             seen := Map()
             for item in Everything.Query(Trim(search), fetch, Everything.SORT_DATE_MODIFIED_DESC) {
                 SplitPath(item.Path, &name)
-                score := FileIndex.ScoreName(scoreNeedle, StrLower(name))
-                found.Push({Path: item.Path, IsFolder: item.IsFolder, Score: score ? score : 50})
+                found.Push({Path: item.Path, IsFolder: item.IsFolder, Score: FileSearchProvider.NameScore(scoreNeedle, name)})
                 seen[StrLower(item.Path)] := true
             }
-            ; 文件和文件夹一起搜时, 同名的文件很多 (例如 ppie 文件夹里有几百个 ppie_xxx.dwg) 的话, 按修改时间取的前 fetch 条
-            ; 可能全是文件, 名称完全相同的文件夹反而排不进来: 另外单独取一次文件夹
-            if (!IsObject(scope) && !scope && !RegExMatch(term, "i)(^|\s)(folder|file|files|ext):")) {   ; 已经写了 folder: / ext: 等就不另外取
+            if (Everything.LastProblem != "")
+                Logger.Warn("FileSearch: Everything " Everything.LastProblem)
+            ; When files and folders are searched together and many files share the name (e.g. a "plans" folder holding hundreds of
+            ; plans_xxx.dwg), the first fetch results by modification time may all be files and the folder of that exact name is left out: fetch folders separately
+            if (!IsObject(scope) && !scope && !RegExMatch(term, "i)(^|\s)(folder|file|files|ext):")) {   ; not when folder: / ext: etc. is already given
                 folderSearch := (preferPrefix ? "startwith:" : "") "folder:" FileSearchProvider._EverythingTerm(term) " " options["EverythingFilter"]
                 for item in Everything.Query(Trim(folderSearch), 50, Everything.SORT_DATE_MODIFIED_DESC) {
                     if seen.Has(StrLower(item.Path))
                         continue
                     SplitPath(item.Path, &name)
-                    score := FileIndex.ScoreName(scoreNeedle, StrLower(name))
-                    found.Push({Path: item.Path, IsFolder: true, Score: score ? score : 50})
+                    found.Push({Path: item.Path, IsFolder: true, Score: FileSearchProvider.NameScore(scoreNeedle, name)})
                 }
             }
             return FileSearchProvider._Best(found, limit)
@@ -274,7 +335,7 @@ class FileSearchProvider {
         if preferPrefix {
             kept := []
             for item in found
-                if (item.Score >= 70)                                  ; 名称开头 (90) 或单词开头 (80, 长名称略低于 80)
+                if (item.Score >= 70)                                  ; start of the name (90) or of a word (80, a little below 80 for long names)
                     kept.Push(item)
             found := kept
         }
@@ -283,17 +344,30 @@ class FileSearchProvider {
 
     static EverythingFetch := 300
 
-    ; Everything 搜索的前缀: "folder:" 或 "ext:doc;docx " (后面还要接搜索的文字)
+    ; Results from Everything are scored again by file name (for sorting). With pinyin in Everything (the pinyin option of 1.5, IbEverythingExt for 1.4),
+    ; "测试.bat" found by "cs" has no "cs" in its name: score it again by pinyin initials, 5 points below a direct match of the same tier.
+    ; 50 when the name doesn't match at all (path matches, full pinyin, several words etc.). With several words ("pt 2024") ScoreName can't match anyway, so pinyin isn't tried (wasted work)
+    static NameScore(needle, name) {
+        if (needle = "")                                                    ; only Everything syntax typed (e.g. "d:", "folder:"): keep Everything's order
+            return 50
+        if (score := FileIndex.ScoreName(needle, StrLower(name)))
+            return score
+        if (FileIndex.UsePinyin(needle) && (initials := FileIndex.InitialsOf(name)) != "" && (score := FileIndex.PinyinScore(needle, initials)))
+            return score
+        return 50
+    }
+
+    ; Prefix for an Everything search: "folder:" or "ext:doc;docx " (the search text follows)
     static _ScopePrefix(scope) {
         return IsObject(scope) ? scope.Everything " " : scope ? "folder:" : ""
     }
 
-    ; 给结果打分用的文字: 去掉 Everything 的语法前缀 ("folder:bk" -> "bk", "ext:pdf report" -> "pdf report")
+    ; Text used to score results: Everything syntax prefixes removed ("folder:budget" -> "budget", "ext:pdf report" -> "pdf report")
     static ScoreNeedle(needle) {
         return Trim(RegExReplace(needle, "(^|\s)[a-z]+:", "$1"))
     }
 
-    ; 多个词的输入交给 Everything 时保持原样 (Everything 本身就按空格分词); 引号去掉避免语法错误
+    ; input with several words goes to Everything as it is (Everything splits at spaces itself); quotes are removed to avoid syntax errors
     static _EverythingTerm(term) {
         return StrReplace(Trim(term), '"')
     }
@@ -301,7 +375,7 @@ class FileSearchProvider {
     static _Best(found, limit) {
         scores := Map()
         for index, item in found
-            scores[index] := item.Score + (item.IsFolder ? 1 : 0)            ; 同分时文件夹优先
+            scores[index] := item.Score + (item.IsFolder ? 1 : 0)            ; folders first on ties
         best := []
         for index in FuzzyMatcher.TopIndexes(scores, limit)
             best.Push(found[index])
@@ -316,7 +390,7 @@ class FileSearchProvider {
         })
     }
 
-    ; 没有结果时: 在 Everything 里搜索 (装了 Everything) 或用 Windows 搜索
+    ; No results: search in Everything (if installed) or with Windows Search
     static FallbackItem(term, scope := false) {
 #if WINDOWS
         exe := FileSearchProvider._EverythingExe()

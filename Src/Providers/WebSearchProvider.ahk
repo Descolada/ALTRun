@@ -1,16 +1,18 @@
 ;===============================================================================
-; WebSearchProvider.ahk - 网页搜索 + 兜底结果 (AutoHotkey v2)
+; WebSearchProvider.ahk - web search + fallback results (AutoHotkey v2)
 ;-------------------------------------------------------------------------------
-; ALTRun.json -> Features.WebSearch.Engines, 每个引擎:
+; ALTRun.json -> Features.WebSearch.Engines, each engine:
 ;   { "Id": "google", "Keyword": "g", "Title": "Google", "Url": "https://...?q={query}", "Icon": "" }
-; 输入 "g 关键词" 用对应引擎搜索; 只输入关键字 "g" 时提示补全。
-; Url 里写 {query|默认值} 时, 只输入关键字也能直接打开: 用默认值, 例如 "http://localhost:{query|8000}"。
-; Icon: 结果的图标, 可以是 .ico / .png / .exe 等文件 (相对路径从 Data 文件夹算起), 或 IconCache 的写法
-; (res:、ext: 等); 不写时自带的引擎 (按 Id) 用 Resources\Icons\Web 里的图标, 其它用默认浏览器的图标。
-; 编辑框里的 "下载网站图标": 用户点了才访问网址所在的网站 (不经过第三方图标服务), 找到的图标存进 Data\Icons。
+; "g words" searches with that engine; typing only the keyword "g" offers completion. Keyword can hold several, separated by commas ("g, ㅎ").
+; With {query|default} in the Url it opens even without search words after the keyword, using the default, e.g. "http://localhost:{query|8000}".
+; A default of clipboard ({query|clipboard}) searches the text on the clipboard (text only, joined into one line, at most MaxTermChars characters).
+; The default is used only with a space after the keyword and no search words ("g "); only the keyword ("g") offers completion.
+; Icon: the result's icon, a .ico / .png / .exe etc. file (relative paths start from the Data folder) or an IconCache form
+; (res:, ext: etc.); if not given, built-in engines (by Id) use the icons in Resources\Icons\Web, others the default browser's icon.
+; "Download site icon" in the edit dialog: only when the user clicks does it visit the URL's site (no third-party icon service); the icon found goes into Data\Icons.
 ;
-; Fallbacks: 其它功能都没有结果时显示的兜底项, 例如 "Search Google for 'xxx'"。
-; 列表里写引擎的 Id, 或 "files" (交给 FileSearchProvider 搜索文件)。
+; Fallbacks: shown when no other feature has results, e.g. "Search Google for 'xxx'".
+; The list holds engine Ids, or "files" (handed to FileSearchProvider to search files).
 ;===============================================================================
 
 class WebSearchProvider {
@@ -26,15 +28,15 @@ class WebSearchProvider {
     static Search(query) {
         results := []
         for engine in WebSearchProvider.Engines() {
-            if !(engine is Map) || !engine.Has("Keyword") || engine["Keyword"] = ""
+            if !(engine is Map) || !engine.Has("Keyword") || !(keywords := SearchQuery.Keywords(engine["Keyword"])).Length
                 continue
-            if query.MatchKeyword([engine["Keyword"]], &term) {
-                item := WebSearchProvider.ItemFor(engine, term)
+            if query.MatchKeyword(keywords, &term, &keyword) {
+                item := WebSearchProvider.ItemFor(engine, term, keyword, !query.HasRest)   ; only "g" -> offer completion; "g " -> default / clipboard
                 item.Score := 150
                 item.Exclusive := query.HasRest
                 results.Push(item)
             } else if (!query.HasRest && StrLen(query.Text) >= 2 && FuzzyMatcher.Score(query.Text, engine["Title"]) >= 80) {
-                item := WebSearchProvider.ItemFor(engine, "")                ; 输入引擎名称 -> 提示 "g " 补全
+                item := WebSearchProvider.ItemFor(engine, "", "", true)      ; typing an engine's name -> offer "g " completion (without reading the clipboard)
                 item.Score := 20
                 results.Push(item)
             }
@@ -42,36 +44,83 @@ class WebSearchProvider {
         return results
     }
 
-    static ItemFor(engine, term) {
+    ; keyword: the keyword typed (kept when completing); the first if none
+    ; hintOnly: only offer completion (just the keyword typed, or the engine's name): no default and no clipboard reading
+    static ItemFor(engine, term, keyword := "", hintOnly := false) {
         icon := WebSearchProvider.IconFor(engine)
-        autoComplete := engine["Keyword"] " " term
-        if (term = "")
-            term := WebSearchProvider.DefaultTerm(engine["Url"])
+        if (keyword = "")
+            keyword := WebSearchProvider.FirstKeyword(engine)
+        autoComplete := keyword " " term
+        fromClipboard := false
+        if (term = "" && !hintOnly) {
+            if WebSearchProvider.UsesClipboard(engine["Url"]) {
+                term := WebSearchProvider.ClipboardText(), fromClipboard := true
+                if (term = "")
+                    return ResultItem(I18n.T("Web.SearchClipboard", engine["Title"]), I18n.T("Web.ClipboardEmpty"), {
+                        Kind: "url", Icon: icon, Valid: false, AutoComplete: autoComplete, Source: engine
+                    })
+            } else
+                term := WebSearchProvider.DefaultTerm(engine["Url"])
+        }
         if (term = "") {
-            return ResultItem(I18n.T("Web.SearchEmpty", engine["Title"]), I18n.T("Search.TypeAfter", engine["Keyword"]), {
+            return ResultItem(I18n.T("Web.SearchEmpty", engine["Title"]), I18n.T("Search.TypeAfter", keyword), {
                 Kind: "url", Icon: icon, Valid: false, AutoComplete: autoComplete, Source: engine
             })
         }
         target := WebSearchProvider.Fill(engine["Url"], term)
-        return ResultItem(I18n.T("Web.SearchFor", engine["Title"], term), target, {
+        title := fromClipboard ? I18n.T("Web.SearchClipboardFor", engine["Title"], WebSearchProvider.Preview(term)) : I18n.T("Web.SearchFor", engine["Title"], term)
+        return ResultItem(title, target, {
             Kind: "url", Arg: target, Icon: icon, AutoComplete: autoComplete, Source: engine
         })
     }
 
-    ; 网址里的 {query} / {query|默认值} 换成搜索词 (编码); 搜索词是空的时用默认值
-    static Fill(template, term) {
-        if (term = "")
-            term := WebSearchProvider.DefaultTerm(template)
-        return RegExReplace(template, "\{query(?:\|[^}]*)?\}", Url.Encode(term))   ; 编码后只有字母、数字和 %-_.~, 没有 $
+    static FirstKeyword(engine) {
+        keywords := SearchQuery.Keywords((engine is Map && engine.Has("Keyword")) ? engine["Keyword"] : "")
+        return keywords.Length ? keywords[1] : ""
     }
 
-    ; {query|默认值} 里的默认值, 没有时 ""
+    ; {query} / {query|default} in the URL -> the search words (encoded); with empty search words the default (clipboard = the text on the clipboard)
+    ; readClipboard: false = don't read the clipboard even when the default is clipboard (when only the rest of the URL is needed)
+    static Fill(template, term, readClipboard := true) {
+        if (term = "") {
+            term := WebSearchProvider.DefaultTerm(template)
+            if (term = "clipboard")
+                term := readClipboard ? WebSearchProvider.ClipboardText() : ""
+        }
+        return RegExReplace(template, "\{query(?:\|[^}]*)?\}", Url.Encode(term))   ; after encoding only letters, digits and %-_.~ remain, no $
+    }
+
+    ; The default in {query|default}, "" if none
     static DefaultTerm(template) {
         return RegExMatch(template, "\{query\|([^}]*)\}", &m) ? m[1] : ""
     }
 
-    ; 引擎的 Icon: 图片文件用缩略图, .ico / .exe 等用文件自己的图标; 没写或文件不存在时
-    ; 自带的引擎用自带的图标 (BuiltinIcon), 其它用默认浏览器的图标
+    ; the default is clipboard (case-insensitive)
+    static UsesClipboard(template) => WebSearchProvider.DefaultTerm(template) = "clipboard"
+
+    static MaxTermChars := 200
+
+    ; The text on the clipboard (processed by Term); "" when files were copied, there is no text, or a password manager marked it "don't record".
+    ; With both text and an image (e.g. cells copied from Excel) the text is used, as in the clipboard history
+    static ClipboardText() {
+        if (ClipboardData.HasFiles() || ClipboardProvider.IsPrivate())
+            return ""
+        text := ""
+        try text := A_Clipboard
+        return WebSearchProvider.Term(text)
+    }
+
+    ; Search words for the URL: white space collapsed to one space, at most MaxTermChars characters (search sites reject URLs that are too long)
+    static Term(text) {
+        text := Trim(RegExReplace(text, "\s+", " "))
+        return StrLen(text) > WebSearchProvider.MaxTermChars ? Trim(SubStr(text, 1, WebSearchProvider.MaxTermChars)) : text
+    }
+
+    ; Search words shown in the result title: shortened when too long
+    static Preview(text) => StrLen(text) > 60 ? SubStr(text, 1, 60) "..." : text
+
+    ; The engine's Icon: image files as thumbnails, .ico / .exe etc. with their own icon; when not given or the file doesn't exist,
+    ; built-in engines use their own icon (BuiltinIcon), others the default browser's icon
     static IconFor(engine) {
         spec := engine.Has("Icon") ? Trim(engine["Icon"], " `t`"") : ""
         if (spec = "")
@@ -103,17 +152,17 @@ class WebSearchProvider {
     }
 
     ;---------------------------------------------------------------------------
-    ; 下载网站图标 (编辑框里的按钮)
+    ; Download site icon (the button in the edit dialog)
     ;---------------------------------------------------------------------------
     static MaxIconBytes := 1024 * 1024, MaxPageBytes := 2 * 1024 * 1024
 
-    ; 下载 url 所在网站的图标, 存成 Data\Icons\<name>.<扩展名>。
-    ; 返回 {File: "Icons\x.png"} (相对 Data 文件夹, 换电脑也能用) 或 {Error: 提示文字}。
-    ; 先看首页里写的图标 (apple-touch-icon 一般是 180 px 的 PNG, 最清晰), 再试 /apple-touch-icon.png 和 /favicon.ico。
-    ; 只接受 PNG / ICO / JPG / GIF / BMP (看文件头), 最大 1 MB。fetch 只在测试时传入 (代替联网)
+    ; Downloads the icon of url's site and stores it as Data\Icons\<name>.<extension>.
+    ; Returns {File: "Icons\x.png"} (relative to the Data folder, so it works on another PC) or {Error: message}.
+    ; First the icons the home page names (apple-touch-icon is usually a 180 px PNG, the sharpest), then /apple-touch-icon.png and /favicon.ico.
+    ; Only PNG / ICO / JPG / GIF / BMP are accepted (by file header), at most 1 MB. fetch is passed only by tests (instead of the network)
     static DownloadIcon(address, name, fetch := "") {
         fetch := IsObject(fetch) ? fetch : (target) => WebSearchProvider._Fetch(target)
-        page := WebSearchProvider.Fill(address, "")
+        page := WebSearchProvider.Fill(address, "", false)          ; only the site address, no clipboard reading
         if !RegExMatch(page, "i)^(https?://[^/?#{}]+)", &m)
             return {Error: I18n.T("Web.IconBadUrl")}
         origin := RTrim(m[1], ":")
@@ -154,8 +203,8 @@ class WebSearchProvider {
         return {Error: I18n.T("Web.IconNotFound", origin)}
     }
 
-    ; 网页里 <link rel="apple-touch-icon"> / <link rel="icon"> 写的图标, 清晰的在前 (apple-touch-icon, 再按 sizes);
-    ; 不要 SVG (画不了) 和 data: 网址。pageUrl: 网页的网址, 用来把相对路径换成完整网址
+    ; The icons a page names in <link rel="apple-touch-icon"> / <link rel="icon">, sharpest first (apple-touch-icon, then by sizes);
+    ; no SVG (can't be drawn) and no data: URLs. pageUrl: the page's URL, to turn relative paths into full URLs
     static IconCandidates(html, pageUrl) {
         found := []
         pos := 1
@@ -171,7 +220,7 @@ class WebSearchProvider {
             size := RegExMatch(WebSearchProvider._Attribute(tag, "sizes"), "(\d+)x\d+", &sz) ? Integer(sz[1]) : (apple ? 180 : 32)
             found.Push({Url: WebSearchProvider._Absolute(href, pageUrl), Score: (apple ? 10000 : 0) + size})
         }
-        ; 按 Score 从大到小 (插入排序, 一般只有几条)
+        ; by Score, highest first (insertion sort, usually only a few)
         Loop found.Length - 1 {
             i := A_Index + 1, current := found[i], j := i - 1
             while (j >= 1 && found[j].Score < current.Score)
@@ -185,7 +234,7 @@ class WebSearchProvider {
         return urls
     }
 
-    ; 文件头是哪种图片: "png" / "ico" / "jpg" / "gif" / "bmp", 不是图片时 ""
+    ; Which image type the file header is: "png" / "ico" / "jpg" / "gif" / "bmp", "" if not an image
     static ImageType(buf, size) {
         byte := (i) => NumGet(buf, i, "UChar")
         if (size >= 8 && byte(0) = 0x89 && byte(1) = 0x50 && byte(2) = 0x4E && byte(3) = 0x47)
@@ -226,7 +275,7 @@ class WebSearchProvider {
         return false
     }
 
-    ; GET 一个网址: {Status, Body (Buffer), Size, Url (跳转后的网址)}; 连不上时抛出异常
+    ; GETs a URL: {Status, Body (Buffer), Size, Url (after redirects)}; throws if it can't connect
     static _Fetch(target) {
         if !Platform.IsWindows {
             response := Http.Get(target, {Timeout: 8, Headers: Map("User-Agent", "ALTRun/" App.Version)})
@@ -240,7 +289,7 @@ class WebSearchProvider {
         request.Send()
         size := 0, body := Buffer(0)
         try {
-            data := request.ResponseBody                                    ; 字节数组 (SAFEARRAY)
+            data := request.ResponseBody                                    ; byte array (SAFEARRAY)
             size := data.MaxIndex() + 1
             if (size > 0) {
                 body := Buffer(size)
@@ -254,13 +303,13 @@ class WebSearchProvider {
 
     static EditorFields() {
         return [ItemEditor.Field("Title", "Prefs.Col.Title", "text", true)
-              , ItemEditor.Field("Keyword", "Prefs.Col.Keyword", "text", true)
+              , ItemEditor.Field("Keyword", "Prefs.Col.Keyword", "text", true, "", I18n.T("Web.Field.Keyword"))
               , ItemEditor.Field("Url", "Prefs.Col.Url", "text", true, "", I18n.T("Web.Field.Url"))
               , ItemEditor.Field("Id", "Prefs.Col.Id", "text", true)
               , WebSearchProvider._IconField()]
     }
 
-    ; Icon 字段: 文本框 + 浏览 + "下载网站图标" (按网址找网站的图标, 存进 Data\Icons 并填进来)
+    ; The Icon field: text box + Browse + "Download site icon" (finds the site's icon from the URL, stores it in Data\Icons and fills it in)
     static _IconField() {
         field := ItemEditor.Field("Icon", "Prefs.Col.Icon", "file", false, "", I18n.T("Web.Field.Icon"))
         field.Button := {Label: I18n.T("Web.IconDownload"), OnClick: (controls, g) => WebSearchProvider._DownloadClicked(controls, g)}
@@ -291,7 +340,7 @@ class WebSearchProvider {
         return Map("Id", "", "Keyword", "", "Title", "", "Url", "https://", "Icon", "")
     }
 
-    ; 搜索结果里 F3 / 右键 "编辑": 修改对应的搜索引擎
+    ; F3 / right-click "Edit" in the results: edit that search engine
     static EditItem(item) {
         engine := item.Source
         if !IsObject(engine)

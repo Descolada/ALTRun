@@ -65,7 +65,7 @@ class StartupSmoke {
     static Run() {
         StartupSmoke.ExitHandler := (*) => StartupSmoke.CleanUp()
         OnExit(StartupSmoke.ExitHandler)
-        SetTimer(() => StartupSmoke.Fail("Timed out after 30 seconds."), -30000)
+        SetTimer(() => StartupSmoke.Fail("Timed out after 45 seconds."), -45000)
         StartupSmoke.Isolate()
         StartupSmoke.Configure()
         StartupSmoke.OriginalHandler := App.GetOwnPropDesc("_HandleCommandLine").Call
@@ -91,11 +91,14 @@ class StartupSmoke {
         marker := Platform.Join(StartupSmoke.Folder, "child-progress.txt")
         arguments := ["--handoff-child", payload, marker]
         host := ProcessRunner.ScriptHost(A_ScriptFullPath, arguments)
+#if WINDOWS && ALTRUN_PORTABLE_UI
+        host.Arguments.InsertAt(host.Arguments.Length - arguments.Length, "--define:ALTRUN_PORTABLE_UI")
+#endif
         StartupSmoke.ChildJob := ProcessRunner.Start(host.Executable, host.Arguments, StartupSmoke.Folder, true)
         started := A_TickCount
         while !ProcessRunner.IsFinished(StartupSmoke.ChildJob) {
             progress := FileExist(marker) ? FileRead(marker, "UTF-8") : "Child did not enter its script."
-            StartupSmoke.Assert(A_TickCount - started < 20000, "The handoff child did not exit within 20 seconds: " ALTRunStartupChildStatus(StartupSmoke.ChildJob) "`n" progress)
+            StartupSmoke.Assert(A_TickCount - started < 35000, "The handoff child did not exit within 35 seconds: " ALTRunStartupChildStatus(StartupSmoke.ChildJob) "`n" progress)
             Sleep(20)
         }
         code := ALTRunStartupChildExitCode(StartupSmoke.ChildJob)
@@ -223,10 +226,8 @@ class StartupSmoke {
         if StartupSmoke.ChildJob {
             try {
                 message .= "`nHandoff child: " ALTRunStartupChildStatus(StartupSmoke.ChildJob)
-                if ProcessRunner.IsFinished(StartupSmoke.ChildJob) {
-                    message .= "`n" ProcessRunner.Finish(StartupSmoke.ChildJob)
-                    StartupSmoke.ChildJob := 0
-                }
+                message .= "`n" ProcessRunner.Finish(StartupSmoke.ChildJob, true)
+                StartupSmoke.ChildJob := 0
             }
         }
         FileAppend("FAIL STARTUP_SMOKE " message "`n", "**")

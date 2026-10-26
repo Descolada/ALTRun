@@ -1,49 +1,68 @@
 ;===============================================================================
-; ThemeManager.ahk - 搜索窗口的配色和尺寸 (AutoHotkey v2)
+; ThemeManager.ahk - colors and sizes of the search window (AutoHotkey v2)
 ;-------------------------------------------------------------------------------
-; 主题从哪里来:
-;   Light                     写在代码里 (Defaults), 所有主题都在它的基础上修改;
-;                             主题文件全部丢失时也能正常显示
-;   Resources\Themes\*.json   内置主题 (参照 Alfred 自带的几套), 随程序发布, 升级时整体替换:
-;                             Dark / DarkCompact / LightCompact / Classic / Midnight / MidnightCompact / Frost / Graphite / Ocean /
-;                             Paper / DarkModern / LightModern / Monokai / OneDark / TokyoNight / Dracula / CatppuccinMocha /
-;                             GruvboxDark / SolarizedLight (常见编辑器配色)
-;   Themes\*.json             用户自己的主题, 升级不动; 和内置主题同名时用户的优先
-;   System                    跟随 Windows 的浅色 / 深色设置 (Light 或 Dark), 系统切换时自动更新
+; Where themes come from:
+;   Light                     written in the code (Defaults); every theme changes it;
+;                             shows fine even if all theme files are lost
+;   Resources\Themes\*.json   built-in themes (modeled on the ones that come with Alfred), shipped with the program and replaced on upgrades:
+;                             Dark / Classic / Midnight / Frost / Graphite / Ocean / Paper / DarkModern / LightModern /
+;                             Monokai / OneDark / TokyoNight / Dracula / CatppuccinMocha / GruvboxDark / SolarizedLight (common editor color schemes)
+;   Themes\*.json             the user's own themes, untouched by upgrades; the user's wins over a built-in theme of the same name
+;   System                    follows the Windows light / dark setting (Light or Dark), updated when the system switches
+; Popup menus (tray, ☰, the results' context menu, Quick Switch's folder menu) follow the theme's darkness, see ApplyMenuMode
+; Density (Appearance.Density): font sizes, padding, row height and icons of any theme scale by DensityScale (see Scaled):
+;   Comfortable = the theme's own size; Normal (the default for new installs) = the former Dark Compact; Compact = one step smaller
+; The former built-in themes DarkCompact / LightCompact / MidnightCompact are gone: when the settings still name them (or a user theme's "Base"
+; does), they mean Dark / Light / Midnight + Normal, see LegacyCompact
 ;
-; 主题文件只写要改的键; "Base" 指定从哪个主题开始 (默认 Light), 例如 Themes\MyBlue.json:
+; A theme file only lists the keys it changes; "Base" says which theme it starts from (default Light), e.g. Themes\MyBlue.json:
 ;   { "Base": "Dark", "SelectedBackground": "1D4ED8", "Opacity": 240 }
-; 用户主题和内置主题同名并且 "Base" 写自己 (例如 Themes\Dark.json 里 "Base": "Dark"),
-; 表示在内置的那一套上修改。偏好设置 -> 外观 -> "复制为自定义主题" 会生成一份完整的文件。
+; A user theme with the name of a built-in one whose "Base" is itself (e.g. "Base": "Dark" in Themes\Dark.json)
+; changes the built-in one. Preferences -> Appearance -> "Copy as custom theme" writes a complete file.
 ;
-; 可用的键 (颜色一律 "RRGGBB"; 字号单位 pt; 尺寸是 96 DPI 下的像素, 会按 DPI 缩放):
+; Available keys (colors always "RRGGBB"; font sizes in pt; sizes in pixels at 96 DPI, scaled with the DPI):
 ;   FontName  InputFontSize  TitleFontSize  SubtitleFontSize  ShortcutFontSize
 ;   Padding  RowHeight  IconSize
 ;   Background  Border  InputText  Separator  Title  Subtitle  Shortcut
 ;   SelectedBackground  SelectedTitle  SelectedSubtitle  SelectedShortcut
-;   Highlight  SelectedHighlight   搜索结果标题里和输入匹配的字的颜色 (普通行 / 选中行)
-;   SelectedRadius   选中行的圆角半径, 0 = 整行直角选中条
-;   Opacity          窗口不透明度 1~255, 255 = 不透明
+;   Highlight  SelectedHighlight   color of the characters in result titles that match the input (normal row / selected row)
+;   SelectedRadius   corner radius of the selected row, 0 = a square bar across the row
+;   Opacity          window opacity 1~255, 255 = opaque
 ;
-; 用法:
+; Usage:
 ;   ThemeManager.Load("Dark")
+;   ThemeManager.Load("Dark", "Compact") compact
 ;   ThemeManager.Get("Background")       -> "1E1F22"
-;   ThemeManager.FontName()              -> 实际使用的字体
-;   ThemeManager.Names()                 -> System, Light, 内置主题, 用户主题
-;   ThemeManager.Resolve("Ocean")        -> 完整的键值 Map (找不到返回 "")
+;   ThemeManager.FontName()              -> the font actually used
+;   ThemeManager.Names()                 -> System, Light, built-in themes, user themes
+;   ThemeManager.Resolve("Ocean")        -> the complete Map of keys ("" if not found)
 ;===============================================================================
 
 class ThemeManager {
     static Current  := Map()
-    static Name     := "Light"                      ; 设置里选的主题
-    static Resolved := "Light"                      ; 实际使用的主题 (System -> Light / Dark)
+    static Name     := "Light"                      ; the theme chosen in the settings
+    static Resolved := "Light"                      ; the theme actually used (System -> Light / Dark)
     static BuiltinDir := Platform.Join(A_ScriptDir, "Resources", "Themes")
-    static UserDir    := Platform.Join(AppSettings.Portable ? A_ScriptDir : AppSettings.UserDir, "Themes")
-    static BuiltinOrder := ["Dark", "DarkCompact", "LightCompact", "Classic", "Midnight", "MidnightCompact", "Frost", "Graphite", "Ocean", "Paper"
-                          , "DarkModern", "LightModern", "Monokai", "OneDark", "TokyoNight", "Dracula", "CatppuccinMocha", "GruvboxDark", "SolarizedLight"]   ; 列表里的顺序
+    static UserDir    := AppSettings.ThemesDir
+    static BuiltinOrder := ["Dark", "Classic", "Midnight", "Frost", "Graphite", "Ocean", "Paper", "Lavender", "Rose", "Forest", "Sunset", "HighContrast"
+                          , "DarkModern", "LightModern", "Monokai", "OneDark", "TokyoNight", "Dracula", "CatppuccinMocha", "GruvboxDark", "SolarizedLight"]   ; order in the list
+    static Densities := ["Comfortable", "Normal", "Compact"]
+    static Density := "Comfortable"                 ; the density actually used
+    ; The factor sizes are multiplied by per density (Comfortable = 1). Light's sizes (20 / 13 / 9.5 / 9 / 14 / 54 / 32) at Normal are exactly the former Dark Compact
+    ; (17 / 11.5 / 9 / 8.5 / 12 / 48 / 28); at Compact they are 15 / 10.5 / 8.5 / 8 / 10 / 42 / 24
+    static DensityScale := Map(
+        "Normal" , Map("InputFontSize", 0.85, "TitleFontSize", 0.885, "SubtitleFontSize", 0.95, "ShortcutFontSize", 0.95
+                     , "Padding", 0.86, "RowHeight", 0.89, "IconSize", 0.875),
+        "Compact", Map("InputFontSize", 0.75, "TitleFontSize", 0.808, "SubtitleFontSize", 0.895, "ShortcutFontSize", 0.889
+                     , "Padding", 0.714, "RowHeight", 0.778, "IconSize", 0.75))
+    static LegacyNames := Map("DarkCompact", "Dark", "LightCompact", "Light", "MidnightCompact", "Midnight")
     static _listening := false
 
-    static Load(themeName) {
+    static Load(themeName, density := "Comfortable") {
+        if !ThemeManager.DensityScale.Has(density)
+            density := "Comfortable"                                        ; Comfortable, or an unknown value
+        if ((base := ThemeManager.LegacyCompact(themeName)) != "")         ; the former compact themes: at least Normal (Compact stays Compact)
+            themeName := base, density := (density = "Comfortable") ? "Normal" : density
         ThemeManager.Name := themeName
         if (themeName = "System") {
             themeName := ThemeManager.SystemUsesDark() ? "Dark" : "Light"
@@ -55,8 +74,52 @@ class ThemeManager {
             themeName := "Light"
             theme := ThemeManager.Defaults()
         }
-        ThemeManager.Current := theme
+        ThemeManager.Current := ThemeManager.Scaled(theme, density)
+        ThemeManager.Density := ThemeManager.DensityScale.Has(density) ? density : "Comfortable"
         ThemeManager.Resolved := themeName
+        ThemeManager.ApplyMenuMode(ThemeManager.IsDark())
+    }
+
+    ; Whether the current theme is dark (by the search window's background color)
+    static IsDark() => ThemeManager.IsDarkColor(ThemeManager.Get("Background"))
+
+    ; Whether a color like "1E1E1E" is dark (luminance below half)
+    static IsDarkColor(hex) {
+        if !RegExMatch(hex, "i)^[0-9a-f]{6}$")
+            return false
+        value := Integer("0x" hex)
+        return (((value >> 16) & 0xFF) * 299 + ((value >> 8) & 0xFF) * 587 + (value & 0xFF) * 114) / 1000 < 128
+    }
+
+    ; Dark or light popup menus for the whole program: uxtheme's SetPreferredAppMode (ordinal 135; 2 = dark, 3 = light), then FlushMenuThemes (136)
+    ; to refresh. Both are undocumented but used by Explorer, Notepad++ and others; they exist since Windows 10 1903 (18362), and ordinal 135 in 1809 is
+    ; another function, so the version decides and older systems keep light menus. Only the system's own dark menus are possible, not the theme's colors. Returns whether it was set
+    static MenuMode := 0                                                    ; what was set: 0 = nothing yet, 2 = dark, 3 = light
+    static ApplyMenuMode(dark) {
+        if !Platform.IsWindows
+            return false
+        mode := dark ? 2 : 3
+        if (mode = ThemeManager.MenuMode || !ThemeManager.SupportsMenuMode())
+            return false
+        try {
+            module := DllCall("GetModuleHandle", "Str", "uxtheme", "Ptr") || DllCall("LoadLibrary", "Str", "uxtheme", "Ptr")
+            setMode := DllCall("GetProcAddress", "Ptr", module, "Ptr", 135, "Ptr")
+            flush := DllCall("GetProcAddress", "Ptr", module, "Ptr", 136, "Ptr")
+            if (!setMode || !flush)
+                return false
+            DllCall(setMode, "Int", mode)
+            DllCall(flush)
+            ThemeManager.MenuMode := mode
+            return true
+        } catch as e {
+            Logger.Error("ThemeManager: cannot set menu mode - " e.Message)
+        }
+        return false
+    }
+
+    static SupportsMenuMode(version := A_OSVersion) {
+        parts := StrSplit(version, ".")
+        return parts.Length >= 3 && parts[1] >= 10 && IsInteger(parts[3]) && parts[3] >= 18362
     }
 
     static Get(key) {
@@ -67,7 +130,7 @@ class ThemeManager {
         return ThemeManager.FontFrom(ThemeManager.Get("FontName"))
     }
 
-    ; 主题的 FontName -> 实际字体: "auto" (或空) 按界面语言选
+    ; The theme's FontName -> the actual font: "auto" (or empty) chooses by UI language
     static FontFrom(name) {
         if (name = "" || name = "auto")
             name := I18n.Font
@@ -76,11 +139,35 @@ class ThemeManager {
         return Font.UiDefault.Name
     }
 
-    ; 主题名 -> 完整的键值 Map: 从 Light 开始, 沿 "Base" 逐层叠加。builtinOnly = 只找内置主题
+    ; The theme's sizes scaled by DensityScale of density (a new Map; Comfortable returns it as it is): font sizes to 0.5 pt, padding and row height rounded, icons to even numbers
+    static Scaled(theme, density) {
+        if !ThemeManager.DensityScale.Has(density)
+            return theme
+        scaled := theme.Clone()
+        for key, factor in ThemeManager.DensityScale[density] {
+            if !(scaled.Has(key) && IsNumber(scaled[key]))
+                continue
+            value := scaled[key] * factor
+            value := InStr(key, "FontSize") ? Round(value * 2) / 2 : (key = "IconSize") ? Round(value / 2) * 2 : Round(value)
+            scaled[key] := (value = Round(value)) ? Round(value) : value    ; 17.0 -> 17 (as written in theme files)
+        }
+        return scaled
+    }
+
+    ; A former built-in compact theme (DarkCompact etc.) -> the matching theme name ("Dark"); "" if it isn't one, or the user has a theme file of that name
+    static LegacyCompact(themeName) {
+        if !ThemeManager.LegacyNames.Has(themeName) || ThemeManager.FileFor(themeName) != ""
+            return ""
+        return ThemeManager.LegacyNames[themeName]
+    }
+
+    ; Theme name -> the complete Map of keys: start from Light and layer each "Base". builtinOnly = built-in themes only
     static Resolve(themeName, builtinOnly := false, depth := 0) {
         if (themeName = "Light" && !FileExist(Platform.Join(ThemeManager.UserDir, "Light.json")) || depth > 8)
             return ThemeManager.Defaults()
         themeFile := ThemeManager.FileFor(themeName, builtinOnly)
+        if (themeFile = "" && ThemeManager.LegacyNames.Has(themeName))      ; a former compact theme (a user theme's "Base" still names it)
+            return ThemeManager.Scaled(ThemeManager.Resolve(ThemeManager.LegacyNames[themeName], false, depth + 1), "Normal")
         if (themeFile = "")
             return (themeName = "Light") ? ThemeManager.Defaults() : ""
         try {
@@ -94,7 +181,7 @@ class ThemeManager {
         baseName := data.Has("Base") ? data["Base"] : "Light"
         if (baseName = "" || baseName = "System")
             baseName := "Light"
-        ; "Base" 是自己: 用户同名主题在内置那一套上修改
+        ; "Base" is itself: a user theme of the same name changes the built-in one
         theme := (baseName = themeName) ? ThemeManager.Resolve(baseName, true, depth + 1) : ThemeManager.Resolve(baseName, false, depth + 1)
         if !IsObject(theme)
             theme := ThemeManager.Defaults()
@@ -104,7 +191,7 @@ class ThemeManager {
         return theme
     }
 
-    ; 用户主题优先, 其次内置主题; 都没有返回 ""
+    ; user themes first, then built-in themes; "" if neither
     static FileFor(themeName, builtinOnly := false) {
         folders := builtinOnly ? [ThemeManager.BuiltinDir] : [ThemeManager.UserDir, ThemeManager.BuiltinDir]
         for folder in folders
@@ -117,7 +204,7 @@ class ThemeManager {
         return (themeName = "System" || themeName = "Light" || FileExist(Platform.Join(ThemeManager.BuiltinDir, themeName ".json")) != "")
     }
 
-    ; System, Light, 内置主题 (按 BuiltinOrder, 其余按文件名), 用户主题
+    ; System, Light, built-in themes (in BuiltinOrder, the rest by file name), user themes
     static Names() {
         names := ["System", "Light"]
         for themeName in ThemeManager.BuiltinOrder
@@ -133,7 +220,7 @@ class ThemeManager {
         return names
     }
 
-    ; Windows 设置 -> 个性化 -> 颜色 -> "选择默认应用模式"
+    ; Windows Settings -> Personalization -> Colors -> "Choose your default app mode"
     static SystemUsesDark() {
 #if WINDOWS
         try return !RegRead("HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme")
@@ -141,7 +228,7 @@ class ThemeManager {
         return false
     }
 
-    ; 系统切换浅色 / 深色时 Windows 广播 WM_SETTINGCHANGE ("ImmersiveColorSet"), 重新载入换主题
+    ; When the system switches between light and dark, Windows broadcasts WM_SETTINGCHANGE ("ImmersiveColorSet"): reload to change the theme
     static _WatchSystemTheme() {
         if (!Platform.IsWindows || ThemeManager._listening)
             return
@@ -154,7 +241,7 @@ class ThemeManager {
             return
         wanted := ThemeManager.SystemUsesDark() ? "Dark" : "Light"
         if (wanted != ThemeManager.Resolved)
-            SetTimer(() => App.Reload(), -500)                              ; 等系统切换完成, 也避免在消息回调里退出
+            SetTimer(() => App.Reload(), -500)                              ; wait until the system has switched, and don't exit inside a message callback
     }
 
     static _Contains(list, value) {
@@ -164,7 +251,7 @@ class ThemeManager {
         return false
     }
 
-    ; Light: 完整的一套键, 其它主题只写和它不同的键
+    ; Light: the complete set of keys; other themes only list the keys that differ from it
     static Defaults() {
         return Map(
             "FontName"          , "auto",

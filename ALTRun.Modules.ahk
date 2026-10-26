@@ -1,16 +1,21 @@
 #Import Ks { Clr, A_OSType, A_DirSeparator, Clipboard, Image, Http, Crypt, Font }
 #Include Lib/Platform.ahk
 #Include Lib/ProcessRunner.ahk
+#Include Lib/DesktopIntegration.ahk
 ; --- Lib ---
 #Include Lib/JSON.ahk
 #Include Lib/Logger.ahk
 #Include Lib/Util.ahk
 #Include Lib/TextTools.ahk
+#Include Lib/DelimitedText.ahk
 #Include Lib/Kanji.ahk
 #Include Lib/Everything.ahk
 #Include Lib/Units.ahk
 #Include Lib/ClipboardData.ahk
 #Include Lib/Dialogs.ahk
+#Include Lib/HttpGet.ahk
+#Include Lib/FolderWatcher.ahk
+#Include Lib/WindowsRecent.ahk
 
 ; --- Src/Core ---
 #Include Src/Core/App.ahk
@@ -20,6 +25,7 @@
 #Include Src/Core/SearchQuery.ahk
 #Include Src/Core/ResultItem.ahk
 #Include Src/Core/FuzzyMatcher.ahk
+#Include Src/Core/BackgroundWork.ahk
 #Include Src/Core/Knowledge.ahk
 #Include Src/Core/Usage.ahk
 #Include Src/Core/ActionCatalog.ahk
@@ -33,11 +39,19 @@
 #Include Src/UI/NavIcons.ahk
 #Include Src/UI/IconCache.ahk
 #Include Src/UI/SearchWindow.ahk
+#Include Src/UI/ResultRows.ahk
+#Include Src/UI/SearchStatusBar.ahk
+#Include Src/UI/TypeAhead.ahk
+#Include Src/UI/SearchInputLanguage.ahk
+#Include Src/UI/SearchKeys.ahk
+#Include Src/UI/WindowFade.ahk
 #Include Src/UI/LargeType.ahk
 #Include Src/UI/Hud.ahk
 #Include Src/UI/ItemEditor.ahk
 #Include Src/UI/HotkeyBox.ahk
 #Include Src/UI/PreferencesWindow.ahk
+#Include Src/UI/PrefsForm.ahk
+#Include Src/UI/PrefsPages.ahk
 #else
 #Include Src/UI/Portable/ThemePreview.ahk
 #Include Src/UI/Portable/NavIcons.ahk
@@ -49,6 +63,7 @@
 #Include Src/UI/Portable/HotkeyBox.ahk
 #Include Src/UI/Portable/PreferencesWindow.ahk
 #endif
+#Include Src/UI/ResultActions.ahk
 
 ; --- Src/Providers ---
 #Include Src/Providers/ClipboardProvider.ahk
@@ -71,6 +86,7 @@
 #Include Src/Extensions/QuickSwitch.ahk
 #Include Src/Extensions/AutoDate.ahk
 #Include Src/Extensions/CapsLockSwitch.ahk
+#Include Src/Extensions/CapsLockHelper.ahk
 #Include Src/Extensions/TendonProfile.ahk
 #Include Src/Extensions/PTToolsWindow.ahk
 #Include Src/Extensions/UpdateChecker.ahk

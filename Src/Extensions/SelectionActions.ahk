@@ -1,19 +1,19 @@
 ;===============================================================================
-; SelectionActions.ahk - 选中内容直接调出操作 (Alfred 的 Universal Actions) (AutoHotkey v2)
+; SelectionActions.ahk - actions for the selection directly (Alfred's Universal Actions) (AutoHotkey v2)
 ;-------------------------------------------------------------------------------
-; 在任何程序里选中文字、文件或网址, 按热键 (General.SelectionHotkey, 默认 Ctrl+Alt+\),
-; ALTRun 直接打开这些内容的操作面板:
-;   文字   复制、用各个搜索引擎搜索、存为文字片段、大字显示、计算 (是算式时)、
-;          替换为转换后的文字 (大写 / 小写 / 排序 / 简繁转换...), 替换会粘贴回原来的程序
-;   网址   打开、复制
-;   文件   打开、以管理员身份运行、在文件管理器中显示、复制路径、在此处打开终端、属性、添加到自定义命令
-;   多个文件  复制路径、全部添加到自定义命令
-; 取选中内容的方法和 Alfred 一样: 模拟复制 (Ctrl+C), 读完马上还原剪贴板, 也不记进剪贴板历史。
-; 命令行 / 终端窗口里 Ctrl+C 会中断正在运行的程序, 这些窗口改用 Ctrl+Insert (复制)。
+; Select text, files or a URL in any program and press the hotkey (General.SelectionHotkey, default Ctrl+Alt+\):
+; ALTRun opens the actions panel for them directly:
+;   text       copy, search with each search engine, save as a snippet, Large Type, calculate (for an expression),
+;              replace with converted text (upper / lower case / sort / Simplified-Traditional...); replacing pastes back into the program
+;   URL        open, copy
+;   file       open, run as administrator, reveal in the file manager, copy path, open terminal here, properties, add as custom command
+;   files      copy paths, add all as custom commands
+; The selection is read as in Alfred: simulate copying (Ctrl+C), restore the clipboard right after reading, and keep it out of the clipboard history.
+; In command-line / terminal windows Ctrl+C would interrupt the running program, so those use Ctrl+Insert (copy).
 ;
-; 用法:
-;   SelectionActions.Run()                    热键调用
-;   SelectionActions.ItemFor({Text: "..."})   -> ResultItem (操作面板的来源), 也可以是 {Files: [...]}
+; Usage:
+;   SelectionActions.Run()                    called by the hotkey
+;   SelectionActions.ItemFor({Text: "..."})   -> ResultItem (the source of the actions panel); can also be {Files: [...]}
 ;===============================================================================
 
 class SelectionActions {
@@ -27,14 +27,14 @@ class SelectionActions {
         SearchWindow.ShowActions(SelectionActions.ItemFor(selection))
     }
 
-    ; 前台窗口里选中的内容: {Files: [路径...]} / {Text: "..."}; 什么都没选中时 ""
+    ; The selection in the foreground window: {Files: [paths...]} / {Text: "..."}; "" when nothing is selected
     static Capture() {
         className := ""
         try className := WinGetClass("A")
         if (Platform.IsLinux && className = "")
             return ""
-        Win.WaitModifiersUp()                                               ; 热键的 Ctrl+Alt 还按着时, Ctrl+C 会变成 Ctrl+Alt+C
-        ClipboardProvider.PauseRecording(2000)
+        Win.WaitModifiersUp()                                               ; with the hotkey's Ctrl+Alt still held, Ctrl+C would become Ctrl+Alt+C
+        ClipboardData.Borrow(2000)
         saved := ClipboardAll()
         result := ""
         try {
@@ -103,32 +103,39 @@ class SelectionActions {
         if (StrLen(preview) > 80)
             preview := SubStr(preview, 1, 80) "..."
         actions := []
-        ; 算式: 直接给出结果
+        ; an expression: give the result directly
         expression := StrReplace(Trim(text), ",")
         if (Calc.Looks(expression) && IsNumber(value := Calc.Eval(expression))) {
             result := CalculatorProvider.Format(value)
             actions.Push(ResultItem("= " result, I18n.T("Action.CopyResult"), {Icon: IconCache.Own("Calculator", "res:imageres.dll,-182"), OnRun: (*) => ActionCatalog.CopyText(result)}))
         }
-        ; 用每个搜索引擎搜索
-        query := Trim(RegExReplace(text, "\s+", " "))
-        if ProviderRegistry.IsEnabled(WebSearchProvider) {
-            for engine in AppSettings.Feature("WebSearch")["Engines"] {
-                searchUrl := WebSearchProvider.Fill(engine["Url"], query)
-                actions.Push(ResultItem(I18n.T("Action.SearchWith", engine["Title"]), "", {Icon: WebSearchProvider.IconFor(engine), OnRun: SelectionActions._Opener(searchUrl)}))
-            }
-        }
+        for action in SelectionActions.SearchActions(text)
+            actions.Push(action)
         actions.Push(ResultItem(I18n.T("Action.SaveSnippet"), "", {Icon: IconCache.Own("Snippet", "res:imageres.dll,-102")
             , OnRun: (*) => SnippetProvider.Edit("", Map("Name", SubStr(preview, 1, 40), "Text", text))}))
-        ; 替换为转换后的文字 (粘贴回原来的程序, 选中的文字还在那里)
+        ; replace with converted text (pasted back into the program, where the text is still selected)
         for transform in SelectionActions.Transforms() {
-            name := RegExReplace(I18n.T(transform[1]), "^[^:：]+[:：]\s*")    ; 去掉 "剪贴板: " 前缀
+            name := RegExReplace(I18n.T(transform[1]), "^[^:：]+[:：]\s*")    ; drop the "Clipboard: " prefix
             actions.Push(ResultItem(I18n.T("Action.ReplaceWith", name), "", {Icon: "res:imageres.dll,-5314", OnRun: SelectionActions._Replacer(text, transform[2])}))
         }
         return ResultItem(preview, I18n.T("Selection.Text", StrLen(text)), {Kind: "text", Arg: text, Icon: "res:imageres.dll,-5314"
             , LargeText: text, Provider: "Selection", Actions: actions})
     }
 
-    ; [I18n 键, 转换函数]; 和系统命令里的剪贴板文字转换是同一套
+    ; Actions that search text with each search engine (shared by the selection and the clipboard history); none with web search off
+    static SearchActions(text) {
+        actions := []
+        query := WebSearchProvider.Term(text)
+        if (query = "" || !ProviderRegistry.IsEnabled(WebSearchProvider))
+            return actions
+        for engine in AppSettings.Feature("WebSearch")["Engines"] {
+            searchUrl := WebSearchProvider.Fill(engine["Url"], query)
+            actions.Push(ResultItem(I18n.T("Action.SearchWith", engine["Title"]), "", {Icon: WebSearchProvider.IconFor(engine), OnRun: SelectionActions._Opener(searchUrl)}))
+        }
+        return actions
+    }
+
+    ; [I18n key, conversion function]; the same set as the clipboard text conversions in the system commands
     static Transforms() {
         return [["Text.Upper", (s) => TextTools.Upper(s)], ["Text.Lower", (s) => TextTools.Lower(s)], ["Text.Title", (s) => TextTools.TitleCase(s)]
               , ["Text.SortAsc", (s) => TextTools.SortLines(s)], ["Text.SortDesc", (s) => TextTools.SortLines(s, true)]
@@ -137,7 +144,7 @@ class SelectionActions {
               , ["Text.ToSimplified", (s) => Kanji.ToSimplified(s)], ["Text.UrlEncode", (s) => Url.Encode(s)]]
     }
 
-    ; 每个动作各自记住自己的参数 (单独的方法生成闭包)
+    ; each action keeps its own arguments (a separate method makes the closure)
     static _Opener(target) {
         return (*) => ActionCatalog.OpenUrl(target)
     }

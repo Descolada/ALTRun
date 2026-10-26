@@ -1,33 +1,114 @@
 ;===============================================================================
-; ApplicationProvider.ahk - 应用程序搜索 (AutoHotkey v2)
+; ApplicationProvider.ahk - application search (AutoHotkey v2)
 ;-------------------------------------------------------------------------------
-; 索引开始菜单、桌面 (Features.Applications.Folders) 里的快捷方式和程序, 以及
-; 应用商店应用 (PowerShell Get-StartApps, 在后台运行不卡界面)。中文名称同时
-; 按拼音首字母匹配 ("wx" -> 微信)。
+; Indexes the shortcuts and programs in the Start menu and on the desktop (Features.Applications.Folders), and
+; Store apps (PowerShell Get-StartApps, run in the background without blocking the UI). Chinese names also
+; match by pinyin initials ("wx" -> 微信).
 ;
-; 索引缓存在 Data\AppIndex.json, 启动时直接读缓存, 超过 RefreshMinutes 分钟
-; 才在后台重新扫描; 托盘菜单 "重建索引" 或系统命令 "Rebuild ALTRun Index"
-; 会立即重建。
+; The index is cached in Data\AppIndex.json and read directly at start-up. It is rescanned in the background in batches (at most about 15 ms per timer tick, so hotkeys aren't blocked),
+; without notifications; when the search window is open (or opening) during a scan it pauses (if an old index is available) and goes on after it closes, so it never competes with showing or searching:
+;   - watching Folders (with subfolders, Windows folder change notifications): files added, deleted or renamed rebuild after WatchQuietMs of quiet
+;     (installers create several shortcuts in a row), at least WatchMinGapMs apart. Newly installed software can be found a few seconds later
+;   - as a fallback (what watching misses: software installed while ALTRun wasn't running, folders that didn't exist or couldn't be watched at start-up): it also rebuilds when the cache is older than
+;     FallbackMinutes, checked at start-up and every minute after (formerly the RefreshMinutes setting, no longer read)
+;   - the cache write after a background rebuild waits until keyboard and mouse have been idle a while (writing the JSON is done in one go), and is done at once on exit if still pending
+; Store apps (PowerShell) are scanned in the background at most once an hour.
+; The tray menu's "Rebuild index" or the system command "Rebuild ALTRun Index" rebuilds immediately (in one go, showing the result).
 ;
-; 不需要的应用: 在搜索结果里按 Ctrl+Del (或右键 "删除") 把它加入 Hidden 列表, 不再显示,
-; 重建索引后也不会回来 (不会卸载程序, 也不改 AppIndex.json)。偏好设置 -> 应用搜索里
-; 删掉 Hidden 的一行即可恢复。
+; Unwanted applications: Ctrl+Del (or right-click "Delete") in the results adds them to the Hidden list so they no longer show,
+; not even after rebuilding (nothing is uninstalled and AppIndex.json isn't changed). Deleting the line from Hidden in
+; Preferences -> Applications brings it back.
 ;
-; 设置 (ALTRun.json -> Features.Applications):
-;   Folders / FileTypes / Depth / Exclude / Hidden / StoreApps / MatchPinyin / RefreshMinutes
+; Settings (ALTRun.json -> Features.Applications):
+;   Folders / FileTypes / Depth / Exclude / Hidden / StoreApps / MatchPinyin
 ;===============================================================================
 
 class ApplicationProvider {
     static Id        := "Applications"
     static IndexFile := Platform.Join(AppSettings.DataDir, "AppIndex.json")
     static Apps      := []            ; [Map("Title", "Target", "Detail", "Search")...]
-    static _storePid := 0, _storeFile := "", _storeTimer := ""
+    static _storePid := 0, _storeFile := "", _storeTimer := "", _storeScanned := 0
+    static _job := "", _scanTimer := "", _refreshTimer := ""         ; background rebuild: see _NewJob
+    static WatchQuietMs := 5000, WatchMinGapMs := 60000, SaveIdleMs := 2000, FallbackMinutes := 60
+    static _watcher := "", _watchTimer := "", _watchTypes := ""
+    static _changedAt := 0, _lastBackground := 0, _savePending := false, _saveTimer := ""
     static _entries := [], _keys := [], _keysFor := "", _lastNeedle := "", _lastMatches := []
 
     static Init() {
         if !ApplicationProvider._LoadCache() || ApplicationProvider._CacheExpired()
-            SetTimer(() => ApplicationProvider.Rebuild(), -3000)            ; 先让窗口出来, 再在后台扫描
-        SetTimer(() => ApplicationProvider._SearchKeys(), -500)             ; 预先算好搜索 Key, 第一次搜索不用等
+            SetTimer(() => ApplicationProvider.RefreshInBackground(), -3000)   ; show the window first, then scan in the background
+        SetTimer(() => ApplicationProvider._SearchKeys(), -500)             ; compute the search keys in advance, so the first search doesn't wait
+        ApplicationProvider._refreshTimer := Logger.Watch("app refresh check", () => ApplicationProvider._CheckRefresh())
+        SetTimer(ApplicationProvider._refreshTimer, 60000)
+        ApplicationProvider.StartWatching()
+    }
+
+    ;---------------------------------------------------------------------------
+    ; Watch the indexed folders (FolderWatcher, a quick look every 2 s without waiting): rebuild in the background when application-type files (FileTypes) or folders
+    ; are added, deleted, renamed or modified. The file names are known, so other files changing on the desktop don't count; neither do ALTRun's own folders
+    ; (on the desktop, cache and log writes would trigger it all the time)
+    ;---------------------------------------------------------------------------
+    static StartWatching() {
+        ApplicationProvider.StopWatching()
+        options := AppSettings.Feature("Applications")
+        folders := []
+        for folder in options["Folders"]
+            folders.Push(Path.Resolve(folder))
+        ApplicationProvider._watcher := FolderWatcher(folders)
+        ApplicationProvider._watchTypes := ApplicationProvider._TypesPattern(options)
+        if (ApplicationProvider._watchTimer = "")
+            ApplicationProvider._watchTimer := Logger.Watch("app folder watch", () => ApplicationProvider._PollWatches())
+        if ApplicationProvider._watcher.Count
+            SetTimer(ApplicationProvider._watchTimer, 2000)
+        if (ApplicationProvider._watcher.Count < folders.Length)
+            Logger.Debug("ApplicationProvider: watching " ApplicationProvider._watcher.Count " of " folders.Length " folders")
+    }
+
+    static StopWatching() {
+        if (ApplicationProvider._watchTimer != "")
+            SetTimer(ApplicationProvider._watchTimer, 0)
+        if IsObject(ApplicationProvider._watcher)
+            ApplicationProvider._watcher.Stop()
+        ApplicationProvider._watcher := "", ApplicationProvider._changedAt := 0
+    }
+
+    ; Every 2 s: read the changes that have arrived (no waiting) and note the time of application-related ones; rebuild after WatchQuietMs of quiet, at least WatchMinGapMs after the last background rebuild
+    static _PollWatches() {
+        if !IsObject(ApplicationProvider._watcher)
+            return
+        for fullPath in ApplicationProvider._watcher.Poll()
+            if (fullPath = "*" || ApplicationProvider.IsWatchedChange(fullPath, ApplicationProvider._watchTypes)) {
+                ApplicationProvider._changedAt := A_TickCount
+                break
+            }
+        if (!ApplicationProvider._changedAt || A_TickCount - ApplicationProvider._changedAt < ApplicationProvider.WatchQuietMs)
+            return
+        if (ApplicationProvider._lastBackground && A_TickCount - ApplicationProvider._lastBackground < ApplicationProvider.WatchMinGapMs)
+            return
+        if IsObject(ApplicationProvider._job)
+            return
+        ApplicationProvider._changedAt := 0
+        Logger.Debug("ApplicationProvider: folders changed, rebuilding")
+        ApplicationProvider.RefreshInBackground()
+    }
+
+    ; Pure function: whether a change at this path needs a rebuild -- an application-type file (types: _TypesPattern), or one without an extension (probably a folder,
+    ; e.g. a program's folder in the Start menu deleted / renamed); not inside ALTRun's own folders
+    static IsWatchedChange(fullPath, types, ownDir := A_ScriptDir) {
+        if (ownDir != "" && InStr(fullPath, RTrim(ownDir, "\/") (Platform.IsWindows ? "\" : "/"), Platform.IsWindows ? false : true) = 1)
+            return false
+        if DirExist(fullPath)
+            return true
+        SplitPath(fullPath, &name, , &ext)
+        return (ext = "" || RegExMatch(name, types)) ? true : false
+    }
+
+    ; FileTypes ("*.lnk"...) -> one regex ("i)^(?:.*\.lnk|...)$")
+    static _TypesPattern(options) {
+        types := ""
+        for pattern in options["FileTypes"]
+            types .= (types = "" ? "" : "|") StrReplace(StrReplace(RegExReplace(pattern, "[\\.^$+()\[\]{}|]", "\$0"), "*", ".*"), "?", ".")
+        return "i)^(?:" types ")$"
     }
 
     static Search(query) {
@@ -37,8 +118,8 @@ class ApplicationProvider {
         keys := ApplicationProvider._SearchKeys()
         apps := ApplicationProvider._entries
 
-        ; 继续输入 (新输入以上一次的输入开头) 时只需要在上一次匹配到的里面找。
-        ; 3 个字母以下时 "按顺序出现的字母" 规则不生效, 那时的结果不能用来缩小范围。
+        ; When typing on (the new input starts with the previous one), only the previous matches need searching.
+        ; Below 3 letters the "letters in order" rule doesn't apply, so those results can't be used to narrow down.
         candidates := ""
         if (StrLen(ApplicationProvider._lastNeedle) >= 3 && InStr(needle, ApplicationProvider._lastNeedle) = 1)
             candidates := ApplicationProvider._lastMatches
@@ -76,7 +157,7 @@ class ApplicationProvider {
         return results
     }
 
-    ; 启动后空闲时先算好搜索 Key, 第一次输入不用等
+    ; compute the search keys while idle after start-up, so the first input doesn't wait
     static Warm() {
         ApplicationProvider._SearchKeys()
     }
@@ -103,8 +184,17 @@ class ApplicationProvider {
         return Platform.Open(target)
     }
 
-    ; 没有隐藏的应用 (_entries) 和它们的搜索 Key (名称 + 拼音首字母);
-    ; Apps 换成新数组或隐藏列表变化时重新计算
+    ; For the icon prefetch after start-up (see ProviderRegistry.IconSpecs): the applications that aren't hidden
+    static IconItems() {
+        ApplicationProvider._SearchKeys()
+        items := []
+        for entry in ApplicationProvider._entries
+            items.Push({Icon: entry.Has("Icon") && entry["Icon"] != "" ? entry["Icon"] : entry["Target"], Uid: ApplicationProvider._Uid(entry["Target"])})
+        return items
+    }
+
+    ; The applications that aren't hidden (_entries) and their search keys (name + pinyin initials);
+    ; recomputed when Apps becomes a new array or the hidden list changes
     static _SearchKeys() {
         version := Platform.ObjectId(ApplicationProvider.Apps) "|" ApplicationProvider._HiddenSignature()
         if (ApplicationProvider._keysFor = version)
@@ -125,7 +215,7 @@ class ApplicationProvider {
     }
 
     ;---------------------------------------------------------------------------
-    ; 隐藏不需要的应用 (搜索结果里 Ctrl+Del / 右键 "删除")
+    ; Hides an unwanted application (Ctrl+Del / right-click "Delete" in the results)
     ;---------------------------------------------------------------------------
     static DeleteItem(item) {
         return ApplicationProvider.Hide(item.Arg)
@@ -143,7 +233,7 @@ class ApplicationProvider {
         return AppSettings.Save()
     }
 
-    ; 隐藏列表 -> Map (不区分大小写), 列表变化 (换了数组或条数变了) 时重新生成
+    ; The hidden list -> Map (case-insensitive), rebuilt when the list changes (a new array or a different count)
     static _HiddenTargets() {
         static cache := "", cacheFor := ""
         signature := ApplicationProvider._HiddenSignature()
@@ -162,54 +252,111 @@ class ApplicationProvider {
         return Platform.ObjectId(hidden) ":" hidden.Length
     }
 
-    ; 重新扫描, 返回找到的应用数量
+    ; Rescans now (in one go) and returns the number of applications found. Stops a background rebuild first
     static Rebuild() {
-        options := AppSettings.Feature("Applications")
-        found := Map()
-        found.CaseSense := Platform.IsWindows ? "Off" : "On"
-        for folder in options["Folders"]
-            ApplicationProvider._ScanFolder(Path.Resolve(folder), options, found)
-
-        apps := []
-        for key, entry in found
-            if (entry is Map)
-                apps.Push(entry)
-        if Platform.IsWindows
-            ApplicationProvider._MergeStoreApps(apps)
-        ApplicationProvider.Apps := apps
-        ApplicationProvider._SaveCache()
-        if Platform.IsWindows && options["StoreApps"]
-            ApplicationProvider._StartStoreScan()
-        Logger.Debug("ApplicationProvider: indexed " apps.Length " apps")
-        return apps.Length
+        ApplicationProvider._StopJob()
+        job := ApplicationProvider._NewJob()
+        ApplicationProvider._Step(job, 0)
+        return ApplicationProvider._Finish(job, true)
     }
 
-    static _ScanFolder(folder, options, found) {
-        trimmed := RTrim(folder, "\/")
-        folder := trimmed != "" ? trimmed : folder
-        if (folder = "" || !DirExist(folder))
+    ; Rescans in the background in batches and replaces Apps when done (searches meanwhile use the old one); no second scan while one runs
+    static RefreshInBackground() {
+        if IsObject(ApplicationProvider._job)
             return
-        if Platform.IsMac {
-            ApplicationProvider._ScanBundles(folder, options, found)
+        ApplicationProvider._lastBackground := A_TickCount
+        ApplicationProvider._job := ApplicationProvider._NewJob()
+        if (ApplicationProvider._scanTimer = "")
+            ApplicationProvider._scanTimer := Logger.Watch("app scan", () => ApplicationProvider._ScanSome())
+        SetTimer(ApplicationProvider._scanTimer, 10)
+    }
+
+    ; Every minute: rebuild in the background when the cache is out of date (a fallback; normally the folder watch does it). Waits for the next time while the search window is open. No need to wait for keyboard and mouse idle:
+    ; scanning is split up and stops as soon as the window opens, and the final cache write also waits for idle (see _Finish)
+    static _CheckRefresh() {
+        if (IsObject(ApplicationProvider._job) || ApplicationProvider._savePending || !BackgroundWork.CanRun())
+            return                                                          ; _savePending: just rebuilt, the cache file isn't written yet (its time is old)
+        if ApplicationProvider._CacheExpired()
+            ApplicationProvider.RefreshInBackground()
+    }
+
+    static _ScanSome() {
+        job := ApplicationProvider._job
+        if !IsObject(job)
+            return SetTimer(ApplicationProvider._scanTimer, 0)
+        if (ApplicationProvider.Apps.Length && !BackgroundWork.CanRun())    ; pause while the search window is open or opening, go on
+            return                                                          ; when it closes (the cache write too); with no index yet (first run), scan anyway
+        if !ApplicationProvider._Step(job, 15)
             return
+        SetTimer(ApplicationProvider._scanTimer, 0)
+        ApplicationProvider._job := ""
+        ApplicationProvider._Finish(job, false)
+        SetTimer(() => ApplicationProvider._SearchKeys(), -500)             ; compute the new search keys in advance too
+    }
+
+    static _StopJob() {
+        if (ApplicationProvider._scanTimer != "")
+            SetTimer(ApplicationProvider._scanTimer, 0)
+        ApplicationProvider._job := ""
+    }
+
+    ; One scan: the Folders one by one in order, each with a stack of folders to scan instead of recursion, so it can stop any time and go on later.
+    ; Each folder is listed once and the file names compared with FileTypes (wildcards) here (listing once per type is several times slower)
+    static _NewJob() {
+        options := AppSettings.Feature("Applications")
+        if Platform.IsLinux
+            ProcessRunner.ClearDesktopIcons()
+        roots := []
+        for folder in options["Folders"] {
+            folder := Path.Resolve(folder)
+            trimmed := RTrim(folder, "\/")
+            folder := trimmed != "" ? trimmed : folder
+            if (folder != "" && DirExist(folder))
+                roots.Push(folder)
         }
-        exclude := options["Exclude"]
-        maxDepth := options["Depth"]
-        for pattern in options["FileTypes"] {
-            Loop Files, Platform.Join(folder, pattern), "R" {
-                relative := SubStr(A_LoopFileFullPath, StrLen(folder) + (RegExMatch(folder, "[/\\]$") ? 1 : 2))
-                depth := StrLen(relative) - StrLen(RegExReplace(relative, "[/\\]"))
-                if (depth > maxDepth)
+        found := Map()
+        found.CaseSense := Platform.IsWindows ? "Off" : "On"
+        return {Options: options, Roots: roots, Next: 1, Stack: [], Types: ApplicationProvider._TypesPattern(options), Found: found}
+    }
+
+    ; Scans a part: stops after budget ms (0 = all at once); true when done
+    static _Step(job, budget) {
+        options := job.Options, exclude := options["Exclude"], maxDepth := options["Depth"]
+        start := A_TickCount
+        loop {
+            if !job.Stack.Length {
+                if (job.Next > job.Roots.Length)
+                    return true
+                root := job.Roots[job.Next++]
+                job.Stack := [[root, 0, root]]
+            }
+            entry := job.Stack.Pop()
+            folder := entry[1], depth := entry[2], root := entry[3]
+            subfolders := []
+            Loop Files, Platform.Join(folder, "*"), "FD" {
+                if InStr(A_LoopFileAttrib, "D") {
+                    if Platform.IsMac && RegExMatch(A_LoopFileName, "\.app$") {
+                        title := SubStr(A_LoopFileName, 1, -4)
+                        if (exclude = "" || !RegExMatch(title, exclude))
+                            job.Found[A_LoopFileFullPath] := ApplicationProvider._Entry(title, A_LoopFileFullPath, "", options)
+                        continue
+                    }
+                    if (depth < maxDepth)
+                        subfolders.Push(A_LoopFileFullPath)
+                    continue
+                }
+                if !RegExMatch(A_LoopFileName, job.Types)
                     continue
                 SplitPath(A_LoopFileName, , , &ext, &title)
                 if (exclude != "" && RegExMatch(title, exclude))
                     continue
                 detail := ""
                 if Platform.IsLinux && ext = "desktop" {
+                    relative := SubStr(A_LoopFileFullPath, StrLen(root) + (RegExMatch(root, "[/\\]$") ? 1 : 2))
                     key := "desktop:" StrReplace(relative, "/", "-")
-                    if found.Has(key)
+                    if job.Found.Has(key)
                         continue
-                    found[key] := ""                                      ; A hidden user entry masks the system entry with the same desktop ID.
+                    job.Found[key] := ""                                   ; A hidden user entry masks the system entry with the same desktop ID.
                     try desktop := ProcessRunner.DesktopEntry(A_LoopFileFullPath)
                     catch as e {
                         Logger.Debug("ApplicationProvider: " A_LoopFileFullPath " - " e.Message)
@@ -220,14 +367,18 @@ class ApplicationProvider {
                     if desktop["TryExec"] != "" && Platform.FindExecutable(desktop["TryExec"]) = ""
                         continue
                     entry := ApplicationProvider._Entry(desktop["Name"], A_LoopFileFullPath, desktop["Exec"], options)
-                    entry["Icon"] := desktop["Icon"]
-                    found[key] := entry
+                    entry["Icon"] := ProcessRunner.DesktopIcon(desktop["Icon"])
+                    extra := desktop["GenericName"] " " desktop["Keywords"]
+                    entry["Search"] := Trim(entry["Search"] " " extra " " (options["MatchPinyin"] ? Pinyin.Initials(extra) : ""))
+                    job.Found[key] := entry
                     continue
                 }
 #if WINDOWS
                 if (ext = "lnk") {                                          ; 同一个程序在多个位置有快捷方式时只保留一个
                     linkTarget := "", linkArgs := ""
                     try FileGetShortcut(A_LoopFileFullPath, &linkTarget, , &linkArgs)
+                    catch                                                   ; a broken shortcut: on an error both variables are left unassigned
+                        linkTarget := "", linkArgs := ""
                     detail := Trim(linkTarget " " linkArgs)
                     key := StrLower(title "|" detail)
                 } else {
@@ -236,24 +387,34 @@ class ApplicationProvider {
 #else
                 key := title "|" A_LoopFileFullPath
 #endif
-                if !found.Has(key)
-                    found[key] := ApplicationProvider._Entry(title, A_LoopFileFullPath, detail, options)
+                if !job.Found.Has(key)
+                    job.Found[key] := ApplicationProvider._Entry(title, A_LoopFileFullPath, detail, options)
             }
+            Loop subfolders.Length                                          ; pushed in reverse, so the earlier ones are scanned first
+                job.Stack.Push([subfolders[subfolders.Length - A_Index + 1], depth + 1, root])
+            if (budget && A_TickCount - start >= budget)
+                return false
         }
     }
 
-    static _ScanBundles(folder, options, found, depth := 0) {
-        if (depth > options["Depth"])
-            return
-        Loop Files, Platform.Join(folder, "*"), "D" {
-            if RegExMatch(A_LoopFileName, "\.app$") {
-                title := SubStr(A_LoopFileName, 1, -4)
-                if options["Exclude"] != "" && RegExMatch(title, options["Exclude"])
-                    continue
-                found[A_LoopFileFullPath] := ApplicationProvider._Entry(title, A_LoopFileFullPath, "", options)
-            } else
-                ApplicationProvider._ScanBundles(A_LoopFileFullPath, options, found, depth + 1)
-        }
+    ; Done: swap in the new Apps and write the cache; Store apps are always scanned for a manual rebuild, at most once an hour in the background
+    static _Finish(job, manual) {
+        apps := []
+        for key, entry in job.Found
+            if (entry is Map)
+                apps.Push(entry)
+        if Platform.IsWindows
+            ApplicationProvider._MergeStoreApps(apps)                       ; keep the previous Store apps until the background update finishes
+        ApplicationProvider.Apps := apps
+        if manual
+            ApplicationProvider._SaveCache()
+        else
+            ApplicationProvider._SaveWhenIdle()
+        if (Platform.IsWindows && job.Options["StoreApps"] && (manual || !ApplicationProvider._storeScanned
+                || A_TickCount - ApplicationProvider._storeScanned >= 3600000))
+            ApplicationProvider._StartStoreScan()
+        Logger.Debug("ApplicationProvider: indexed " apps.Length " apps" (manual ? "" : " (background)"))
+        return apps.Length
     }
 
     static _Entry(title, target, detail, options) {
@@ -262,7 +423,7 @@ class ApplicationProvider {
     }
 
     ;---------------------------------------------------------------------------
-    ; Microsoft Store apps (后台 PowerShell)
+    ; Microsoft Store apps (PowerShell in the background)
     ;---------------------------------------------------------------------------
     static _StartStoreScan() {
 #if WINDOWS
@@ -277,10 +438,10 @@ class ApplicationProvider {
             Logger.Error("ApplicationProvider: cannot start Get-StartApps - " e.Message)
             return
         }
-        ApplicationProvider._storePid := pid
+        ApplicationProvider._storePid := pid, ApplicationProvider._storeScanned := A_TickCount
         ApplicationProvider._storeFile := outFile
         if (ApplicationProvider._storeTimer = "")
-            ApplicationProvider._storeTimer := () => ApplicationProvider._CheckStoreScan()
+            ApplicationProvider._storeTimer := Logger.Watch("store apps scan", () => ApplicationProvider._CheckStoreScan())
         SetTimer(ApplicationProvider._storeTimer, 500)
 #endif
     }
@@ -296,11 +457,11 @@ class ApplicationProvider {
         options := AppSettings.Feature("Applications")
         storeApps := []
         for line in StrSplit(FileRead(csvFile, "UTF-8"), "`n", "`r") {
-            if (A_Index = 1 || !RegExMatch(line, '^"(.*)","(.*)"$', &m))    ; 第一行是表头
+            if (A_Index = 1 || !RegExMatch(line, '^"(.*)","(.*)"$', &m))    ; the first line is the header
                 continue
             if (m[1] = "" || m[2] = "" || RegExMatch(m[1], options["Exclude"]))
                 continue
-            if !InStr(m[2], "!")                                            ; 只要 "包名!应用" 形式的真正商店应用, 普通程序已在开始菜单里索引过
+            if !InStr(m[2], "!")                                            ; only real Store apps of the form "package!app"; normal programs are already indexed from the Start menu
                 continue
             storeApps.Push(ApplicationProvider._Entry(m[1], "shell:AppsFolder\" m[2], "", options))
         }
@@ -341,12 +502,45 @@ class ApplicationProvider {
         }
     }
 
+    ; Whether the cache is older than FallbackMinutes; no cache file counts as out of date
+    ; Makes the cache count as out of date (the scan scope changed in Preferences): the next start-up still reads it first, then rescans in the background.
+    ; A pending cache write is dropped too (scanned with the old scope; writing it on exit would make its time current again)
+    static ExpireCache() {
+        ApplicationProvider._savePending := false
+        try FileSetTime("20000101000000", ApplicationProvider.IndexFile, "M")
+    }
+
     static _CacheExpired() {
-        minutes := AppSettings.Feature("Applications")["RefreshMinutes"]
-        return DateDiff(A_Now, FileGetTime(ApplicationProvider.IndexFile, "M"), "Minutes") >= minutes
+        minutes := ApplicationProvider.FallbackMinutes
+        try return DateDiff(A_Now, FileGetTime(ApplicationProvider.IndexFile, "M"), "Minutes") >= minutes
+        return true
+    }
+
+    ; The cache write after a background rebuild: waits until keyboard and mouse have been idle for SaveIdleMs and the search window is closed, so it never stalls while the user works
+    static _SaveWhenIdle() {
+        ApplicationProvider._savePending := true
+        if (ApplicationProvider._saveTimer = "")
+            ApplicationProvider._saveTimer := Logger.Watch("app index save", () => ApplicationProvider._SaveIfIdle())
+        SetTimer(ApplicationProvider._saveTimer, 1000)
+    }
+
+    static _SaveIfIdle() {
+        if ((Platform.IsWindows && A_TimeIdlePhysical < ApplicationProvider.SaveIdleMs) || !BackgroundWork.CanRun())
+            return
+        SetTimer(ApplicationProvider._saveTimer, 0)
+        ApplicationProvider.SavePending()
+    }
+
+    ; write a pending cache now (on exit)
+    static SavePending() {
+        if !ApplicationProvider._savePending
+            return
+        ApplicationProvider._savePending := false
+        ApplicationProvider._SaveCache()
     }
 
     static _SaveCache() {
+        ApplicationProvider._savePending := false
         try {
             JSON.WriteFile(ApplicationProvider.IndexFile, Map("Platform", A_OSType, "Apps", ApplicationProvider.Apps))
         } catch as e {

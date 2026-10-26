@@ -1,50 +1,47 @@
 ;===============================================================================
-; SnippetExpander.ahk - 片段关键字自动展开 (AutoHotkey v2)
+; SnippetExpander.ahk - auto expansion of snippet keywords (AutoHotkey v2)
 ;-------------------------------------------------------------------------------
-; 和 Alfred 的 Snippet 自动展开一样: 在任何程序里输入 "前缀 + 关键字" (默认前缀
-; ";", 例如 ";sig"), 输入的文字自动删掉并换成片段正文 (占位符在展开时替换)。
-; 前缀是为了避免平时正常打字时误触发。不展开的地方: ALTRun 自己的搜索窗口、ExpandExclude 里的窗口
-; (例如远程桌面、密码管理器), 以及 Windows 的密码输入框。
+; Like Alfred's snippet auto expansion: typing "prefix + keyword" in any program (default prefix
+; ";", e.g. ";sig") deletes the typed text and replaces it with the snippet's text (placeholders are replaced on expansion).
+; The prefix avoids triggering by accident in normal typing. Not expanded in: ALTRun's own search window, the windows in ExpandExclude
+; (e.g. remote desktop, password managers), and Windows password boxes.
 ;
-; 设置:
-;   Features.Snippets.AutoExpand      1 = 开启
-;   Features.Snippets.ExpandPrefix    关键字前面要加的前缀, 默认 ";"
-;   Features.Snippets.ExpandExclude   不展开的窗口, 逗号分隔 (ahk_exe xxx.exe / ahk_class xxx / 标题)
-;   Snippets[n].AutoExpand            单个片段设为 0 可以不自动展开 (仍可搜索)
-; 修改片段后调用 Refresh(), 新的关键字随即生效。
+; Settings:
+;   Features.Snippets.AutoExpand      1 = on
+;   Features.Snippets.ExpandPrefix    the prefix before the keyword, default ";"
+;   Features.Snippets.ExpandExclude   windows to leave alone, an array (ahk_exe xxx.exe / ahk_class xxx / part of the title)
+;   Snippets[n].AutoExpand            0 turns auto expansion off for one snippet (it can still be searched)
+;   Snippets[n].Keyword               can hold several, separated by commas ("sig, signature"), each expands
+; Call Refresh() after snippets change, and the new keywords work right away.
 ;
-; 用法:
-;   SnippetExpander.Init()            启动时, 在 SearchWindow.Create() 之后调用
+; Usage:
+;   SnippetExpander.Init()            at start-up, after SearchWindow.Create()
 ;===============================================================================
 
 class SnippetExpander {
     static Count := 0
-    static MaxAbbreviation := 40                                            ; AHK 热字串缩写 (前缀 + 关键字) 最长 40 个字符
-    static _texts := Map()                                                  ; 已注册的缩写 -> 正文
-    static _exclude := []                                                   ; 不展开的窗口
-    static _criterion := (*) => SnippetExpander.ShouldExpand()              ; 所有热字串共用同一个条件 (关闭时要用同一个)
+    static MaxAbbreviation := 40                                            ; AHK hotstring abbreviations (prefix + keyword) are at most 40 characters
+    static _texts := Map()                                                  ; registered abbreviation -> text
+    static _exclude := []                                                   ; windows where nothing expands
+    static _criterion := (*) => SnippetExpander.ShouldExpand()              ; all hotstrings share one condition (turning them off needs the same one)
 
     static Init() {
         SnippetExpander.Refresh()
     }
 
-    ; 按当前的 AppSettings.Snippets 重新注册: 删掉的缩写关闭, 新的 / 改过的缩写注册。
-    ; 在搜索结果里编辑 / 删除片段后调用, 不需要重新载入 ALTRun。
+    ; Registers again from the current AppSettings.Snippets: removed abbreviations are turned off, new / changed ones registered.
+    ; Called after a snippet is edited / deleted in the results, without reloading ALTRun.
     static Refresh() {
         options := AppSettings.Feature("Snippets")
         wanted := Map()
-        wanted.CaseSense := "Off"                                           ; 和热字串一样不区分大小写
+        wanted.CaseSense := "Off"                                           ; case-insensitive like the hotstrings
         if (options["Enabled"] && options["AutoExpand"]) {
             for snippet in AppSettings.Snippets {
-                abbreviation := SnippetExpander.Abbreviation(snippet, options["ExpandPrefix"])
-                if (abbreviation != "")
+                for abbreviation in SnippetExpander.Abbreviations(snippet, options["ExpandPrefix"])
                     wanted[abbreviation] := snippet["Text"]
             }
         }
-        SnippetExpander._exclude := []
-        Loop Parse, options.Has("ExpandExclude") ? options["ExpandExclude"] : "", ","
-            if ((window := Trim(A_LoopField)) != "")
-                SnippetExpander._exclude.Push(window)
+        SnippetExpander._exclude := options["ExpandExclude"]
         HotIf(SnippetExpander._criterion)
         for abbreviation in SnippetExpander._texts
             if !wanted.Has(abbreviation)
@@ -53,7 +50,7 @@ class SnippetExpander {
         registered.CaseSense := "Off"
         for abbreviation, text in wanted {
             try {
-                ; * = 不需要结束符, ? = 前面紧挨着其它字符也触发; 输入的缩写由 AHK 自动删除
+                ; * = no end character needed, ? = also fires right after other characters; AHK deletes the typed abbreviation itself
                 Hotstring(":*?:" abbreviation, SnippetExpander._Expander(abbreviation), "On")
                 registered[abbreviation] := text
             } catch as e {
@@ -66,7 +63,7 @@ class SnippetExpander {
         Logger.Debug("SnippetExpander: " SnippetExpander.Count " snippets")
     }
 
-    ; 输入了缩写时才判断 (不是每个按键): 搜索窗口、ExpandExclude 里的窗口、密码框 (ES_PASSWORD) 里不展开
+    ; Checked only when an abbreviation was typed (not on every key): nothing expands in the search window, the windows in ExpandExclude or password boxes (ES_PASSWORD)
     static ShouldExpand() {
         if (IsObject(SearchWindow.Gui) && WinActive("ahk_id " SearchWindow.Gui.Hwnd))
             return false
@@ -81,21 +78,24 @@ class SnippetExpander {
         return true
     }
 
-    ; 片段 -> 触发的缩写 ("" = 不自动展开)
-    static Abbreviation(snippet, prefix) {
+    ; Snippet -> the abbreviations that trigger it, one per keyword ([] = no auto expansion)
+    static Abbreviations(snippet, prefix) {
+        abbreviations := []
         if !(snippet is Map) || !snippet.Has("Keyword") || !snippet.Has("Text")
-            return ""
+            return abbreviations
         if (snippet.Has("AutoExpand") && !snippet["AutoExpand"])
-            return ""
-        keyword := Trim(snippet["Keyword"])
-        if (keyword = "" || RegExMatch(keyword, "[\s``]"))                  ; 空白和反引号不能用在缩写里
-            return ""
-        if (StrLen(prefix keyword) > SnippetExpander.MaxAbbreviation)       ; 太长的注册不了, 只能搜索 (编辑时已经提示过)
-            return ""
-        return prefix keyword
+            return abbreviations
+        for keyword in SearchQuery.Keywords(snippet["Keyword"]) {
+            if RegExMatch(keyword, "[\s``]")                                ; white space and backticks can't be used in abbreviations
+                continue
+            if (StrLen(prefix keyword) > SnippetExpander.MaxAbbreviation)   ; too long to register: search only (the editor already warned)
+                continue
+            abbreviations.Push(prefix keyword)
+        }
+        return abbreviations
     }
 
-    ; 单独一个方法生成闭包; 正文在触发时再查, 这样修改片段后不必重新生成
+    ; a separate method makes the closure; the text is looked up when it fires, so nothing needs regenerating after a snippet changes
     static _Expander(abbreviation) {
         return (*) => (Usage.Count("SnippetExpand"), SnippetProvider.Paste(SnippetExpander._texts[abbreviation], false))
     }

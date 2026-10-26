@@ -1,22 +1,45 @@
 ;===============================================================================
-; Util.ahk - 通用工具函数
+; Util.ahk - general helper functions
 ;-------------------------------------------------------------------------------
-; 按用途分成几个小类, 都是纯函数, 不依赖 Config/UI, 方便单独测试。
+; Grouped into small classes by purpose; all pure functions that don't depend on the settings or the UI, so they are easy to test on their own.
 ;===============================================================================
 
 
 ;===============================================================================
-; Path - 路径解析
+; Path - path resolution
 ;-------------------------------------------------------------------------------
-; 支持三种写法:
-;   A_ScriptDir\x.txt   AHK 内置变量开头
-;   %Temp%\x.txt        环境变量风格占位符
-;   notepad.exe         裸可执行名 (自动在 PATH 里找)
+; Three forms are supported:
+;   A_ScriptDir\x.txt   starts with an AHK built-in variable
+;   %Temp%\x.txt        environment-variable placeholder
+;   notepad.exe         bare program name (looked up in PATH)
 ;===============================================================================
 class Path {
     static _varCache := ""
 
-    ; 延迟初始化内置变量表 (启动时就取会拖慢冷启动)
+    ; A UNC path, or a drive letter Windows calls a network drive (GetDriveType doesn't touch the network; each letter
+    ; is asked once)
+    static IsRemote(target) {
+        if !Platform.IsWindows
+            return false
+        static drives := Map()
+        if (SubStr(target, 1, 2) = "\\")
+            return true
+        if !RegExMatch(target, "^([A-Za-z]):", &match)
+            return false
+        letter := StrUpper(match[1])
+        if !drives.Has(letter)
+            drives[letter] := DllCall("GetDriveTypeW", "WStr", letter ":\", "UInt") = 4      ; DRIVE_REMOTE
+        return drives[letter]
+    }
+
+    ; Only what looks like an extension counts (1-6 letters / digits, at least one letter: pdf, docx, dwg, sldprt):
+    ; folders with a dot in the name such as "26. Main Street (A)", "10.Project-2310", "Design.2019" have none
+    static Extension(path) {
+        SplitPath(RTrim(path, "\/"), , , &ext)
+        return (RegExMatch(ext, "^(?=.*[A-Za-z])[A-Za-z0-9]{1,6}$") || ext = "appref-ms") ? ext : ""
+    }
+
+    ; The built-in variable table is filled on first use (reading it at start-up slows a cold start)
     static _Vars() {
         if (Path._varCache != "")
             return Path._varCache
@@ -39,7 +62,7 @@ class Path {
         return Path._varCache
     }
 
-    ; 用户写的文件夹路径 -> 完整路径: 展开 %环境变量% 和 A_ 开头的内置变量, 相对路径从 base 算起
+    ; A folder path the user wrote -> full path: expands %environment variables% and built-in variables starting with A_; relative paths start from base
     static Full(raw, base := A_ScriptDir) {
         raw := Trim(raw)
         if (InStr(raw, "A_") = 1)
@@ -47,7 +70,7 @@ class Path {
         return Platform.FullPath(raw, base)
     }
 
-    ; 能不能在这个文件夹里写文件 (试着建一个临时文件再删掉)
+    ; Whether files can be written in this folder (tries to create a temporary file and delete it)
     static IsWritable(dir) {
         probe := Platform.Join(dir, "ALTRun.write-test." Platform.NewUuid() ".tmp")
         try {
@@ -58,9 +81,9 @@ class Path {
         return false
     }
 
-    ; 转成绝对路径。keepRunAs=true 时保留 "*RunAs " 前缀(用于实际执行)
-    ; 注意: 参数不能叫 path —— AHK 变量名不区分大小写, "path" 和类名 "Path" 会
-    ; 被当成同一个标识符, 方法体内所有 Path.xxx 的自引用都会失效(改成读参数)。
+    ; To an absolute path. keepRunAs = true keeps the "*RunAs " prefix (used when actually running it)
+    ; Note: the parameter must not be called path. AHK names are case-insensitive, so "path" and the class name "Path"
+    ; are the same identifier, and every Path.xxx self-reference in the method body would read the parameter instead.
     static Resolve(raw, keepRunAs := false) {
         raw := Trim(raw)
         if (raw = "")
@@ -71,7 +94,7 @@ class Path {
 
         vars := Path._Vars()
 
-        ; 形如 "A_ScriptDir\sub\x.exe" —— 必须以 A_ 开头才算, 否则像 "Plot A_IGLS" 会被误判
+        ; Like "A_ScriptDir\sub\x.exe": it must start with A_, otherwise something like "Plot A_IGLS" would be mistaken for one
         if (InStr(raw, "A_") = 1) {
             if RegExMatch(raw, "^([^\\/]+)[\\/](.*)$", &parts) {
                 if (vars.Has(parts[1]))
@@ -81,7 +104,7 @@ class Path {
             }
         }
 
-        ; 环境变量占位符
+        ; environment-variable placeholder
         raw := StrReplace(raw, "%Temp%"    , A_Temp)
         raw := StrReplace(raw, "%OneDrive%", EnvGet("OneDrive"))
         raw := StrReplace(raw, "%AppData%" , A_AppData)
@@ -90,14 +113,13 @@ class Path {
         if !Platform.IsWindows
             raw := StrReplace(raw, "\", "/")
 
-        ; 裸文件名: 去 PATH 里搜, 没写扩展名时按 .exe 找 ("notepad" -> notepad.exe)
-        ; 先判断有没有 "\": 完整路径不访问磁盘 (网络驱动器断开时 FileExist 会卡住)
+        ; Only bare file names search PATH; checking full network paths can block while disconnected.
         if (!InStr(raw, "\") && !InStr(raw, "/") && (resolved := Platform.FindExecutable(raw)) != "")
             raw := resolved
         return raw
     }
 
-    ; 反向: 把常见目录换回占位符, 让配置文件跨机器可移植
+    ; The reverse: common folders back to placeholders, so the settings file works on other machines
     static Shorten(path) {
         path := StrReplace(path, A_Temp, "%Temp%")
         if (od := EnvGet("OneDrive"))
@@ -105,10 +127,10 @@ class Path {
         return path
     }
 
-    ; 只取文件名, 用于列表显示
-    ; 用这种文件的默认程序打开文本文件 (例如把 .log 设成用 Notepad4 打开), 打不开时用记事本。
-    ; 只用于默认动作就是查看的类型 (.log .txt): 脚本 (.ahk .bat) 的默认动作是运行, .json 常常没有关联。
-    ; runner 只在测试时传入 (代替 Run)
+    ; Just the file name, for lists
+    ; Opens a text file with the default program for its type (e.g. .log set to open with Notepad4), or Notepad if that fails.
+    ; Only for types whose default action is viewing (.log .txt): scripts (.ahk .bat) run by default, .json often has no association.
+    ; runner is passed only by tests (instead of Run)
     static OpenText(file, runner := "") {
         if (!Platform.IsWindows && !IsObject(runner))
             return Platform.Edit(file)
@@ -127,8 +149,8 @@ class Path {
 
 
 ;===============================================================================
-; Fonts - 字体描述串 <-> AHK SetFont 参数
-; 配置里存 "Microsoft YaHei, norm s10" 这种人类可读格式
+; Fonts - font description string <-> AHK SetFont options
+; The settings store a human-readable form such as "Microsoft YaHei, norm s10"
 ;===============================================================================
 class Fonts {
     static Spec(text, defName := "Microsoft YaHei", defOpt := "norm s10") {
@@ -138,7 +160,7 @@ class Fonts {
         return { name: name != "" ? name : defName, opt: opt != "" ? opt : defOpt }
     }
 
-    ; 调用系统字体对话框, 返回 {name, opt} 或 false
+    ; Shows the system font dialog; returns {name, opt} or false
     static Choose(initName := "", ownerHwnd := 0) {
         if !Platform.IsWindows
             return false
@@ -147,7 +169,7 @@ class Fonts {
         dpi := DllCall("GetDeviceCaps", "Ptr", dc, "UInt", 90, "Int")
         DllCall("ReleaseDC", "Ptr", 0, "Ptr", dc)
 
-        NumPut("UInt", Floor(10 * dpi / 72), lf)            ; 默认 10pt
+        NumPut("UInt", Floor(10 * dpi / 72), lf)            ; 10 pt by default
         NumPut("UInt", 400, lf, 16)
         StrPut(initName, lf.Ptr + 28, "UTF-16")
 
@@ -172,10 +194,10 @@ class Fonts {
 
 
 ;===============================================================================
-; Win - 窗口相关的小工具
+; Win - small window helpers
 ;===============================================================================
 class Win {
-    ; Win11 圆角
+    ; Windows 11 rounded corners
     static SetCorner(hwnd, rounded := true) {
         if !Platform.IsWindows
             return
@@ -184,7 +206,35 @@ class Win {
                     "Int*", rounded ? ROUND : SQUARE, "UInt", 4)
     }
 
-    ; 控件里一行文字的宽度 (像素, 用控件自己的字体)
+    ; Width of one line of text in a control (pixels, in the control's own font)
+    ; The real height of one ListView row (pixels): measured by adding a row for a moment (LVM_GETITEMRECT); fallback if that fails
+    static ListRowHeight(list, fallback) {
+        added := !list.GetCount() && list.Add()
+        rect := Buffer(16, 0)                                               ; left = LVIR_BOUNDS (0)
+        height := SendMessage(0x100E, 0, rect.Ptr, list.Hwnd) ? NumGet(rect, 12, "Int") - NumGet(rect, 4, "Int") : 0   ; LVM_GETITEMRECT
+        if added
+            list.Delete()
+        return (height > 0) ? height : fallback
+    }
+
+    ; The control font's {Ascent: baseline to top, Cap: height of a capital H} (pixels); both 0 if they can't be measured
+    static CapMetrics(hwnd) {
+        result := {Ascent: 0, Cap: 0}
+        hdc := DllCall("GetDC", "Ptr", hwnd, "Ptr")
+        font := SendMessage(0x31, 0, 0, hwnd)                               ; WM_GETFONT
+        old := DllCall("SelectObject", "Ptr", hdc, "Ptr", font, "Ptr")
+        tm := Buffer(60, 0)                                                 ; TEXTMETRICW
+        if DllCall("GetTextMetricsW", "Ptr", hdc, "Ptr", tm)
+            result.Ascent := NumGet(tm, 4, "Int")
+        gm := Buffer(20, 0), mat := Buffer(16, 0)                           ; GLYPHMETRICS, MAT2 (identity matrix)
+        NumPut("Short", 1, mat, 2), NumPut("Short", 1, mat, 14)
+        if (DllCall("GetGlyphOutlineW", "Ptr", hdc, "UInt", Ord("H"), "UInt", 0, "Ptr", gm, "UInt", 0, "Ptr", 0, "Ptr", mat, "UInt") != 0xFFFFFFFF)
+            result.Cap := NumGet(gm, 12, "Int")                             ; gmptGlyphOrigin.y: how far the top of the glyph is above the baseline
+        DllCall("SelectObject", "Ptr", hdc, "Ptr", old)
+        DllCall("ReleaseDC", "Ptr", hwnd, "Ptr", hdc)
+        return result
+    }
+
     static TextExtent(hwnd, text) {
         hdc := DllCall("GetDC", "Ptr", hwnd, "Ptr")
         font := SendMessage(0x31, 0, 0, hwnd)                               ; WM_GETFONT
@@ -196,7 +246,7 @@ class Win {
         return NumGet(size, 0, "Int")
     }
 
-    ; Win11 窗口边框颜色, color 为 "RRGGBB"
+    ; Windows 11 window border color, color as "RRGGBB"
     static SetBorderColor(hwnd, color) {
         if !Platform.IsWindows
             return
@@ -206,16 +256,16 @@ class Win {
                     "UInt*", bgr, "UInt", 4)
     }
 
-    ; "RRGGBB" / "#RRGGBB" -> GDI 用的 0x00BBGGRR
+    ; "RRGGBB" / "#RRGGBB" -> 0x00BBGGRR as GDI uses it
     static ColorToBgr(color) {
         color := LTrim(color, "#")
         rgb := Integer("0x" color)
         return ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF)
     }
 
-    ; 抗锯齿的实心圆角矩形 (选中行、主题缩略图): GDI 的 RoundRect 按整像素画弧, 圆角有台阶,
-    ; 这里用 GDI+ 的 AntiAlias 填充路径, 边缘和背景平滑过渡。right / bottom 不含 (和 FillRect 一样);
-    ; PixelOffsetModeHalf 让整数坐标落在像素边界上, 直边不会发虚。GDI+ 用不了时退回 RoundRect
+    ; An antialiased filled rounded rectangle (selected row, theme thumbnails): GDI's RoundRect draws arcs on whole pixels, so the
+    ; corners are jagged; GDI+ fills an antialiased path that blends into the background. right / bottom are exclusive (as in FillRect);
+    ; PixelOffsetModeHalf puts integer coordinates on pixel edges, so straight edges stay sharp. Falls back to RoundRect without GDI+
     static FillRoundRect(hdc, left, top, right, bottom, radius, bgr) {
         w := right - left, h := bottom - top
         if (w <= 0 || h <= 0)
@@ -245,19 +295,19 @@ class Win {
         DllCall("DeleteObject", "Ptr", brush)
     }
 
-    ; 按系统 DPI 缩放像素值 (窗口用 -DPIScale 创建, 自己控制缩放)
+    ; Scales a pixel value by the system DPI (windows are created with -DPIScale and scale themselves)
     static Scale(px) {
         return Round(px * A_ScreenDPI / 96)
     }
 
-    ; 鼠标所在显示器的工作区, 返回 {Left, Top, Right, Bottom}
+    ; Work area of the monitor under the mouse, as {Left, Top, Right, Bottom}
     static WorkAreaAtMouse() {
         CoordMode("Mouse", "Screen")
         MouseGetPos(&mouseX, &mouseY)
         return Win.WorkAreaAt(mouseX, mouseY)
     }
 
-    ; 包含屏幕坐标 (x, y) 的显示器的工作区; 不在任何显示器上时用主显示器
+    ; Work area of the monitor that contains screen point (x, y); the primary monitor if it is on none
     static WorkAreaAt(x, y) {
         Loop MonitorGetCount() {
             MonitorGet(A_Index, &left, &top, &right, &bottom)
@@ -267,7 +317,7 @@ class Win {
         return Win.WorkArea(MonitorGetPrimary())
     }
 
-    ; 窗口中心所在显示器的工作区; 窗口不存在时返回 ""
+    ; Work area of the monitor under the window's center; "" if the window doesn't exist
     static WorkAreaOfWindow(hwnd) {
         if !hwnd
             return ""
@@ -282,7 +332,7 @@ class Win {
         return {Left: left, Top: top, Right: right, Bottom: bottom}
     }
 
-    ; Win10/11 深色标题栏
+    ; Dark title bar on Windows 10/11
     static SetDarkTitleBar(hwnd, dark := true) {
         if !Platform.IsWindows
             return
@@ -291,14 +341,14 @@ class Win {
                     "Int*", dark ? 1 : 0, "UInt", 4)
     }
 
-    ; 切到英文输入法 (US 键盘布局)
+    ; Switch to an English input language (US keyboard layout)
     static SwitchToEnglishIME() {
         if !Platform.IsWindows
             return
         try DllCall("ActivateKeyboardLayout", "UInt", 0x04090409, "UInt", 0)
     }
 
-    ; 前台窗口切到下一个已安装的输入法 (和 Win+Space 一样); 返回切到的输入法 (HKL), 只有一个输入法时 0
+    ; Switches the foreground window to the next installed input language (like Win+Space); returns the new one (HKL), 0 with only one
     static NextInputLanguage() {
         if !Platform.IsWindows
             return
@@ -312,12 +362,24 @@ class Win {
         layouts := []
         Loop count
             layouts.Push(NumGet(buf, (A_Index - 1) * A_PtrSize, "Ptr"))
-        next := Win.NextLayout(layouts, Win.KeyboardLayout(hwnd))
-        try PostMessage(0x50, 0, next, , "ahk_id " hwnd)                   ; WM_INPUTLANGCHANGEREQUEST: 请前台窗口切换
+        current := Win.KeyboardLayout(hwnd)
+        next := Win.NextLayout(layouts, current)
+        ; When the foreground is ALTRun's own window (e.g. the search window), switch directly: 2026-10 report that CapsLock couldn't switch
+        ; to Chinese in the search window (with "switch to English when shown" on, the window had switched to English with
+        ; ActivateKeyboardLayout), and the message sent to our own window had no effect. Like restoring on hide (SearchInputLanguage.Restore), use ActivateKeyboardLayout
+        own := DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "Ptr", 0, "UInt") = DllCall("GetCurrentThreadId", "UInt")
+        if own {
+            try DllCall("ActivateKeyboardLayout", "Ptr", next, "UInt", 0)
+        } else {
+            try PostMessage(0x50, 0, next, , "ahk_id " hwnd)               ; WM_INPUTLANGCHANGEREQUEST: ask the foreground window to switch
+        }
+        if Logger.Enabled
+            Logger.Debug(Format("Input language: {:08X} -> {:08X} ({}), now {:08X}", current & 0xFFFFFFFF, next & 0xFFFFFFFF
+                , own ? "ALTRun window" : "posted", Win.KeyboardLayout(hwnd) & 0xFFFFFFFF))   ; While sending, now is still the old one (the other window switches a little later)
         return next
     }
 
-    ; layouts 里 current 的下一个 (最后一个之后回到第一个); current 不在里面时第一个
+    ; The one after current in layouts (after the last, the first again); the first if current isn't in it
     static NextLayout(layouts, current) {
         for index, layout in layouts
             if (layout = current)
@@ -325,36 +387,89 @@ class Win {
         return layouts.Length ? layouts[1] : 0
     }
 
-    ; 切换前台窗口里输入法的 中 / 英 模式 (和微软拼音里按 Shift 一样); 输入法关着时打开并切到中文。
-    ; 返回 true = 发出了切换 (前台窗口没有输入法时 false)
+    ; Toggles the Chinese / English mode of the input method in the foreground window (like Shift in Microsoft Pinyin). true = a toggle was sent (false when the window has no input method).
+    ; Chinese = open the IME + add the native bit to the conversion mode; English = remove the native bit + close the IME. Both are set because input methods differ:
+    ; WeChat IME only reacts to open / close; changing only the conversion mode leaves its Chinese / English indicator as it is (log of #154, 2026-10).
+    ; After each toggle the reading and the side it went to are kept; if the next reading is unchanged, that is used (for IMEs whose reading doesn't follow), see ImeTarget
+    static _imeLast := Map()                                                ; window -> {Open, Conv: reading after the toggle, Chinese: switched to Chinese}
     static ToggleImeMode() {
         if !Platform.IsWindows
-            return
-        static WM_IME_CONTROL := 0x283, IMC_GETCONVERSIONMODE := 1, IMC_SETCONVERSIONMODE := 2, IMC_GETOPENSTATUS := 5, IMC_SETOPENSTATUS := 6
-        if !(hwnd := WinExist("A"))
             return false
-        info := Buffer(24 + 6 * A_PtrSize, 0)                                ; GUITHREADINFO: 找有焦点的控件
+        if !(hwnd := WinExist("A")) || !(imeWnd := Win.ImeWindow(hwnd))
+            return false
+        before := Win.ImeState(imeWnd)
+        open := before.Open, conv := before.Conv
+        last := Win._imeLast.Has(hwnd) ? Win._imeLast[hwnd] : ""
+        plan := Win.ImeTarget(open, conv, last)
+        Win.SetImeState(imeWnd, plan.Open, plan.Conv)
+        after := Win.ImeState(imeWnd)
+        after.Chinese := plan.Chinese
+        if (Win._imeLast.Count > 50)                                        ; only the windows used recently are kept
+            Win._imeLast := Map()
+        Win._imeLast[hwnd] := after
+        if Logger.Enabled
+            Logger.Debug(Format("IME mode: open {} conv 0x{:X}{} -> {} (set open {}, conv 0x{:X}), now open {} conv 0x{:X}"
+                , open, conv, plan.Remembered ? " (readings unchanged, using the last switch)" : "", plan.Chinese ? "Chinese" : "English"
+                , plan.Open, plan.Conv, after.Open, after.Conv))
+        return true
+    }
+
+    ; The IME window of the window's focused control (or the window itself), for WM_IME_CONTROL; 0 if not found
+    static ImeWindow(hwnd) {
+        if !Platform.IsWindows
+            return 0
+        info := Buffer(24 + 6 * A_PtrSize, 0)                                ; GUITHREADINFO: find the focused control
         NumPut("UInt", info.Size, info)
         threadId := DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "Ptr", 0, "UInt")
         focus := DllCall("GetGUIThreadInfo", "UInt", threadId, "Ptr", info) ? NumGet(info, 8 + A_PtrSize, "Ptr") : 0
-        if !(imeWnd := DllCall("imm32\ImmGetDefaultIMEWnd", "Ptr", focus ? focus : hwnd, "Ptr"))
-            return false
-        if !Ime(IMC_GETOPENSTATUS) {
-            Ime(IMC_SETOPENSTATUS, 1)
-            Ime(IMC_SETCONVERSIONMODE, Ime(IMC_GETCONVERSIONMODE) | 1)
-        } else {
-            Ime(IMC_SETCONVERSIONMODE, Ime(IMC_GETCONVERSIONMODE) ^ 1)      ; IME_CMODE_NATIVE: 中文 / 英文
-        }
-        return true
-
-        Ime(command, value := 0) {                                          ; 2 = SMTO_ABORTIFHUNG: 前台程序卡住时不跟着卡
-            result := 0
-            DllCall("SendMessageTimeoutW", "Ptr", imeWnd, "UInt", WM_IME_CONTROL, "Ptr", command, "Ptr", value, "UInt", 2, "UInt", 300, "Ptr*", &result)
-            return result
-        }
+        return DllCall("imm32\ImmGetDefaultIMEWnd", "Ptr", focus ? focus : hwnd, "Ptr")
     }
 
-    ; 窗口 (所在线程) 正在用的输入法 (HKL); hwnd = 0: 当前线程
+    ; The IME's current {Open: open status, Conv: conversion mode}
+    static ImeState(imeWnd) {
+        return {Open: Win._ImeControl(imeWnd, 5), Conv: Win._ImeControl(imeWnd, 1)}    ; IMC_GETOPENSTATUS, IMC_GETCONVERSIONMODE
+    }
+
+    ; Sets the IME's open status and conversion mode, in the order given by ImeSteps
+    static SetImeState(imeWnd, open, conv) {
+        for step in Win.ImeSteps(open, conv)
+            Win._ImeControl(imeWnd, step[1], step[2])
+    }
+
+    ; The [WM_IME_CONTROL command, value] pairs to send: when opening, open first and then set the mode (some IMEs reset the mode on open); when closing, set the mode first and then close
+    static ImeSteps(open, conv) {
+        static IMC_SETCONVERSIONMODE := 2, IMC_SETOPENSTATUS := 6
+        if open
+            return [[IMC_SETOPENSTATUS, 1], [IMC_SETCONVERSIONMODE, conv]]
+        return [[IMC_SETCONVERSIONMODE, conv], [IMC_SETOPENSTATUS, 0]]
+    }
+
+    ; The {Open, Conv} for English mode: remove the native bit (IME_CMODE_NATIVE = 1) and close the IME
+    static ImeEnglish(conv) {
+        return {Open: 0, Conv: conv & ~1}
+    }
+
+    static _ImeControl(imeWnd, command, value := 0) {                        ; 2 = SMTO_ABORTIFHUNG: don't hang along with a hung foreground program
+        if !Platform.IsWindows
+            return 0
+        result := 0
+        DllCall("SendMessageTimeoutW", "Ptr", imeWnd, "UInt", 0x283, "Ptr", command, "Ptr", value, "UInt", 2, "UInt", 300, "Ptr*", &result)   ; WM_IME_CONTROL
+        return result
+    }
+
+    ; What a Chinese / English toggle does: {Chinese: switch to Chinese, Open: open status to set, Conv: mode to set, Remembered: decided from the kept state}
+    ;   open / conv: the open status and conversion mode read now (IME_CMODE_NATIVE = 1 is Chinese)
+    ;   last:        {Open, Conv, Chinese} after the last toggle, "" if none. A reading equal to that one = the reading didn't follow (or nothing changed),
+    ;                so it is taken as still being on the side switched to last time
+    static ImeTarget(open, conv, last := "") {
+        remembered := IsObject(last) && last.Open = open && last.Conv = conv
+        chinese := remembered ? last.Chinese : (open && (conv & 1))
+        if chinese
+            return {Chinese: false, Open: 0, Conv: conv & ~1, Remembered: remembered}
+        return {Chinese: true, Open: 1, Conv: conv | 1, Remembered: remembered}
+    }
+
+    ; The input language (HKL) the window's thread uses; hwnd = 0: the current thread
     static KeyboardLayout(hwnd := 0) {
         if !Platform.IsWindows
             return 0
@@ -362,7 +477,23 @@ class Win {
         return DllCall("GetKeyboardLayout", "UInt", threadId, "Ptr")
     }
 
-    ; Windows 设置里打开了 "允许我为每个应用窗口使用不同的输入法" (SPI_GETTHREADLOCALINPUTSETTINGS)
+    ; Whether the process runs as administrator (elevated token); false if it can't be opened (e.g. a normal process asking about an elevated one)
+    static IsElevated(pid) {
+        if !Platform.IsWindows
+            return false
+        elevated := 0
+        if !(process := DllCall("OpenProcess", "UInt", 0x1000, "Int", 0, "UInt", pid, "Ptr"))   ; PROCESS_QUERY_LIMITED_INFORMATION
+            return false
+        token := 0
+        if DllCall("advapi32\OpenProcessToken", "Ptr", process, "UInt", 0x8, "Ptr*", &token) {   ; TOKEN_QUERY
+            DllCall("advapi32\GetTokenInformation", "Ptr", token, "Int", 20, "UInt*", &elevated, "UInt", 4, "UInt*", &size := 0)   ; TokenElevation
+            DllCall("CloseHandle", "Ptr", token)
+        }
+        DllCall("CloseHandle", "Ptr", process)
+        return elevated != 0
+    }
+
+    ; Windows setting "Let me use a different input method for each app window" is on (SPI_GETTHREADLOCALINPUTSETTINGS)
     static PerWindowInputMethod() {
         if !Platform.IsWindows
             return false
@@ -371,16 +502,16 @@ class Win {
         return on != 0
     }
 
-    ; 等所有修饰键松开, 防止 Ctrl/Alt 漏进后续 Send
+    ; Waits until all modifier keys are up, so Ctrl / Alt don't leak into the next Send
     static WaitModifiersUp(timeout := 0.5) {
         for key in ["Ctrl", "Alt", "Shift", "LWin", "RWin"]
             KeyWait(key, "T" timeout)
     }
 
-    ; 输入框留空时显示系统原生的灰色提示文字(焦点在框里时也不消失, 不会被
-    ; 误当成一次真实输入), 一旦用户开始打字就自动让位, 清空后又自动回来。
-    ; 鼠标停在控件上时显示的提示 (例如被省略号截断的路径显示完整路径); 静态文本要有 SS_NOTIFY (0x100) 才收得到鼠标。
-    ; 提示窗口属于控件所在的窗口, 跟着一起销毁。返回提示窗口
+    ; Gray system cue text while the box is empty (it stays while the box has focus and is never taken for real input);
+    ; it gives way as soon as the user types and comes back when the box is emptied.
+    ; A tooltip when the mouse rests on a control (e.g. the full path of one cut off with an ellipsis); a static text needs SS_NOTIFY (0x100) to get mouse messages.
+    ; The tooltip belongs to the control's window and is destroyed with it. Returns the tooltip window
     static AddTooltip(ctrlHwnd, text) {
         static TTS_ALWAYSTIP := 0x1, TTS_NOPREFIX := 0x2, TTF_IDISHWND := 0x1, TTF_SUBCLASS := 0x10
         static TTM_ADDTOOLW := 0x432, TTM_SETMAXTIPWIDTH := 0x418
@@ -390,7 +521,7 @@ class Win {
         info := Buffer(24 + 6 * A_PtrSize, 0)                               ; TOOLINFOW
         NumPut("UInt", info.Size, "UInt", TTF_IDISHWND | TTF_SUBCLASS, info)
         NumPut("Ptr", owner, "Ptr", ctrlHwnd, info, 8)
-        NumPut("Ptr", StrPtr(text), info, 24 + 3 * A_PtrSize)               ; 提示窗口会复制一份文字
+        NumPut("Ptr", StrPtr(text), info, 24 + 3 * A_PtrSize)               ; the tooltip keeps its own copy of the text
         DllCall("SendMessageW", "Ptr", tip, "UInt", TTM_SETMAXTIPWIDTH, "Ptr", 0, "Ptr", Round(600 * A_ScreenDPI / 96))
         DllCall("SendMessageW", "Ptr", tip, "UInt", TTM_ADDTOOLW, "Ptr", 0, "Ptr", info)
         return tip
@@ -399,17 +530,17 @@ class Win {
     static SetCueBanner(hwnd, text) {
         static EM_SETCUEBANNER := 0x1501
         try DllCall("User32\SendMessageW", "Ptr", hwnd, "UInt", EM_SETCUEBANNER, "Ptr", 1, "WStr", text)
-        DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 1)          ; 输入框已经显示时换提示文字, 要重画才看得到
+        DllCall("InvalidateRect", "Ptr", hwnd, "Ptr", 0, "Int", 1)          ; changing the cue of a box already shown needs a repaint
     }
 
-    ; 热键字符串 -> 人类可读标签: "^!c" -> "Ctrl+Alt+C", "!Space" -> "Alt+Space", "~MButton" -> "MButton",
-    ; "CapsLock & j" -> "CapsLock+J"。只认开头的修饰符 (所以 "^+" 是 Ctrl + 加号键); ~ * $ 不显示。
-    ; names: 可选的 Map, 把按键名换成别的文字, 例如 Map("MButton", "鼠标中键")
+    ; Hotkey string -> human-readable label: "^!c" -> "Ctrl+Alt+C", "!Space" -> "Alt+Space", "~MButton" -> "MButton",
+    ; "CapsLock & j" -> "CapsLock+J". Only leading modifiers count (so "^+" is Ctrl + the plus key); ~ * $ aren't shown.
+    ; names: optional Map that replaces key names with other text, e.g. Map("MButton", "Middle button")
     static HotkeyLabel(hk, names := "") {
         hk := Trim(hk)
         if (hk = "" || hk = "None")
             return ""
-        if InStr(hk, " & ") {                                               ; 两个键的组合 (CapsLock & j)
+        if InStr(hk, " & ") {                                               ; a combination of two keys (CapsLock & j)
             parts := StrSplit(hk, "&", " `t")
             return Win.HotkeyLabel(parts[1], names) "+" Win.HotkeyLabel(parts[2], names)
         }
@@ -423,9 +554,9 @@ class Win {
         return label Win.KeyLabel(key, names) up
     }
 
-    ; 一个按键的显示名称: "space" -> "Space", "c" -> "C", "esc" -> "Escape"
+    ; The display name of a key: "space" -> "Space", "c" -> "C", "esc" -> "Escape"
     static KeyLabel(key, names := "") {
-        if (StrLen(key) = 1)                                                ; 单个字符原样显示 (GetKeyName("+") 会给出同一个键上的 "=")
+        if (StrLen(key) = 1)                                                ; a single character is shown as it is (GetKeyName("+") would give "=", on the same key)
             return StrUpper(key)
         name := GetKeyName(key)
         if (name = "")
@@ -438,10 +569,10 @@ class Win {
 
 
 ;===============================================================================
-; Arr - 数组小工具
+; Arr - small array helpers
 ;===============================================================================
 class Arr {
-    ; value 在 arr 里第一次出现的位置(下标从 1 开始), 找不到就返回 0。
+    ; Position of the first value in arr (1-based), 0 if not found.
     static IndexOf(value, arr) {
         for index, element in arr
             if (element = value)
@@ -452,8 +583,7 @@ class Arr {
 
 
 ;===============================================================================
-; Pinyin - 中文拼音首字母
-; 用 GBK 编码区间映射, 不需要词库, 够用且零依赖
+; Pinyin - initials of Chinese characters (Resources\Pinyin.txt, GB2312 ranges as fallback)
 ;===============================================================================
 class Pinyin {
     static _ranges := [
@@ -464,44 +594,65 @@ class Pinyin {
         [-14149,-14091,"R"], [-14090,-13319,"S"], [-13318,-12839,"T"], [-12838,-12557,"W"],
         [-12556,-11848,"X"], [-11847,-11056,"Y"], [-11055,-10247,"Z"] ]
 
-    ; "记事本" -> "JSB"; 非中文字符原样保留
+    ; "记事本" (Notepad) -> "JSB"; other characters stay as they are
+    ; Each character is looked up once (_cache): the same characters come up again and again in file and app names
+    static _cache := Map(), _buf := Buffer(4)
     static Initials(str) {
-        if !RegExMatch(str, "[^\x{00}-\x{ff}]")     ; 没有中文就直接返回
+        if !RegExMatch(str, "[^\x{00}-\x{ff}]")     ; No Chinese: return it as it is
             return str
-        out := ""
+        out := "", cache := Pinyin._cache
         for ch in StrSplit(str) {
             code := Ord(ch)
-            if (code >= 0x2E80 && code <= 0x9FFF) {
-                buf := Buffer(4)
-                StrPut(ch, buf, "CP936")
-                gbk := (NumGet(buf, 0, "UChar") << 8) + NumGet(buf, 1, "UChar") - 65536
-                for r in Pinyin._ranges {
-                    if (gbk >= r[1] && gbk <= r[2]) {
-                        out .= r[3]
-                        break
-                    }
-                }
-            } else {
+            if (code >= 0x2E80 && code <= 0x9FFF)
+                out .= cache.Has(ch) ? cache[ch] : (cache[ch] := Pinyin._Initial(ch))
+            else
                 out .= ch
-            }
         }
         return out
+    }
+
+    ; The initial of one character: CJK U+3400 - U+9FFF from Resources\Pinyin.txt (one ASCII letter per code point,
+    ; made by Tests\Tools\MakePinyin.py; "-" = no reading), so GB2312 level-2, GBK and traditional characters work too.
+    ; Other characters, or without the file: the GB2312 ranges below (only the 3755 level-1 characters, sorted by pinyin)
+    static DataFile := A_ScriptDir "\Resources\Pinyin.txt", TableStart := 0x3400, _letters := Buffer(0), _tried := false
+    static _Initial(ch) {
+        if !Pinyin._tried
+            Pinyin._Load()
+        index := Ord(ch) - Pinyin.TableStart
+        if (index >= 0 && index < Pinyin._letters.Size) {
+            letter := NumGet(Pinyin._letters, index, "UChar")
+            return (letter = 45) ? "" : Chr(letter)                         ; 45 = "-"
+        }
+        buf := Pinyin._buf
+        StrPut(ch, buf, "CP936")
+        gbk := (NumGet(buf, 0, "UChar") << 8) + NumGet(buf, 1, "UChar") - 65536
+        for r in Pinyin._ranges
+            if (gbk >= r[1] && gbk <= r[2])
+                return r[3]
+        return ""
+    }
+
+    ; Read once, the first time a character is looked up (a Buffer: no string copies; empty when the file is missing,
+    ; then the ranges still work)
+    static _Load() {
+        Pinyin._tried := true
+        try Pinyin._letters := FileRead(Pinyin.DataFile, "RAW")
     }
 }
 
 
 ;===============================================================================
-; Calc - 四则运算表达式求值 (只认数字和 + - * / ^ ** ( ))
-; 故意不走 eval, 避免任意代码执行。递归下降解析, 全程用浮点数计算 (大数不会溢出);
-; 优先级: 括号 > 乘方 (右结合, 2^3^2 = 2^(3^2)) > 正负号 (-2^2 = -4, 2^-2 = 0.25) > 乘除 > 加减
+; Calc - evaluates arithmetic expressions (only numbers and + - * / ^ ** ( ))
+; Deliberately no eval, so no arbitrary code runs. Recursive descent, all in floating point (large numbers don't overflow);
+; precedence: parentheses > power (right-associative, 2^3^2 = 2^(3^2)) > sign (-2^2 = -4, 2^-2 = 0.25) > * / > + -
 ;===============================================================================
 class Calc {
-    ; 看起来像不像一个算式
+    ; Whether it looks like an expression
     static Looks(expr) {
         return RegExMatch(expr, "[\+\-\*/\^]") && RegExMatch(expr, "^[\d\+\-\*/\^\(\)\.\s]+$")
     }
 
-    ; 返回计算结果 (浮点数); 不是完整的算式、除以 0、结果超出范围时返回 ""
+    ; Returns the result (a float); "" when it isn't a complete expression, divides by 0 or is out of range
     static Eval(expr) {
         expr := RegExReplace(expr, "\s")
         if !RegExMatch(expr, "^[\d\+\-\*/\^\(\)\.]+$")
@@ -509,14 +660,14 @@ class Calc {
         state := {Text: expr, Pos: 1}
         try {
             value := Calc._Sum(state)
-            if (state.Pos <= StrLen(expr))                                  ; 后面还有没用上的字符, 例如 "(1+2))"
+            if (state.Pos <= StrLen(expr))                                  ; characters left over, e.g. "(1+2))"
                 return ""
         } catch
             return ""
-        return (Abs(value) <= 1.7976931348623157e308) ? value : ""          ; 溢出 (inf) / NaN 都不算结果
+        return (Abs(value) <= 1.7976931348623157e308) ? value : ""          ; overflow (inf) / NaN aren't results
     }
 
-    static _Sum(state) {                                                    ; 加减
+    static _Sum(state) {                                                    ; + -
         value := Calc._Product(state)
         while (op := Calc._Peek(state, "+-")) {
             state.Pos += 1
@@ -526,17 +677,17 @@ class Calc {
         return value
     }
 
-    static _Product(state) {                                                ; 乘除
+    static _Product(state) {                                                ; * /
         value := Calc._Signed(state)
         while (op := Calc._Peek(state, "*/")) {
             state.Pos += 1
             operand := Calc._Signed(state)
-            value := (op = "*") ? value * operand : value / operand         ; 除以 0 抛异常, Eval 返回 ""
+            value := (op = "*") ? value * operand : value / operand         ; division by 0 throws; Eval returns ""
         }
         return value
     }
 
-    static _Signed(state) {                                                 ; 正负号
+    static _Signed(state) {                                                 ; sign
         if (op := Calc._Peek(state, "+-")) {
             state.Pos += 1
             return (op = "-") ? -Calc._Signed(state) : Calc._Signed(state)
@@ -544,7 +695,7 @@ class Calc {
         return Calc._Power(state)
     }
 
-    static _Power(state) {                                                  ; 乘方 ^ 或 **
+    static _Power(state) {                                                  ; power: ^ or **
         base := Calc._Primary(state)
         if (SubStr(state.Text, state.Pos, 1) = "^")
             state.Pos += 1
@@ -552,10 +703,10 @@ class Calc {
             state.Pos += 2
         else
             return base
-        return base ** Calc._Signed(state)                                  ; 指数可以带正负号, 也可以再乘方
+        return base ** Calc._Signed(state)                                  ; the exponent can have a sign and be a power itself
     }
 
-    static _Primary(state) {                                                ; 数字或括号
+    static _Primary(state) {                                                ; a number or parentheses
         if (SubStr(state.Text, state.Pos, 1) = "(") {
             state.Pos += 1
             value := Calc._Sum(state)
@@ -575,7 +726,7 @@ class Calc {
         return (ch != "" && InStr(chars, ch)) ? ch : ""
     }
 
-    ; 千分位 (负数也加): -1234567.5 -> -1,234,567.5
+    ; Thousands separators (negative numbers too): -1234567.5 -> -1,234,567.5
     static Thousands(num) {
         return RegExReplace(num "", "\G-?\d+?(?=(\d{3})+(?:\D|$))", "$0,")
     }
@@ -583,10 +734,10 @@ class Calc {
 
 
 ;===============================================================================
-; Url - 网址工具
+; Url - URL helpers
 ;===============================================================================
 class Url {
-    ; 按 UTF-8 做百分号编码, 用于把搜索词拼进 {query} 网址
+    ; Percent-encodes as UTF-8, to put search words into a {query} URL
     static Encode(text) {
         return Clr.System.Uri.EscapeDataString(text)
     }

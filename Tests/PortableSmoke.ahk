@@ -47,8 +47,19 @@ OnExit((*) => PortableSmoke.CleanUp())
 SetTimer(() => PortableSmoke.Fail("Timed out after 25 seconds."), -25000)
 PortableSmoke.Run()
 
+MsgBox(args*) {
+    throw Error("Unexpected portable UI dialog: " (args.Length ? args[1] : ""))
+}
+InputBox(args*) {
+    throw Error("Unexpected portable UI input dialog.")
+}
+FileSelect(args*) {
+    throw Error("Unexpected portable UI file picker.")
+}
+
 class PortableSmoke {
     static Folder := "", File := "", Started := A_TickCount
+    static PrefetchChecks := 0
 
     static Assert(condition, message) {
         if !condition
@@ -64,7 +75,7 @@ class PortableSmoke {
         I18n.Init("en")
         Knowledge.Load()
         Usage.Load()
-        ThemeManager.Load("Light")
+        ThemeManager.Load("Light", "Compact")
         preview := ThemePreview.ForName("Light", 112, 76)
         PortableSmoke.Assert(preview.Width = 112 && preview.Height = 76, "The theme preview has incorrect dimensions.")
         preview.Dispose()
@@ -83,6 +94,7 @@ class PortableSmoke {
         PortableSmoke.Mark("providers initialized")
 
         SearchWindow.Create()
+        PortableSmoke.Assert(SearchWindow.RowHeight = ThemeManager.Get("RowHeight") && SearchWindow.IconSize = ThemeManager.Get("IconSize"), "The portable layout ignored theme density.")
         SearchWindow.Show("2 + 2", false)
         PortableSmoke.Assert(SearchWindow.IsVisible(), "The search window did not show.")
         PortableSmoke.Assert(SearchWindow.Results.Length > 0, "The calculator search returned no rows.")
@@ -90,6 +102,18 @@ class PortableSmoke {
         PortableSmoke.Assert(SearchWindow.List.GetCount() > 0, "The result ListView has no rows.")
         PortableSmoke.Assert(SearchWindow.List.GetText(1, 1) == "4", "The result ListView did not contain actual calculator text.")
         PortableSmoke.Mark("calculator ListView text")
+        Platform.SelectEdit(SearchWindow.Input, 0, StrLen(SearchWindow.Input.Value))
+        previousResults := SearchWindow.Results
+        SearchWindow.Show("", false)
+        selection := Platform.EditSelection(SearchWindow.Input)
+        PortableSmoke.Assert(SearchWindow.Input.Value == "2 + 2" && SearchWindow.Results == previousResults && selection.Start = 0 && selection.End = 5, "Showing an open window changed its query, results or selection.")
+        AppSettings.Appearance["Placeholder"] := "Find something"
+        PortableSmoke.Assert(SearchWindow.Placeholder() == "Find something", "The custom placeholder was ignored.")
+        AppSettings.Appearance["Placeholder"] := " "
+        PortableSmoke.Assert(SearchWindow.Placeholder() == "", "A blank placeholder was not preserved.")
+        AppSettings.Appearance["Placeholder"] := ""
+        PortableSmoke.Navigation()
+        PortableSmoke.Mark("density, visible query, placeholder and keyboard contracts")
 
         SearchWindow.Input.Value := "hello world"
         Platform.SelectEdit(SearchWindow.Input, 2, 5)
@@ -133,8 +157,19 @@ class PortableSmoke {
             }
         }
         PortableSmoke.Assert(found, "Folder browsing did not return the isolated temporary file.")
+        SearchWindow._SetFileMode(true)
+        found := false
+        for item in SearchWindow.Results {
+            PortableSmoke.Assert(item.Provider == FileSearchProvider.Id, "File mode included another provider.")
+            if (item.Arg == PortableSmoke.File)
+                found := true
+        }
+        PortableSmoke.Assert(SearchWindow.FileMode && found, "File mode did not search the isolated folder.")
+        SearchWindow._SetFileMode(false)
         SearchWindow.Hide()
-        PortableSmoke.Mark("file browser and marking")
+        PortableSmoke.Mark("file browser, file mode and marking")
+        PortableSmoke.BackgroundIcons()
+        PortableSmoke.Actions()
 
         PreferencesWindow.Show("Prefs.Page.General")
         PortableSmoke.Assert(PreferencesWindow.Pages.Length = PreferencesWindow.PageKeys.Length, "Preferences pages were not built.")
@@ -143,6 +178,15 @@ class PortableSmoke {
             controls += page.Controls.Length
         PortableSmoke.Assert(controls >= 80 && PreferencesWindow.Binds.Length >= 30, "Preferences controls did not bind meaningful settings.")
         PortableSmoke.Assert(PreferencesWindow._lists.Has("CustomCommands"), "The custom command editor was not built.")
+        PortableSmoke.Assert(PreferencesWindow._lists.Has("Hotkeys"), "The schema's custom hotkeys editor was not built.")
+        bindings := Map()
+        for bind in PreferencesWindow.Binds
+            bindings[bind.Path] := bind.Read.Call()
+        PortableSmoke.Assert(bindings["Features.Snippets.ExpandExclude"] is Array, "Snippet window exclusions lost their array shape.")
+        PortableSmoke.Assert(bindings["Features.Snippets.PasteMode"] == "Auto", "The snippet Auto paste mode was changed by opening Preferences.")
+        for path in ["Features.Clipboard.MaxItems", "Features.Clipboard.IgnoreApps", "Features.Windows.Enabled", "Features.Windows.Keyword", "Features.Bookmarks.Enabled", "Features.Bookmarks.Keyword", "Appearance.Density", "Appearance.Placeholder", "General.TabKey"]
+            PortableSmoke.Assert(bindings.Has(path), "Preferences has no binding for " path)
+        PortableSmoke.Assert(!bindings.Has("Features.Applications.RefreshMinutes"), "Preferences retained the obsolete application refresh setting.")
         PreferencesWindow._SelectRow(PreferencesWindow._PageIndex("Prefs.Page.Commands"))
         PortableSmoke.Assert(PreferencesWindow._lists["CustomCommands"].Items.Length = 1, "The command editor did not load settings.")
         fields := [ItemEditor.Field("Type", "Prefs.Col.Type", "choice", false, [["File", "File"], ["Folder", "Folder"]])
@@ -168,6 +212,85 @@ class PortableSmoke {
         PortableSmoke.Processes()
         PortableSmoke.Mark("complete " (A_TickCount - PortableSmoke.Started) "ms")
         ExitApp(0)
+    }
+
+    static Navigation() {
+        items := [ResultItem("First"), ResultItem("Second"), ResultItem.KeywordHint("Find scripts", "script", "")]
+        SearchWindow.SetResults(items)
+        AppSettings.General["TabKey"] := "Next"
+        SearchWindow.Selected := 3
+        SearchWindow._TabKey()
+        PortableSmoke.Assert(SearchWindow.Selected = 1, "Tab did not wrap to the first result.")
+        SearchWindow._TabKey(false, true)
+        PortableSmoke.Assert(SearchWindow.Selected = 3, "Shift+Tab did not wrap to the last result.")
+        SearchWindow._TabKey(true)
+        PortableSmoke.Assert(SearchWindow.Input.Value == "script ", "Ctrl+Tab did not complete the keyword hint.")
+        AppSettings.General["TabKey"] := "Complete"
+        SearchWindow._SetInput("caret")
+        Platform.SelectEdit(SearchWindow.Input, 0, 5)
+        PortableSmoke.Assert(!SearchWindow._CanOpenActions(), "Right arrow opened actions with selected text.")
+        Platform.SelectEdit(SearchWindow.Input, 5, 5)
+        PortableSmoke.Assert(SearchWindow._CanOpenActions() && !SearchWindow._CanOpenActions(0x40000000), "Right arrow did not reject key repeat.")
+        SearchWindow._SetInput("2 + 2")
+    }
+
+    static BackgroundIcons() {
+        SearchWindow.Show("2 + 2", false)
+        IconCache.Clear()
+        IconCache.Prefetch([App.IconFile, App.IconFile])
+        PortableSmoke.Assert(IconCache.PrefetchPending = 1, "Icon prefetch did not deduplicate its sources.")
+        IconCache._PrefetchStep()
+        PortableSmoke.Assert(IconCache.PrefetchPending = 1, "Icon prefetch ran while the search window was visible.")
+        SearchWindow.Hide()
+        SearchWindow.PrepareEmpty()
+        PortableSmoke.Assert(SearchWindow.IsPrepared(), "The hidden empty search was not prepared.")
+        IconCache._PrefetchStep()
+        PortableSmoke.Assert(!IconCache.PrefetchPending && IconCache._images.Count = 1, "Idle icon prefetch did not decode its image.")
+        cache := Platform.Join(PortableSmoke.Folder, "Data", "portable-icons.json")
+        PortableSmoke.Assert(IconCache.SaveDisk(cache), "The portable icon cache was not saved.")
+        IconCache.Clear()
+        busy := BackgroundWork.IsBusy
+        previousCritical := A_IsCritical
+        Critical("On")
+        try {
+            PortableSmoke.Assert(IconCache.LoadDisk(cache) = 1, "The portable icon cache did not restore its warmup list.")
+            PortableSmoke.PrefetchChecks := 0
+            BackgroundWork.IsBusy := () => PortableSmoke.ReenterPrefetch()
+        } finally Critical(previousCritical)
+        try IconCache._PrefetchStep()
+        finally BackgroundWork.IsBusy := busy
+        PortableSmoke.Assert(PortableSmoke.PrefetchChecks = 1, "Icon prefetch reentered while checking background work.")
+        PortableSmoke.Assert(IconCache._images.Count = 1, "The restored icon warmup did not decode its image.")
+        PortableSmoke.Mark("idle icon prefetch, cache warmup and hidden search preparation")
+    }
+
+    static ReenterPrefetch() {
+        if (++PortableSmoke.PrefetchChecks = 1)
+            IconCache._PrefetchStep()
+        return false
+    }
+
+    static Actions() {
+        item := ResultItem("note.txt", "", {Kind: "file", Arg: PortableSmoke.File})
+        titles := Map()
+        for action in ResultActions.ListFor(item)
+            titles[action.Title] := true
+        PortableSmoke.Assert(titles.Has(I18n.T("Action.CopyFile")), "The file actions cannot copy portable files.")
+        if !Platform.IsWindows {
+            for key in ["Action.CutFile", "Action.OpenWith", "Action.Properties", "Action.RunAsAdmin"]
+                PortableSmoke.Assert(!titles.Has(I18n.T(key)), "A Windows action was offered on a portable platform: " key)
+        }
+        PortableSmoke.Assert(titles.Has(I18n.T("Action.Recycle")) = ActionCatalog.CanRecyclePath(PortableSmoke.File), "The trash action did not follow platform support.")
+        AppSettings.Feature("LargeType")["Enabled"] := 0
+        PortableSmoke.Assert(!LargeType.Enabled(), "Large Type ignored its disabled setting.")
+        AppSettings.Feature("LargeType")["Enabled"] := 1
+        offered := false
+        for action in ResultActions.ListFor(item)
+            if action.Title == I18n.T("Action.LargeType")
+                offered := true
+        PortableSmoke.Assert(LargeType.Enabled() && offered, "The enabled Large Type action was not offered.")
+        AppSettings.Feature("LargeType")["Enabled"] := 0
+        PortableSmoke.Mark("portable result actions and platform availability")
     }
 
     static Isolate() {
@@ -264,6 +387,8 @@ class PortableSmoke {
         try ProcessRunner.CancelAll()
         try PreferencesWindow.Close()
         try SearchWindow.Hide()
+        if (SearchWindow._prepareTimer != "")
+            SetTimer(SearchWindow._prepareTimer, 0)
         try SearchWindow.Gui.Destroy()
         try IconCache.Clear()
         try {

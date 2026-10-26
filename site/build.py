@@ -64,7 +64,7 @@ def release_info():
                 break
             page += 1
         info["downloads"] = f"{total:,}"
-    except Exception as e:                                   # noqa: BLE001 - 网站照样生成, 只是少几个数字
+    except Exception as e:                                   # noqa: BLE001 - the site is built anyway, just missing a few numbers
         print("GitHub API unavailable, using fallback values:", e)
     return info
 
@@ -81,9 +81,18 @@ CJK = re.compile(r"[\u3400-\u9fff]")
 
 
 def changes_html(lines):
-    """CHANGELOG 的几行 -> HTML (段落、### 小标题、- 列表)"""
-    out, in_list = [], False
+    """CHANGELOG 的几行 -> HTML (段落、### 小标题、- 列表, 缩进两格的 "  - " 是上一项下面的子列表)"""
+    out, in_list, in_sub = [], False, False
     for line in lines:
+        if line.startswith("  - ") and in_list:
+            if not in_sub:
+                out[-1] = out[-1].removesuffix("</li>") + "<ul>"            # the sublist goes into the previous <li>
+                in_sub = True
+            out.append(f"<li>{inline(line[4:])}</li>")
+            continue
+        if in_sub:
+            out.append("</ul></li>")
+            in_sub = False
         if line.startswith("- "):
             if not in_list:
                 out.append("<ul>")
@@ -97,6 +106,8 @@ def changes_html(lines):
             out.append(f"<h4>{inline(line[4:])}</h4>")
         elif line:
             out.append(f"<p>{inline(line)}</p>")
+    if in_sub:
+        out.append("</ul></li>")
     if in_list:
         out.append("</ul>")
     return "\n".join(out)
@@ -114,7 +125,7 @@ def latest_changes(version):
     english = [line for line in lines if line and not line.startswith(("- ", "### ", "  ")) and not CJK.search(line)]
     details = [line for line in lines if line not in english]
     en = changes_html(english) or "<p>Release notes (in Chinese):</p>"
-    en += ('\n<details><summary>Details (in Chinese)</summary>\n<div lang="zh-CN">\n'   # lang="zh-CN": 不会被 [lang="zh"] 的规则藏起来
+    en += ('\n<details><summary>Details (in Chinese)</summary>\n<div lang="zh-CN">\n'   # lang="zh-CN": not hidden by the [lang="zh"] rules
            + changes_html(details) + "\n</div>\n</details>")
     return match.group(1), f'<div lang="zh">\n{changes_html(lines)}\n</div>\n<div lang="en">\n{en}\n</div>'
 
@@ -138,7 +149,7 @@ def theme_gallery():
         if name.startswith("theme-") and name.endswith(".png"):
             files[name[6:-4]] = name
     keys = ["light"] + [k.lower() for k in order]
-    keys += sorted(k for k in files if k not in keys)                    # 有截图但不在列表里的也显示
+    keys += sorted(k for k in files if k not in keys)                    # screenshots that exist but aren't in the list are shown too
     cards = []
     for key in keys:
         if key not in files:

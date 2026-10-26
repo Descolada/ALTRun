@@ -8,7 +8,7 @@ class Platform {
     static Home => ALTRunHome()
     static UserDataDir => Platform.IsWindows ? A_AppData : Platform.IsMac
         ? Platform.Join(Platform.Home, "Library", "Application Support")
-        : (EnvGet("XDG_DATA_HOME") != "" ? EnvGet("XDG_DATA_HOME") : Platform.Join(Platform.Home, ".local", "share"))
+        : ALTRunXdgDataHome()
 
     static Join(segments*) {
         joined := ""
@@ -74,6 +74,8 @@ class Platform {
             return Run('explorer.exe /select,"' target '"')
         if Platform.IsMac
             return ProcessRunner.Start("/usr/bin/open", ["-R", target])
+        if (Platform.IsLinux && DesktopIntegration.TryReveal(target))
+            return true
         SplitPath(target, , &folder)
         return Platform.Open(DirExist(target) ? target : folder)
     }

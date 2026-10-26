@@ -1,11 +1,11 @@
-# 在 Windows 上自动生成 README / Wiki 用的界面截图 (Tests\Screenshots\TakeScreenshots.ahk),
-# 上传为 artifact; 在 main 以外的分支上运行时, 把截图提交回该分支。
+# Makes the UI screenshots for the README / Wiki on Windows (Tests\Screenshots\TakeScreenshots.ahk),
+# uploads them as an artifact; on branches other than main it commits the screenshots back to the branch.
 name: Screenshots
 
 on:
   workflow_dispatch:
   push:
-    branches: ["claude/**"]
+    branches-ignore: [main]
     paths:
       - Tests/Screenshots/**
       - .github/workflows/screenshots.yml
@@ -31,24 +31,46 @@ jobs:
           gh release download $ahkTag --repo AutoHotkey/AutoHotkey --pattern "AutoHotkey_*.zip" --dir tools
           Expand-Archive (Get-ChildItem tools -Filter "AutoHotkey_*.zip")[0].FullName tools/ahk
 
-      # 1920 x 1080、150% 缩放、灰度字体抗锯齿: 截图更清晰 (做不到时保持 100%)
+      # Windows 11's short context menu has no "Send to": the "sendto" scene needs the full one, so the VM is set to always show it
+      # (only the current user's registry, only on the GitHub VM; takes effect after Explorer restarts). Screenshots go on as usual if it fails
+      - name: Full context menu
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          New-Item "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32" -Value "" -Force | Out-Null
+          Stop-Process -Name explorer -Force
+          Start-Sleep -Seconds 5
+          if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer.exe; Start-Sleep -Seconds 5 }
+          Write-Host "Explorer restarted with the full context menu"
+
+      # Document icons: .docx / .xlsx / .pptx etc. are associated with the LibreOffice document icons in Tests/Screenshots/Icons, no Office needed
+      # (only the current user's registry; only on the GitHub VM, running the screenshot script locally doesn't change your file associations). Screenshots go on as usual if it fails
+      - name: Document icons
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $icons = (Resolve-Path Tests/Screenshots/Icons).Path
+          $types = @{ text = "doc docx docm odt rtf"; spreadsheet = "xls xlsx xlsm csv ods"; presentation = "ppt pptx pptm odp" }
+          foreach ($kind in $types.Keys) {
+            $progId = "ALTRunShots.$kind"
+            New-Item "HKCU:\Software\Classes\$progId\DefaultIcon" -Value "$icons\$kind.ico" -Force | Out-Null
+            foreach ($ext in $types[$kind].Split(" ")) { New-Item "HKCU:\Software\Classes\.$ext" -Value $progId -Force | Out-Null }
+          }
+          Add-Type -Namespace Shots -Name Shell -MemberDefinition '[DllImport("shell32.dll")] public static extern void SHChangeNotify(int e, uint f, IntPtr a, IntPtr b);'
+          [Shots.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)   # SHCNE_ASSOCCHANGED: refresh the icons
+          Write-Host "Document icons registered from $icons"
+
+      # 1920 x 1080, 150% scaling, grayscale font smoothing: sharper screenshots (stays at 100% if it fails)
       - name: Display settings for screenshots
         shell: pwsh
         run: pwsh -NoProfile -File Tests/Screenshots/SetDisplay.ps1 -Ahk tools/ahk/AutoHotkey64.exe
 
       - name: Take screenshots
         shell: pwsh
-        run: |
-          Write-Host "Microsoft YaHei: $(Test-Path C:\Windows\Fonts\msyh.ttc)"
-          Add-Type -AssemblyName System.Windows.Forms
-          Write-Host "Screen: $([System.Windows.Forms.Screen]::PrimaryScreen.Bounds)"
-          $proc = Start-Process tools/ahk/AutoHotkey64.exe -ArgumentList '/ErrorStdOut', 'Tests\Screenshots\TakeScreenshots.ahk' `
-                  -Wait -PassThru -NoNewWindow -RedirectStandardOutput shots.log -RedirectStandardError shots.err
-          Get-Content shots.log, shots.err
-          if ($proc.ExitCode -ne 0) { throw "$($proc.ExitCode) screenshot(s) failed" }
+        run: pwsh -NoProfile -File Tests/Screenshots/RunShots.ps1 -Ahk tools/ahk/AutoHotkey64.exe -Skip normal-scale
 
-      # 截图加上 Windows 11 那样的圆角 (虚拟机没有显卡加速, 系统不画圆角), README 首页的动图 demo.png (APNG)
-      # 由 "demo" 场景存下的帧合成 (圆角、阴影、模糊的背景); 都用 Pillow, 按 SHOT_SCALE 放大圆角和边距
+      # Screenshots get Windows 11-style rounded corners (the VM has no GPU acceleration, so the system draws none); the README front page animation demo.png (APNG)
+      # is assembled from the frames the "demo" scene saved (rounded corners, shadow, blurred background); all with Pillow, corners and margins scaled by SHOT_SCALE
       - name: Rounded corners and demo GIF
         shell: pwsh
         run: |
@@ -59,6 +81,20 @@ jobs:
           if (-not (Test-Path (Join-Path $frames "frames.txt"))) { Write-Host "No demo frames"; exit 0 }
           python Tests/Screenshots/MakeDemo.py $frames docs/images/screenshots/demo.png
           if ($LASTEXITCODE -ne 0) { throw "MakeDemo.py failed" }
+
+      # Preferences and Quick Switch (Shots.NormalScale) are too big at 150%: set the scaling back to 100% and shoot again (fonts with ClearType), corners with the 100% radius
+      # (RoundCorners.py leaves images that already have rounded corners alone)
+      - name: Display at 100% for Preferences and Quick Switch
+        shell: pwsh
+        run: pwsh -NoProfile -File Tests/Screenshots/SetDisplay.ps1 -Ahk tools/ahk/AutoHotkey64.exe -Scale 100
+
+      - name: Take screenshots at 100%
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File Tests/Screenshots/RunShots.ps1 -Ahk tools/ahk/AutoHotkey64.exe -Only normal-scale
+          if ($LASTEXITCODE -ne 0) { throw "screenshots at 100% failed" }
+          python Tests/Screenshots/RoundCorners.py docs/images/screenshots
+          if ($LASTEXITCODE -ne 0) { throw "RoundCorners.py failed" }
 
       - uses: actions/upload-artifact@v7
         with:

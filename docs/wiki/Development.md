@@ -1,56 +1,79 @@
-[English](en-Development) · **中文**
+**English** · [中文](Development-zh)
 
-# 开发指南
+# Development guide
 
-## 环境
-- [AutoHotkey v2](https://www.autohotkey.com/) 2.0 或更新
-- 任意编辑器; 推荐 VS Code + AutoHotkey v2 Language Support 插件
+## Environment
+- This source port requires [Keysharp](https://github.com/keysharp-org/Keysharp), including its parser/compiler components and native desktop dependencies. AutoHotkey and Ahk2Exe cannot process its module imports and managed helpers. See [Installation](Installation#running-the-keysharp-source-checkout).
+- Any editor; VS Code with the AutoHotkey v2 Language Support extension is recommended
 
 ```
-AutoHotkey64.exe ALTRun.ahk                                  运行
-AutoHotkey64.exe /ErrorStdOut /validate ALTRun.ahk           只检查语法和警告, 不运行
-AutoHotkey64.exe /ErrorStdOut Tests\RunTests.ahk             单元测试, 退出码 = 失败的数量
+Keysharp.exe ALTRun.ahk                                    run
+Keysharp.exe --errorstdout --validate ALTRun.ahk           compile-check only
+Keysharp.exe --errorstdout Tests\PlatformServices.ahk      isolated platform services
+Keysharp.exe --errorstdout Tests\SettingsFallback.ahk      isolated settings and migration
 ```
 
-## 项目结构
+On headless Linux use `xvfb-run -a /path/to/Keysharp` in place of `Keysharp.exe`. The [contribution guide](../../CONTRIBUTING.md#development-environment) lists the focused portable regression scripts. `Tests/RunTests.ahk` remains a Windows-oriented suite; the existing Ahk2Exe workflows describe upstream Windows distribution and do not package this source port.
+
+## Project structure
 ```
-ALTRun.ahk          入口: #Include 所有模块, 调用 App.Start()
-Lib\                通用库, 与 ALTRun 无关, 可以直接拿到别的项目用
+ALTRun.ahk          Entry point: #Includes every module and calls App.Start()
+Lib\                Shared libraries with nothing ALTRun-specific, usable in other projects as is
                     (JSON, Logger, Util: Path/Win/Url..., TextTools, Kanji, Dialogs, Everything IPC)
-Src\Core\           App (启动流程), AppSettings + SchemaMigration (设置和版本升级),
-                    SearchQuery / ResultItem (搜索模型), FuzzyMatcher (匹配打分),
-                    Knowledge (学习排序), Usage (使用统计), ActionCatalog (操作), ProviderRegistry, FileIndex
-Src\UI\             SearchWindow, PreferencesWindow, ItemEditor, LargeType, ThemeManager, IconCache
-Src\Providers\      搜索功能, 每个功能一个类
-Src\Extensions\     搜索窗口以外的功能 (SnippetExpander, QuickSwitch, AutoDate, CapsLockSwitch, TendonProfile + PTToolsWindow, UpdateChecker)
-Resources\          随程序发布的数据 (Kanji.txt, Themes\*.json, Lang\*.json, Icons\*.ico)
-Tests\RunTests.ahk  单元测试
-Tests\Fixtures\     测试数据: 旧版本的 ALTRun.ini, SPF2M 对照数据
-Tests\Screenshots\  自动截图
-Tests\Tools\SPF2M\  生成 SPF2M 对照数据的 Python 脚本 (在 DOSBox 里运行原来的 SPF2M.EXE, 见其中的 README)
-bucket\ packaging\  Scoop / winget 清单 (见 packaging\README.md)
-docs\               Wiki 源文件 (docs\wiki, 合并后自动发布)、截图 (docs\images)
-site\               官网模板和生成脚本 (发布到 GitHub Pages)
-.github\            GitHub Actions (测试、截图、发布、Wiki、官网、同步到 Gitee)、Issue / PR 模板
+Src\Core\           App (startup), AppSettings + SchemaMigration (settings and version upgrades),
+                    SearchQuery / ResultItem (search model), FuzzyMatcher (match scoring),
+                    Knowledge (learned ranking), Usage (usage statistics), ActionCatalog (running results: open, copy, paste...),
+                    ProviderRegistry, FileIndex, BackgroundWork (when background work may run)
+Src\UI\             SearchWindow (+ SearchKeys, ResultRows, SearchStatusBar, TypeAhead, SearchInputLanguage),
+                    ResultActions (actions panel, edit, delete), PreferencesWindow (+ PrefsPages: the pages,
+                    PrefsForm: form helpers and layout constants), ItemEditor, LargeType, ThemeManager, IconCache
+Src\Providers\      Search features, one class per feature
+Src\Extensions\     Features outside the search window (SnippetExpander, QuickSwitch, AutoDate, CapsLockSwitch, TendonProfile + PTToolsWindow, UpdateChecker)
+Resources\          Data shipped with the program (Kanji.txt, Pinyin.txt, Themes\*.json, Lang\*.json, Icons\*.ico)
+Tests\RunTests.ahk  Unit test runner: loads the code with in-memory settings and runs every suite
+Tests\Suites\       Unit tests, one class per area (Core, Provider, SearchWindow, Preferences, Extension, Project)
+Tests\Fixtures\     Test data: an old ALTRun.ini, SPF2M reference data
+Tests\Screenshots\  Automatic screenshots
+Tests\Bench\       Benchmark: simulates daily use on Windows and compares two versions (see "Benchmark" below)
+Tests\Tools\SPF2M\  Python scripts that generate the SPF2M reference data (run the original SPF2M.EXE in DOSBox; see the README there)
+bucket\ packaging\  Scoop / winget manifests (see packaging\README.md)
+docs\               Wiki sources (docs\wiki, published after merging) and screenshots (docs\images)
+site\               Website template and build script (published to GitHub Pages)
+.github\            GitHub Actions (tests, screenshots, release, wiki, website, Gitee sync), issue / PR templates
 ```
 
-运行后程序目录下会生成 `Data\` (设置文件 `ALTRun.json`, 以及可以删除的索引和历史) 和 `Themes\` (自定义主题)。
+Layers: `Lib` uses nothing from `Src`; `Src\Core` uses nothing from `UI`, `Providers` or `Extensions` (only `App.ahk`, which starts everything, does). Where Core needs to know something from above, the upper layer sets a callback or calls Core, for example `BackgroundWork.IsBusy` (set by the search window) and `IconCache.Prefetch(ProviderRegistry.IconSpecs())` (called by `App`). The `Layers` test checks this.
 
-## 一次搜索的流程
-1. `SearchWindow` 输入框变化 → `ProviderRegistry.Search(text)`
-2. 文字被解析成 `SearchQuery` (关键字、前缀、剩余文字)
-3. 每个启用的 Provider 的 `Search(query)` 返回 `ResultItem` 数组
-4. `ProviderRegistry` 合并结果, 加上 `Knowledge` 的学习加分, 按分数排序, 同一个 `Uid` 只保留一条; 有 `Exclusive` 结果时只显示这些; 一条都没有时显示 WebSearch 的兜底项
-5. `SearchWindow` 用 NM_CUSTOMDRAW 自己画每一行
-6. 执行时 `ActionCatalog` 按 `Kind` 决定怎么打开, `Knowledge.Record()` 记住这次选择
+When it runs, ALTRun creates `Data\` in its folder (the settings file `ALTRun.json`, plus indexes and history that can be deleted) and `Themes\` (custom themes).
 
-## 新增一个搜索功能
-1. 在 `Src\Providers\` 新建 `XxxProvider.ahk`:
+## How a search runs
+1. The `SearchWindow` input changes → `ProviderRegistry.Search(text)`
+2. The text is parsed into a `SearchQuery` (keyword, prefix, remaining text)
+3. Each enabled provider's `Search(query)` returns an array of `ResultItem`s
+4. `ProviderRegistry` merges the results, adds the learned bonus from `Knowledge`, sorts by score and keeps one result per `Uid`; if there are `Exclusive` results only those are shown; if there are none at all, the providers' fallback items are shown (`Fallbacks(query)`, WebSearch)
+5. `SearchWindow` draws every row itself with NM_CUSTOMDRAW
+6. When a result runs, `ActionCatalog` decides how to open it from its `Kind` (the actions panel, F3 and Ctrl+Del go through `ResultActions`), and `Knowledge.Record()` remembers the choice
+
+## Core modules and runtime lifecycle
+
+- `App` owns startup, reload and shutdown. `AppSettings` reads and saves settings; `SchemaMigration` upgrades older settings formats.
+- `SearchWindow` receives input; `SearchQuery` parses keywords and prefixes; `ProviderRegistry` calls enabled providers and combines their results.
+- `ResultItem` defines the common result model; `FuzzyMatcher` scores matches; `Knowledge` adjusts learned ranking; `ActionCatalog` performs actions such as opening, copying and running.
+- `PreferencesWindow` edits a working copy of the settings. Saving reloads the application so controls don't mutate the live settings object directly.
+- `FileSearchProvider` (`recent report`) and `QuickSwitch` (recent folders) read Windows' Recent items through `Lib\WindowsRecent.ahk`.
+- `ApplicationProvider` and `FileIndex` share `Lib\FolderWatcher.ahk` to watch indexed folders. Index rebuilds run in the background, and the previous index remains usable until the new one is ready.
+
+A typical lifecycle is: start and load settings → initialize providers and windows → receive search input → parse the query and collect results → rank and display them → execute the selected action. Settings changes are saved and then reloaded. Shutdown stops folder watchers and background work and handles pending cache saves.
+
+Background work must respect window and resource lifetimes. Timer callbacks are wrapped with `Logger.Watch(label, fn)` for timing; network requests use asynchronous `HttpGet.Start` rather than blocking the main thread; index caches are normally saved after keyboard and mouse idle, with pending data handled immediately at shutdown.
+
+## Adding a search feature
+1. Create `XxxProvider.ahk` in `Src\Providers\`:
    ```autohotkey
    class XxxProvider {
-       static Id := "Xxx"                  ; 同时是 ALTRun.json 里 Features 下的键名
+       static Id := "Xxx"                  ; also the key under Features in ALTRun.json
 
-       static Init() {                     ; 启动时调用一次 (建立索引等)
+       static Init() {                     ; called once at startup (build an index and so on)
        }
 
        static Search(query) {              ; query: SearchQuery
@@ -62,55 +85,140 @@ site\               官网模板和生成脚本 (发布到 GitHub Pages)
        }
    }
    ```
-2. 在 `ALTRun.ahk` 里 `#Include`, 在 `App.Start()` 里 `ProviderRegistry.Register(XxxProvider)`
-3. 在 `AppSettings.Defaults()` 的 `Features` 下加 `"Xxx", Map("Enabled", 1, ...)`
-4. 界面文字: 英文加到 `I18n.ahk`, 翻译加到 `Resources\Lang\` 的每个语言文件 (测试会检查每个文件都有)
-5. 在 `Tests\RunTests.ahk` 里加测试
+2. `#Include` it in `ALTRun.ahk` and call `ProviderRegistry.Register(XxxProvider)` in `App.Start()`
+3. Add `"Xxx", Map("Enabled", 1, ...)` under `Features` in `AppSettings.Defaults()`
+4. UI text: English in `I18n.ahk`, translations in every language file in `Resources\Lang\` (a test checks that every file has them)
+5. Add tests to the matching class in `Tests\Suites\`
 
-可选:
-- `EditItem(item)` / `DeleteItem(item)`: 支持在结果里 `F3` 编辑、`Ctrl+Del` 删除; 结果的 `Source` 要指向设置里对应的那一条
-- `DeletePrompt(item)`: 删除前的确认文字
+Optional:
+- `EditItem(item)` / `DeleteItem(item)`: support `F3` editing and `Ctrl+Del` deleting in the results; the result's `Source` must point to the matching entry in the settings
+- `DeletePrompt(item)`: the confirmation text before deleting
 
-### ResultItem 字段
-| 字段 | 说明 |
+### ResultItem fields
+| Field | Description |
 |---|---|
-| Title / Subtitle | 两行文字 |
-| Icon | 文件路径 (取它的图标)、`folder:`、`url:`、`res:imageres.dll,-5314` |
-| Kind | `file` / `folder` / `url` / `text` / 空; 决定默认操作和操作面板 |
-| Arg / Arguments | 目标和命令行参数 |
-| OnRun | 自定义的执行函数, 优先于 Kind |
-| Actions | 额外的操作面板项 |
-| Uid | 学习排序和去重用的唯一标识 |
-| Score | 分数, 越大越靠前 (匹配分 0~100, 再加各功能自己的偏移) |
-| Valid / AutoComplete | `Valid = false` 时 Enter 只把 AutoComplete 填进输入框 |
-| Exclusive | 关键字模式: 只显示有这个标记的结果 |
-| Source / Provider | 设置里对应的那一条 / 产生结果的 Provider Id (由 ProviderRegistry 填) |
+| Title / Subtitle | The two lines of text |
+| Icon | A file path (its icon is used), `folder:`, `url:`, `res:imageres.dll,-5314` |
+| Kind | `file` / `folder` / `url` / `text` / empty; decides the default action and the action panel |
+| Arg / Arguments | Target and command-line arguments |
+| OnRun | A custom run function, takes precedence over Kind |
+| Actions | Extra action panel items |
+| Uid | Unique id for learned ranking and de-duplication |
+| Score | Score; higher comes first (match score 0–100 plus each feature's own offset) |
+| Valid / AutoComplete | With `Valid = false`, Enter only puts AutoComplete into the input box |
+| Exclusive | Keyword mode: only results with this flag are shown |
+| Source / Provider | The matching entry in the settings / the Id of the provider that produced the result (filled in by ProviderRegistry) |
 
-## 修改设置结构
-- 只是加新的设置项: 加到 `AppSettings.Defaults()` 即可, 旧文件缺少的项会自动补上
-- 改名、移动或改变已有项的结构: `AppSettings.CurrentVersion + 1`, 在 `SchemaMigration` 里加一个 `_FromN(data)` 把版本 N 转换成 N+1。升级前会自动备份为 `ALTRun.vN.backup.json`
+## Changing the settings structure
+- Only adding new settings: add them to `AppSettings.Defaults()`; entries missing from older files are filled in automatically
+- Renaming, moving or restructuring existing entries: `AppSettings.CurrentVersion + 1`, and add a `_FromN(data)` to `SchemaMigration` that converts version N to N+1. A backup `ALTRun.vN.backup.json` is made automatically before upgrading
 
-## 文档
-Wiki 的源文件在仓库的 `docs/wiki/`, 合并到 `main` 后自动发布到 Wiki (`.github/workflows/wiki.yml`)。请通过 PR 修改 `docs/wiki/`, 不要直接在网页上编辑。
+## Documentation
+The wiki sources are in `docs/wiki/` in the repository and are published to the wiki automatically after merging to `main` (`.github/workflows/wiki.yml`). Change `docs/wiki/` through pull requests; don't edit the wiki on the web.
 
-文档是中英双语的, 改一种语言时另一种也要一起改:
-- README 和贡献指南: `README.md` / `CONTRIBUTING.md` (英文, GitHub 默认显示) 和 `README.zh-CN.md` / `CONTRIBUTING.zh-CN.md` (中文), 开头互相链接
-- Wiki: 每页两个文件, 中文 `Usage.md`, 英文 `en-Usage.md`; 每页开头链接到另一种语言, 英文页之间的链接写 `en-` 的页面名。侧边栏 `_Sidebar.md` 分中英两组。程序里的帮助 (速查表、偏好设置的 `F1`) 按界面语言打开: 中文界面打开中文页, 其它语言打开 `en-` 页 (`HelpProvider.WikiPage`)。`WikiPages` 测试检查每页都有英文页、链接指向存在的页面
-- CHANGELOG 用中文写, 每个版本开头的概要后面加一句英文 (Release 的说明就是这一节)
+The documentation is bilingual; when you change one language, change the other one too:
+- README: `README.md` (English, shown by default on GitHub) and `README.zh-CN.md` (Chinese), linking to each other at the top
+- `CONTRIBUTING.md` and `SECURITY.md`: one file each, English first and then Chinese, with links to both languages at the top. `CONTRIBUTING.md` only covers reporting problems and the pull request essentials; the details are on this page
+- Wiki: two files per page, English `Usage.md` (the default, like `README.md`) and Chinese `Usage-zh.md`; each page links to the other language at the top, and links between Chinese pages use the `-zh` page names. The sidebar `_Sidebar.md` has an English and a Chinese group. Help opened from the program (cheat sheet, `F1` in Preferences) follows the UI language: the `-zh` page for a Chinese UI (Simplified or Traditional), the English page otherwise (`HelpProvider.WikiPage`). The `WikiPages` test checks that every page has a Chinese page and that links point to existing pages
+- Until 2026.10.20 the English pages were named `en-Usage` and the Chinese ones `Usage`. For older links and older ALTRun versions, `.github/workflows/wiki.yml` publishes one-line `en-Usage` pages pointing to the new names; it stops by itself once three releases after 2026.10.20 are out
+- CHANGELOG: test build sections are written in Chinese; a release section is English first and then Chinese, and is also the release notes (see the format under "Release process" below)
+- Links between wiki pages use the page name without `.md` (for example `[Themes](Themes)`; Chinese pages use `[主题](Themes-zh)`). If you're not comfortable with Chinese, change just the English page and say so in the pull request; a maintainer will add the other language
 
-官网 (https://zhugecaomao.github.io/ALTRun/) 的源文件在 `site/`: `index.html` 是中英文模板, `build.py` 填入最新版本号、下载链接和大小、下载次数、主题截图和最新版本的更新内容, 生成到 `_site/`。`.github/workflows/pages.yml` 在 main 上相关文件变化、Release 成功后和每天一次自动生成, 用 GitHub Pages 的官方 Actions 部署 (Settings → Pages → Source 选 "GitHub Actions")。本地预览: `python3 site/build.py && python3 -m http.server -d _site`。
+The website (https://zhugecaomao.github.io/ALTRun/) sources are in `site/`: `index.html` is a Chinese / English template, and `build.py` fills in the latest version, download link and size, download count, theme screenshots and the latest release notes, writing to `_site/`. `.github/workflows/pages.yml` builds it when related files change on main, after a successful release and once a day, and deploys it with the official GitHub Pages actions (Settings → Pages → Source: "GitHub Actions"). Local preview: `python3 site/build.py && python3 -m http.server -d _site`.
 
-界面截图在 `docs/images/screenshots/`, 由 `Tests\Screenshots\TakeScreenshots.ahk` 生成: 它在临时文件夹里准备一份演示用的 ALTRun (英文界面; 示例设置、自定义命令、示例文件都是虚构的通用内容, 不放个人或工作相关的信息), 逐个场景启动、输入、截图。界面改动后, 在 Actions 里运行 **Screenshots** (`.github/workflows/screenshots.yml`), 它在 Windows 上重新截图并提交回当前分支; 修改 `Tests/Screenshots/` 的推送也会自动运行。本地运行:
+Screenshots of the UI are in `docs/images/screenshots/` and are generated by `Tests\Screenshots\TakeScreenshots.ahk`: it prepares a demo ALTRun in a temporary folder (English UI; the sample settings, custom commands and files are made-up generic content with nothing personal or work-related), then starts it for each scene, types and takes a screenshot. After UI changes, run **Screenshots** in Actions (`.github/workflows/screenshots.yml`); it retakes the screenshots on Windows and commits them back to the current branch. Pushes that change `Tests/Screenshots/` run it automatically too. To run it locally:
 ```
-AutoHotkey64.exe Tests\Screenshots\TakeScreenshots.ahk [输出文件夹] [场景名...]
+AutoHotkey64.exe Tests\Screenshots\TakeScreenshots.ahk [output folder] [scene names...]
 ```
 
-## 代码规范
-见仓库的 [贡献指南](https://github.com/zhugecaomao/ALTRun/blob/main/CONTRIBUTING.zh-CN.md)。几个 AutoHotkey v2 的坑:
-- 名字不区分大小写: 局部变量不要和类同名 (`pinyin` 会遮住 `Pinyin` 类), 同一个类里方法和属性不要只差大小写
-- 很大的 `static X := Map(...)` 会报 "Declaration too long", 改成在方法里构造
-- 字符串按值传给函数时会整段复制: 在循环里反复把一个大字符串 (整个文件) 传给函数, 耗时会随长度平方增长, 要按引用传 (`&text`), 见 `Lib\JSON.ahk`
-- 调试日志 (`General.SaveLog`) 里 `Perf:` 开头的行是启动各阶段和慢搜索的耗时; 用 `Logger.Ms()` / `Logger.Time(label, start)` 记录新的
-- 嵌套函数修改外层变量时, 通过对象传回结果 (`state := {Result: ""}`)
-- 所有 `Edit` 控件都写明行数 (`r1 -Multi`), 否则长文字会让它自动变成多行
-- `#Warn All` 的警告都当作错误处理
+## Translating the interface
+The English texts live in `Src\Core\I18n.ahk` (`s["Prefs.Page.General"] := "General"`) and define every key; other languages are `Resources\Lang\<code>.json` (UTF-8) with the same keys and translated values. A key missing from a file is looked up in the `_fallback` language first (for example Traditional Chinese falls back to Simplified Chinese), then in English.
+
+| Special key | Purpose |
+|---|---|
+| `_name` | Name shown in Preferences → General → Language, written in that language (for example `日本語`) |
+| `_font` | Interface font (used when the theme's `FontName` is `auto`), for example `Microsoft YaHei UI`, `Yu Gothic UI` |
+| `_fallback` | Optional: which language to try first for missing keys |
+| `_comment` | A note for translators; the program ignores it |
+
+When translating: keep the same number of `{1}` `{2}` placeholders as the English text (their order may change); `\n` is a line break; keep Preferences descriptions short, Japanese overflows the page width most easily.
+
+**Adding a new interface text**: add the English text to `I18n.ahk` and the same key with its translation to all three JSON files.
+
+**Adding a language** (for example Korean):
+1. Copy `zh-CN.json` to `Resources\Lang\ko.json`, set `_name` (`한국어`) and `_font` (`Malgun Gothic`), and translate every entry
+2. No code changes: the language appears in Preferences automatically; "Auto" follows the Windows display language, and region codes (for example `zh-HK` → `zh-TW`) are mapped in `I18n.Aliases`
+3. Run the tests: `I18nLanguages` checks that every language file has no missing or extra keys, no empty values, matching placeholder counts and a `_font`; `PreferencesFit` / `PreferencesSpacing` check that every page fits and isn't crowded in that language; `I18nUnused` checks the English file has no unused keys
+4. The Wiki is Chinese and English only: help opens the Chinese pages for Simplified and Traditional Chinese, the English pages for every other language
+
+## Release process
+Versions are dates. `App.Version` in `Src\Core\App.ahk` and `;@Ahk2Exe-SetVersion` in `ALTRun.ahk` must match (the `ReleaseVersion` test checks this); every version heading in `CHANGELOG.md` has a link at the end of the file, and `[未发布]` (Unreleased) compares from the newest version (the `ChangelogLinks` test checks this).
+
+**Test builds** (every PR that changes the program):
+1. A four-part version `YYYY.MM.DD.N` (for example `2026.10.20.1`); it must be lower than the next release, or installed test builds won't see that release as an update
+2. In `CHANGELOG.md`, add a section `## [YYYY.MM.DD.N]` below `## [未发布]`: first paragraph "测试版。", second "Test build.", then 新增 / 改进 / 修复 (New / Improvements / Fixes, in Chinese); add the compare link `[YYYY.MM.DD.N]: .../compare/<previous>...<this>` at the end and make `[未发布]` compare from this version
+3. Run the **Release** workflow on the PR branch with `publish = false`; the build is under Artifacts at the bottom of the Actions page (`ALTRun_v<version>`)
+
+**Releases** (at most one per day):
+1. Open a pull request that sets the three-part version `YYYY.MM.DD`
+2. In `CHANGELOG.md`, merge the round's test build sections into one `## [YYYY.MM.DD]` section, English first and then Chinese, with the English a full translation of the Chinese:
+   - `### Summary` (one English paragraph) / `### Upgrade` / `### New` / `### Improvements` / `### Fixes`
+   - `---`
+   - `### 中文说明` (one Chinese paragraph) / `#### 升级` / `#### 新增` / `#### 改进` / `#### 修复`
+   - Don't use `##` headings inside the section (the Release workflow takes everything up to the next `##`); remove the test build sections and their compare links; at the end of the file, `[YYYY.MM.DD]: .../releases/tag/YYYY.MM.DD` and `[未发布]: .../compare/YYYY.MM.DD...HEAD`
+3. After merging to main, run **Release** on main with `publish = true`
+
+On Windows the Release workflow: reads the version → downloads AutoHotkey and Ahk2Exe → runs the unit tests → compiles `ALTRun.exe` → signs it when SignPath is configured → checks the program icon → runs the upgrade test with a 2.x `ALTRun.ini` → runs the single instance test on the compiled program → packages `ALTRun_v<version>.zip`. With `publish = true` it then: takes that CHANGELOG section as the release notes → creates the GitHub release (GitHub provides the SHA256 that one-key updates verify) → updates the Scoop and winget manifests in `packaging/` and commits them to main → submits the new version to winget-pkgs when `WINGET_TOKEN` is configured.
+
+## Benchmark
+GitHub → Actions → **Bench** → Run workflow: on a GitHub Windows VM, simulates daily use with real keystrokes and compares
+two versions (baseline: the latest release by default; candidate: the selected branch by default). Each version runs two rounds,
+alternating (A B B A), with ALTRun restarted for every round:
+
+- Random searches (start of app names, word initials, random letters, file search, custom commands): time to show the window, and from the last key to drawn results
+- Running programs / opening files and folders, the action panel (→), the calculator (result + Enter to copy), Quick Switch (folder panel + Ctrl+G),
+  opening and saving Preferences, snippet expansion
+- ALTRun's CPU time, memory, GDI / USER objects and handles at the end of each round
+- Background tasks over 50 ms (`Perf: slow`, in versions that log them) and errors from the ALTRun log
+
+By default each round has 500 searches + 100 of each other operation (about 50 minutes); the results (median / p90 / p99 / max) are in the run summary, and the raw data is an artifact.
+The test copies #Include one extra file, `Tests\Bench\BenchProbe.ahk`, which tells the driver (`BenchDriver.ahk`) whether the results for the current input have been drawn;
+the released program doesn't contain it. Pushing changes to the benchmark scripts to a branch other than main runs a short smoke test automatically.
+
+## Quality checks and limitations
+
+- `Tests\RunTests.ahk` covers pure logic such as matching, query parsing, settings migration, ranking, clipboard and indexes; it is not a full manual UI test.
+- A test is a static method of a class in `Tests\Suites\` whose name doesn't start with `_` (those are helpers); it runs without being registered anywhere. A test must put back the settings, UI language and logging switches it changes, or it fails, so tests don't depend on their order. Every setting the code reads must have a default in `AppSettings.Defaults()` (checked by `SettingsKeys`).
+- Windows CI runs unit tests and syntax checks, and checks Preferences layout, Wiki page pairs and documentation links.
+- Screenshot tests check major windows across languages and themes; they do not verify every interaction.
+- Performance benchmarks simulate common operations on Windows and compare before / after timings; compare runs in the same environment.
+- Wiki automation detects missing pages and broken links, but cannot tell whether explanations are accurate or cover every setting. When settings change, check the code and both language versions item by item.
+
+## Code style
+- **Files and classes**: one class per file, file name = class name, PascalCase (`SearchWindow.ahk` → `class SearchWindow`)
+- **Folders**: `Lib\` holds general-purpose libraries with nothing ALTRun-specific that could be reused in other projects; ALTRun's own code goes in the matching subfolder of `Src\`
+- **Naming**: PascalCase for classes, methods and properties; camelCase for local variables; internal members start with `_` (`_Layout()`, `_cache`)
+- **Avoid name clashes**: AutoHotkey names are case-insensitive, so don't give a local variable the name of a class (for example, don't call a variable `pinyin`, it hides the `Pinyin` class); methods and properties in the same class shouldn't differ only in case either
+- **Comments**: every file starts with a description of what it's for and how to use it; comments in the code explain "why" and are written in English. `git blame` skips commits listed in `.git-blame-ignore-revs` (such as the one-time translation of the comments) once you run `git config blame.ignoreRevsFile .git-blame-ignore-revs`; GitHub uses it automatically
+- **Settings**: add new settings to `AppSettings.Defaults()`; for changes to the structure of existing settings see "Changing the settings structure" above
+- **UI text**: the English original goes in `I18n.ahk`, translations go in every language file in `Resources\Lang\`, see "Translating the interface" above
+- **Encoding**: UTF-8; `ALTRun.ahk` stays UTF-8 with BOM + CRLF, every other file UTF-8 + LF
+
+A few AutoHotkey v2 pitfalls:
+- A very large `static X := Map(...)` fails with "Declaration too long"; build it inside a method instead
+- Strings passed to functions by value are copied whole: passing a big string (a whole file) to a function over and over in a loop makes the time grow with the square of its length; pass it by reference (`&text`), see `Lib\JSON.ahk`
+- Lines starting with `Perf:` in the debug log (`General.SaveLog`) are the timings of startup phases, slow searches and slow background tasks; use `Logger.Ms()` / `Logger.Time(label, start)` to record new ones, and wrap timer callbacks in `Logger.Watch(label, fn)` (logged only over 50 ms)
+- Don't download with `Download()` on the main thread (the whole program stops until it finishes); use `HttpGet.Start(url, done, fail)` to download in the background
+- To learn about changes in a folder, use `FolderWatcher` (`Lib\FolderWatcher.ahk`, call `Poll()` on a timer, it doesn't wait) instead of rescanning the folder on a timer; when closing it waits for the pending read to finish before releasing the buffer
+- When a nested function changes an outer variable, pass the result back through an object (`state := {Result: ""}`)
+- Give every `Edit` control a row count (`r1 -Multi`), otherwise long text turns it into a multi-line box (a test checks this)
+- Treat every `#Warn All` warning as an error
+
+## Submitting a pull request
+1. Create a branch from `main`; one pull request does one thing
+2. Before submitting, make sure all unit tests pass and `/validate` shows no warnings (see "Environment" above)
+3. Include tests with new features or fixes (`Tests\Suites\`)
+4. For UI changes, attach screenshots; the screenshots in the README / wiki are generated by the Screenshots workflow (see "Documentation" above) with the English UI and made-up sample data; don't include anything personal or work-related
+5. For user-visible changes, update the README (English and Chinese), `CHANGELOG.md` and, where needed, the wiki (the English page and the `-zh` Chinese page)
+
+By submitting code, you agree to release your contribution under the [GPL-3.0](https://github.com/zhugecaomao/ALTRun/blob/main/LICENSE) license.

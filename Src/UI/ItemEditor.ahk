@@ -1,42 +1,60 @@
 ;===============================================================================
-; ItemEditor.ahk - 通用的 "编辑一条记录" 对话框 (AutoHotkey v2)
+; ItemEditor.ahk - the general "edit one record" dialog (AutoHotkey v2)
 ;-------------------------------------------------------------------------------
-; 偏好设置里的自定义命令 / 片段 / 搜索引擎 / 自定义热键共用这一个对话框, 每种
-; 记录只需要描述有哪些字段:
+; Custom commands / snippets / search engines / custom hotkeys in Preferences share this dialog; each kind of
+; record only describes its fields:
 ;   fields := [
-;     {Key: "Title",  Label: "名称", Type: "text", Required: true},
-;     {Key: "Type",   Label: "类型", Type: "choice", Choices: [["File", "文件"], ["Folder", "文件夹"]]},
-;     {Key: "Target", Label: "目标", Type: "file"},        ; 文本框 + "..." 选择文件
-;       file 字段可以加 Button: {Label, OnClick(controls, g)}, 在 "..." 后面多一个按钮
-;     {Key: "Text",   Label: "正文", Type: "multiline"},
-;     {Key: "AutoExpand", Label: "自动展开", Type: "check"}
+;     {Key: "Title",  Label: "Name", Type: "text", Required: true},
+;     {Key: "Type",   Label: "Type", Type: "choice", Choices: [["File", "File"], ["Folder", "Folder"]]},
+;     {Key: "Target", Label: "Target", Type: "file"},      ; text box + "..." to choose a file
+;       a file field can have Button: {Label, OnClick(controls, g)}: one more button after "..."
+;     {Key: "Text",   Label: "Text", Type: "multiline"},
+;     {Key: "AutoExpand", Label: "Auto expand", Type: "check"}
 ;   ]
-; Type 可以是: text / multiline / choice / check / file / folder / number / hotkey
-; file 字段可以加 FolderWhen: ["Type", "Folder"] = 另一个字段 (Type) 选的是 Folder 时, "浏览" 改为选择文件夹
-; hotkey: 录制热键的框 (HotkeyBox, 可以录鼠标中键 / 侧键) + 复选框 "保留按键原来的功能" (写法前面的 ~)
-; Hint: 输入框下面的灰色说明; Check: (value, editedMap) => 提示文字, 点 OK 时有提示就问 "仍然保存吗?"
+; Type can be: text / multiline / choice / check / file / folder / number / hotkey
+; A file field can have FolderWhen: ["Type", "Folder"] = when another field (Type) is set to Folder, "Browse" chooses a folder instead
+; hotkey: a hotkey recording box (HotkeyBox, can record middle / side buttons) + a check box "keep the key's own function" (the ~ in front)
+; Hint: gray description below the box; Check: (value, editedMap) => warning text; on OK a warning asks "Save anyway?"
 ;
-; 用法:
-;   result := ItemEditor.Edit(ownerGui, "标题", fields, itemMap)
-;   返回编辑后的新 Map (保留 itemMap 里没有列出的键), 取消返回 ""
-;   ItemEditor.WithDefaults(itemMap, defaultsMap)   缺少的键用默认值补上 (旧设置里可能没有新加的键)
-;   ItemEditor.Field("Title", "Prefs.Col.Title", "text", true)   生成一个字段描述 (标签用 I18n 键)
+; Usage:
+;   result := ItemEditor.Edit(ownerGui, "Title", fields, itemMap)
+;   returns the edited new Map (keeping keys of itemMap not listed), "" when canceled
+;   ItemEditor.WithDefaults(itemMap, defaultsMap)   fills missing keys with the defaults (old settings may lack newer keys)
+;   ItemEditor.Field("Title", "Prefs.Col.Title", "text", true)   makes a field description (the label is an I18n key)
 ;===============================================================================
 
 class ItemEditor {
+    static RowGap := 14, HintGap := 4                                       ; space between rows, and between a box and the gray description below it
+
+    ; The lowest bottom of the controls added after first (the box, buttons, check box of one row)
+    static _RowBottom(g, first) {
+        bottom := 0, after := false
+        for ctrl in g {
+            if (ctrl.Hwnd = first.Hwnd) {
+                after := true
+                continue
+            }
+            if after {
+                ctrl.GetPos(, &y, , &h)
+                bottom := Max(bottom, y + h)
+            }
+        }
+        return bottom
+    }
 
     static Edit(owner, title, fields, item) {
-        state := {Result: ""}                                               ; 嵌套函数 OnOk 通过它把结果交回来
+        state := {Result: ""}                                               ; the nested function OnOk hands the result back through it
         g := Gui("+Owner" owner.Hwnd " -MinimizeBox", title)
         g.SetFont("s9", ThemeManager.FontName())
         g.MarginX := 14, g.MarginY := 12
         controls := Map(), passBoxes := Map()
-        labelW := 110, inputW := 540                                        ; 宽一些, 长路径和命令行参数才看得全
+        labelW := 110, inputW := 540                                        ; wider, so long paths and command-line arguments are visible in full
 
-        ; 单行输入框一定要写 r1: 不写行数时, 初始文字比框宽 (例如很长的路径) AHK 会自动
-        ; 变成多行并加高, 盖住下面的控件
+        ; single-line boxes must have r1: without a row count, an initial text wider than the box (e.g. a long path) makes AHK
+        ; turn it multi-line and taller, covering the controls below
         for field in fields {
-            g.AddText("xm w" labelW " y+10 Section", (field.Type = "check") ? "" : field.Label)   ; 复选框的文字写在框后面
+            g.AddText("xm w" labelW " y+" ItemEditor.RowGap " Section", (field.Type = "check") ? "" : field.Label)   ; a check box's text goes after the box
+            first := g.AddText("x+0 yp w0 h0")                              ; note which control the row starts with (the gray description goes below the row's lowest control)
             value := item.Has(field.Key) ? item[field.Key] : ""
             switch field.Type {
                 case "multiline":
@@ -51,7 +69,7 @@ class ItemEditor {
                     ctrl := g.AddDropDownList("x+8 ys-3 w" inputW, labels)
                     ctrl.Value := Max(1, ItemEditor._ChoiceIndex(field.Choices, value))
                 case "file", "folder":
-                    extraW := field.HasOwnProp("Button") ? 154 : 0           ; 字段自己的按钮 (例如 "下载网站图标")
+                    extraW := field.HasOwnProp("Button") ? 154 : 0           ; the field's own button (e.g. "Download site icon")
                     ctrl := g.AddEdit("x+8 ys-3 w" (inputW - 34 - extraW) " r1 -Multi", value)
                     browse := g.AddButton("x+4 yp-1 w30", I18n.T("Prefs.Browse"))
                     kind := field.HasOwnProp("FolderWhen") ? ItemEditor._KindGetter(field.FolderWhen, fields, controls) : field.Type
@@ -67,10 +85,10 @@ class ItemEditor {
                 default:
                     ctrl := g.AddEdit("x+8 ys-3 w" inputW " r1 -Multi", value)
             }
-            if field.HasOwnProp("Hint") {                                   ; 灰色小字说明, 和偏好设置里的一样
-                indent := (field.Type = "check") ? 18 : 0                   ; 复选框: 和框后面的文字对齐
-                g.SetFont("s8")
-                g.AddText("xs+" (labelW + 8 + indent) " y+3 w" (inputW - indent) " cGray", field.Hint)
+            if field.HasOwnProp("Hint") {                                   ; small gray description, as in Preferences
+                indent := (field.Type = "check") ? 18 : 0                   ; check box: aligned with the text after the box
+                g.SetFont("s8")                                             ; below the row's lowest control (a check box after a hotkey box is shorter than the box; placed by it, the description would touch the box)
+                g.AddText("xs+" (labelW + 8 + indent) " y" (ItemEditor._RowBottom(g, first) + ItemEditor.HintGap) " w" (inputW - indent) " cGray", field.Hint)
                 g.SetFont("s9")
             }
             controls[field.Key] := ctrl
@@ -84,13 +102,13 @@ class ItemEditor {
         owner.Opt("+Disabled")
         g.Show()
         WinWaitClose(g.Hwnd)
-        HotkeyBox.CancelActive()                                            ; 正在录制热键时关掉了对话框
+        HotkeyBox.CancelActive()                                            ; the dialog was closed while a hotkey was being recorded
         owner.Opt("-Disabled")
         try WinActivate("ahk_id " owner.Hwnd)
         return state.Result
 
         OnOk(*) {
-            g.Opt("+OwnDialogs")                                            ; 提示框挡住编辑窗口, 关掉提示框之前不能操作
+            g.Opt("+OwnDialogs")                                            ; the message box covers the edit window, which can't be used until it closes
             edited := item.Clone()
             for spec in fields {
                 input := controls[spec.Key]
@@ -113,7 +131,7 @@ class ItemEditor {
                 }
                 edited[spec.Key] := newValue
             }
-            for spec in fields {                                            ; Check: 全部字段读完后再检查, 可以看其它字段 (返回提示文字 = 有问题)
+            for spec in fields {                                            ; Check: run after all fields are read, so it can look at other fields (returns warning text = a problem)
                 if !spec.HasOwnProp("Check") || (warning := spec.Check.Call(edited[spec.Key], edited)) = ""
                     continue
                 if (MsgBox(warning "`n`n" I18n.T("Editor.SaveAnyway"), title, "YesNo Icon! Default2") != "Yes") {
@@ -126,7 +144,36 @@ class ItemEditor {
         }
     }
 
-    ; 字段自己的按钮: OnClick(controls, g), controls = 字段的 Key -> 控件
+    ; A list with one item per line in a roomy window of its own (PrefsForm.LinesButton): help text on top, a big
+    ; box that doesn't wrap (long paths stay on one line), OK / Cancel. Returns the lines (blank ones dropped), or "" on Cancel
+    static EditLines(owner, title, help, lines) {
+        state := {Result: ""}
+        g := Gui("+Owner" owner.Hwnd " -MinimizeBox", title)
+        g.SetFont("s9", ThemeManager.FontName())
+        g.MarginX := 14, g.MarginY := 12
+        width := 680
+        if (help != "")
+            g.AddText("w" width, help)
+        box := g.AddEdit("xm y+10 w" width " r16 +Multi -Wrap +HScroll +VScroll", TextTools.Join(lines))
+        g.AddButton("xm+" (width - 170) " y+14 w80 Default", "OK").OnEvent("Click", OnOk)
+        g.AddButton("x+10 yp w80", I18n.T("Prefs.Cancel")).OnEvent("Click", (*) => g.Destroy())
+        g.OnEvent("Escape", (*) => g.Destroy())
+        g.OnEvent("Close", (*) => g.Destroy())
+        owner.Opt("+Disabled")
+        g.Show()
+        SendMessage(0xB1, 0, 0, box.Hwnd)                                   ; EM_SETSEL: caret at the start, nothing selected
+        WinWaitClose(g.Hwnd)
+        owner.Opt("-Disabled")
+        try WinActivate("ahk_id " owner.Hwnd)
+        return state.Result
+
+        OnOk(*) {
+            state.Result := TextTools.SplitLines(box.Value)
+            g.Destroy()
+        }
+    }
+
+    ; The field's own button: OnClick(controls, g), controls = field Key -> control
     static _FieldButton(button, controls, g) {
         return (*) => button.OnClick.Call(controls, g)
     }
@@ -148,7 +195,7 @@ class ItemEditor {
         return spec
     }
 
-    ; 编辑对话框的所属窗口: 偏好设置打开时用它, 否则用一个隐藏的窗口 (不在任务栏显示)
+    ; Owner of the edit dialog: Preferences when it is open, otherwise a hidden window (not on the taskbar)
     static Owner() {
         static hiddenOwner := ""
         if IsObject(PreferencesWindow.Gui)
@@ -169,7 +216,7 @@ class ItemEditor {
         return (*) => ItemEditor._Browse(ctrl, kind, owner)
     }
 
-    ; 点 "浏览" 时才看另一个字段现在选的是什么: 选的是 when[2] 就选文件夹, 否则选文件
+    ; Only when "Browse" is clicked is the other field's current choice looked at: when[2] chooses a folder, otherwise a file
     static _KindGetter(when, fields, controls) {
         return () => ItemEditor.KindFor(when, fields, controls)
     }

@@ -10,7 +10,7 @@ class SearchWindow {
     static ActionSource := "", SavedQuery := "", AllActions := []
     static _actionsOnly := false                                            ; 直接打开的操作面板 (选中内容的操作): Esc / ← 关掉窗口
     static HistoryIndex := 0                         ; 正在看第几条搜索记录 (Knowledge.History, 1 = 最近), 0 = 没有在翻
-    static Marked := Map()                           ; Insert 标记的文件 / 文件夹: 平台路径标识 -> 路径
+    static Marked := SearchWindow._MarkedMap()
     static _historyDraft := ""                       ; 开始翻记录之前输入框里的文字, Ctrl+↓ 翻回来时恢复
     static Width := 0, Padding := 0, InputHeight := 0, RowHeight := 0, IconSize := 0, VisibleRows := 8
     static SelectedRadius := 0
@@ -20,24 +20,35 @@ class SearchWindow {
     static LastArea := "", HiddenAt := 0                                    ; 上次隐藏时所在屏幕的工作区和时间 (Hud 用)
     static _last := ""                                                      ; 上次隐藏时的搜索 {Text, FileMode, Selected} (KeepLastQuery)
     static _keepOpen := false                        ; 右键菜单 / 删除确认期间不因失去焦点而隐藏
+    static IconPrefetchDelay := 2000, PrepareDelay := 200, _prepareTimer := "", _prepared := false
+    static ListTop := 58
 
     static Create() {
         if IsObject(SearchWindow.Gui)
             SearchWindow.Gui.Destroy()
+        if SearchWindow._imageList
+            IL_Destroy(SearchWindow._imageList)
         SearchWindow.Width := Max(480, AppSettings.Appearance["Width"])
         SearchWindow.VisibleRows := Max(1, Min(9, AppSettings.Appearance["VisibleRows"]))
-        SearchWindow.Padding := 12, SearchWindow.InputHeight := 42, SearchWindow.RowHeight := 30
+        SearchWindow.Padding := Max(8, ThemeManager.Get("Padding"))
+        SearchWindow.InputHeight := Max(34, Round(ThemeManager.Get("InputFontSize") * 1.8))
+        SearchWindow.RowHeight := Max(24, ThemeManager.Get("RowHeight"))
+        SearchWindow.IconSize := Max(16, ThemeManager.Get("IconSize"))
+        SearchWindow.ListTop := SearchWindow.InputHeight + SearchWindow.Padding * 2
+        IconCache.Size := SearchWindow.IconSize
         SearchWindow._visible := false, SearchWindow._focusArmed := false
         g := Gui("+AlwaysOnTop +ToolWindow -MinimizeBox", App.Name)
         g.MarginX := 0, g.MarginY := 0
-        g.SetFont("s12", ThemeManager.FontName())
-        searchBox := g.AddEdit("x12 y12 w" (SearchWindow.Width - 24) " r1 -Multi -WantReturn")
-        searchBox.SetCue(I18n.T("Search.Placeholder"))
+        g.BackColor := ThemeManager.Get("Background")
+        g.SetFont("s" ThemeManager.Get("InputFontSize"), ThemeManager.FontName())
+        pad := SearchWindow.Padding, contentWidth := SearchWindow.Width - pad * 2
+        searchBox := g.AddEdit("x" pad " y" pad " w" contentWidth " h" SearchWindow.InputHeight " r1 -Multi -WantReturn")
+        searchBox.SetCue(SearchWindow.Placeholder())
         searchBox.OnEvent("Change", (*) => SearchWindow._OnInputChange())
-        list := g.AddListView("x12 y58 w" (SearchWindow.Width - 24) " h" (SearchWindow.RowHeight + 4) " Hidden -Hdr -Multi Report", ["Result", "Details", "Key"])
-        list.SetFont("s10")
-        list.ModifyCol(1, Round((SearchWindow.Width - 92) * 0.48))
-        list.ModifyCol(2, Round((SearchWindow.Width - 92) * 0.52))
+        list := g.AddListView("x" pad " y" SearchWindow.ListTop " w" contentWidth " h" (SearchWindow.RowHeight + 4) " Hidden -Hdr -Multi Report", ["Result", "Details", "Key"])
+        list.SetFont("s" ThemeManager.Get("TitleFontSize"))
+        list.ModifyCol(1, Round((contentWidth - 68) * 0.48))
+        list.ModifyCol(2, Round((contentWidth - 68) * 0.52))
         list.ModifyCol(3, 64)
         SearchWindow._imageList := IL_Create(16, 16)
         list.SetImageList(SearchWindow._imageList, 1)
@@ -54,6 +65,7 @@ class SearchWindow {
         }
         g.Show("Hide w" SearchWindow.Width " h" SearchWindow._WindowHeight(0))
         SearchWindow._hideTimer := () => SearchWindow._HideIfInactive()
+        BackgroundWork.IsBusy := () => !SearchWindow._AllowsBackgroundWork()
     }
 
     static IsVisible() {
@@ -69,21 +81,34 @@ class SearchWindow {
         if (!IsObject(SearchWindow.Gui) || SearchWindow._showing)
             return
         SearchWindow._showing := true
+        if (SearchWindow._prepareTimer != "")
+            SetTimer(SearchWindow._prepareTimer, 0)
         try SearchWindow._Show(text)
         finally SearchWindow._showing := false
     }
 
     static _Show(text) {
+        if (text = "" && SearchWindow.IsVisible()) {
+            selection := Platform.EditSelection(SearchWindow.Input)
+            Usage.Count("Show")
+            SearchWindow.Gui.Show()
+            SearchWindow.Input.Focus()
+            Platform.SelectEdit(SearchWindow.Input, selection.Start, selection.End)
+            return
+        }
         App.RememberActiveWindow()
-        SearchWindow._actionsOnly := false, SearchWindow.Marked := Map()
+        SearchWindow._actionsOnly := false, SearchWindow.Marked := SearchWindow._MarkedMap()
         Usage.Count("Show")
         last := SearchWindow._last
         restore := text = "" && AppSettings.General["KeepLastQuery"] && IsObject(last) && last.Text != ""
+        prepared := !restore && text = "" && SearchWindow.IsPrepared()
+        SearchWindow._prepared := false
         SearchWindow.Mode := "results", SearchWindow.FileMode := restore ? last.FileMode : false
         SearchWindow._tip := AppSettings.General["ShowTips"] ? HelpProvider.NextTip() : ""
         SearchWindow._UpdateCueBanner()
         SearchWindow.HistoryIndex := 0
-        SearchWindow._SetInput(restore ? last.Text : text)
+        if !prepared
+            SearchWindow._SetInput(restore ? last.Text : text)
         if restore
             SearchWindow.MoveSelection(last.Selected - SearchWindow.Selected)
         appearance := AppSettings.Appearance
@@ -97,6 +122,8 @@ class SearchWindow {
         Platform.SelectEdit(SearchWindow.Input, restore ? 0 : length, length)
         if AppSettings.General["HideOnDeactivate"]
             SetTimer(SearchWindow._hideTimer, 200)
+        if prepared
+            SetTimer(() => SearchWindow._RunSearch(), -1)
     }
 
     static Place(area, width, maxHeight, position := "") {
@@ -147,6 +174,7 @@ class SearchWindow {
             SearchWindow._RememberQuery()
             SearchWindow._visible := false
             SearchWindow.Gui.Hide()
+            SearchWindow._PrepareLater()
         }
         LargeType.Close()
     }
@@ -155,6 +183,32 @@ class SearchWindow {
         actions := (SearchWindow.Mode = "actions")
         SearchWindow._last := {Text: actions ? SearchWindow.SavedQuery : SearchWindow.Input.Value
                              , FileMode: SearchWindow.FileMode, Selected: actions ? 1 : Max(1, SearchWindow.Selected)}
+    }
+
+    static _AllowsBackgroundWork() => !SearchWindow._showing && !SearchWindow.IsVisible()
+
+    static _PrepareLater() {
+        if AppSettings.General["KeepLastQuery"]
+            return
+        if (SearchWindow._prepareTimer = "")
+            SearchWindow._prepareTimer := () => SearchWindow.PrepareEmpty()
+        SetTimer(SearchWindow._prepareTimer, -SearchWindow.PrepareDelay)
+    }
+
+    static PrepareEmpty() {
+        if (!IsObject(SearchWindow.Gui) || !SearchWindow._AllowsBackgroundWork())
+            return
+        SearchWindow.Mode := "results", SearchWindow.FileMode := false
+        SearchWindow._SetInput("")
+        SearchWindow._prepared := true
+    }
+
+    static IsPrepared() => SearchWindow._prepared && SearchWindow.Mode = "results" && !SearchWindow.FileMode && SearchWindow.Input.Value = ""
+
+    static _MarkedMap() {
+        marks := Map()
+        marks.CaseSense := "On"
+        return marks
     }
 
     static Toggle() {
@@ -197,7 +251,7 @@ class SearchWindow {
         }
         browse := FileSearchProvider.BrowsePath(text)                       ; 浏览文件夹: 只按最后一段 (过滤的文字) 高亮, 路径里的词不算
         SearchWindow.HighlightText := IsObject(browse) ? browse.Filter : text
-        results := SearchWindow.FileMode ? ProviderRegistry.SearchFiles(text) : ProviderRegistry.Search(text)
+        results := SearchWindow.FileMode ? ProviderRegistry.SearchOnly(FileSearchProvider, text) : ProviderRegistry.Search(text)
         if (gen != SearchWindow._searchGen)                                 ; 搜索期间又输入了字: 用新的那次的结果
             return
         SearchWindow.SetResults(results)
@@ -237,19 +291,23 @@ class SearchWindow {
     }
 
     static _WindowHeight(visibleCount) {
-        return 70 + (visibleCount ? visibleCount * SearchWindow.RowHeight + 12 : 0)
+        return SearchWindow.ListTop + SearchWindow.Padding + (visibleCount ? visibleCount * SearchWindow.RowHeight : 0)
     }
 
     static _Layout() {
         count := SearchWindow._VisibleCount()
         list := SearchWindow.List
+        if !count
+            list.Visible := false
         if (list.GetCount() != count) {
             list.Delete()
             Loop count
                 list.Add("", "", "", "")
         }
-        list.Move(, , , Max(SearchWindow.RowHeight + 4, count * SearchWindow.RowHeight))
-        list.Visible := count > 0
+        if count {
+            list.Move(, , , Max(SearchWindow.RowHeight + 4, count * SearchWindow.RowHeight))
+            list.Visible := true
+        }
         SearchWindow._Repaint()
         if (SearchWindow.IsVisible() && SearchWindow._shownRows != count) {
             SearchWindow.Gui.Show("NA w" SearchWindow.Width " h" SearchWindow._WindowHeight(count))
@@ -282,11 +340,14 @@ class SearchWindow {
         return SearchWindow.Results[SearchWindow.Selected]
     }
 
-    static MoveSelection(step) {
+    static MoveSelection(step, wrap := false) {
         count := SearchWindow.Results.Length
         if !count
             return
-        SearchWindow.Selected := Max(1, Min(count, SearchWindow.Selected + step))
+        if (wrap && (SearchWindow.Selected + step > count || SearchWindow.Selected + step < 1))
+            SearchWindow.Selected := step > 0 ? 1 : count
+        else
+            SearchWindow.Selected := Max(1, Min(count, SearchWindow.Selected + step))
         visible := SearchWindow.VisibleRows
         if (SearchWindow.Selected <= SearchWindow.Offset)
             SearchWindow.Offset := SearchWindow.Selected - 1
@@ -305,7 +366,7 @@ class SearchWindow {
             Knowledge.Record(SearchWindow.SavedQuery, source.Uid)
             RecentProvider.Remember(source)
             Usage.CountItem(source)
-            SearchWindow.Marked := Map()
+            SearchWindow.Marked := SearchWindow._MarkedMap()
             SearchWindow.Hide()
             SearchWindow._SafeRun(() => item.OnRun.Call(source))
             return
@@ -360,9 +421,9 @@ class SearchWindow {
             for key, markedPath in SearchWindow.Marked
                 paths.Push(markedPath)
             item := ResultItem(I18n.T("Search.MarkedItems", paths.Length), "", {Icon: "folder:"})
-            actions := ActionCatalog.ListForMany(paths)
+            actions := ResultActions.ListForMany(paths)
         } else
-            actions := ActionCatalog.ListFor(item)
+            actions := ResultActions.ListFor(item)
         if !actions.Length
             return false
         SearchWindow.SavedQuery := SearchWindow.Input.Value
@@ -395,8 +456,13 @@ class SearchWindow {
         if SearchWindow.FileMode
             text := I18n.T("Search.FilesPlaceholder")
         else
-            text := (SearchWindow._tip != "") ? SearchWindow._tip : I18n.T("Search.Placeholder")
+            text := (SearchWindow._tip != "") ? SearchWindow._tip : SearchWindow.Placeholder()
         SearchWindow.Input.SetCue(text)
+    }
+
+    static Placeholder() {
+        text := AppSettings.Appearance.Get("Placeholder", "")
+        return text = "" ? I18n.T("Search.Placeholder") : Trim(text)
     }
 
     static _TargetItem() {
@@ -414,7 +480,7 @@ class SearchWindow {
     static _EditSelected() {
         item := SearchWindow._TargetItem()
         isFallback := IsObject(item) && item.Provider = ""                  ; 没有匹配时的兜底项 (网页搜索等)
-        if (IsObject(item) && !isFallback && ActionCatalog.CanEdit(item))
+        if (IsObject(item) && !isFallback && ResultActions.CanEdit(item))
             return SearchWindow._Later(() => SearchWindow.EditItem(item))
         query := Trim(SearchWindow._CurrentQuery())
         if (query != "" && (!IsObject(item) || isFallback))                 ; 没有结果: 用输入的文字新建一条命令
@@ -425,7 +491,7 @@ class SearchWindow {
     static EditItem(item) {
         query := SearchWindow._CurrentQuery()
         SearchWindow.Hide()
-        SearchWindow._SafeRun(() => ActionCatalog.EditItem(item))
+        SearchWindow._SafeRun(() => ResultActions.EditItem(item))
         SearchWindow._Reopen(query)
     }
 
@@ -439,10 +505,10 @@ class SearchWindow {
         query := SearchWindow._CurrentQuery()
         wasVisible := SearchWindow.IsVisible()
         SearchWindow._keepOpen := true
-        answer := MsgBox(ActionCatalog.DeletePrompt(item), App.Name, "YesNo Icon! Default2" (wasVisible ? " Owner" SearchWindow.Gui.Hwnd : ""))
+        answer := MsgBox(ResultActions.DeletePrompt(item), App.Name, "YesNo Icon! Default2" (wasVisible ? " Owner" SearchWindow.Gui.Hwnd : ""))
         SearchWindow._keepOpen := false
         if (answer = "Yes")
-            SearchWindow._SafeRun(() => ActionCatalog.DeleteItem(item))
+            SearchWindow._SafeRun(() => ResultActions.DeleteItem(item))
         selected := SearchWindow.Selected
         SearchWindow._Reopen(query)
         if (answer = "Yes" && selected > 1)
@@ -463,12 +529,12 @@ class SearchWindow {
             SearchWindow._Repaint()
         }
         item := SearchWindow._TargetItem()
-        if (!IsObject(item) || !item.Valid && !ActionCatalog.CanEdit(item))
+        if (!IsObject(item) || !item.Valid && !ResultActions.CanEdit(item))
             return
         if (SearchWindow.Mode = "actions")                                  ; 操作面板里右键 = 执行这一项
             return SearchWindow._Execute()
         contextMenu := Menu()
-        for action in ActionCatalog.ListFor(item) {
+        for action in ResultActions.ListFor(item) {
             label := StrReplace(action.Title, "&", "&&") (action.Subtitle != "" ? "`t" action.Subtitle : "")
             contextMenu.Add(label, SearchWindow._MenuHandler(action, item))
             if (A_Index = 1)
@@ -569,10 +635,10 @@ class SearchWindow {
                 }
                 return
             case 0x09:                                                      ; Tab
-                SearchWindow._AutoComplete()
+                SearchWindow._TabKey(ctrl, shift)
                 return 0
             case 0x27:                                                      ; →
-                if (SearchWindow._CaretAtEnd() && SearchWindow._OpenActions())
+                if (SearchWindow._CanOpenActions(lParam) && SearchWindow._OpenActions())
                     return 0
                 return
             case 0x25:                                                      ; ←
@@ -600,7 +666,7 @@ class SearchWindow {
                 App.EditSettingsFile()
                 return 0
             case 0x2E:                                                      ; Ctrl+Del
-                if (ctrl && SearchWindow._CaretAtEnd() && IsObject(item := SearchWindow._TargetItem()) && ActionCatalog.CanDelete(item)) {
+                if (ctrl && SearchWindow._CaretAtEnd() && IsObject(item := SearchWindow._TargetItem()) && ResultActions.CanDelete(item)) {
                     SearchWindow._Later(() => SearchWindow.DeleteItem(item))
                     return 0
                 }
@@ -639,7 +705,11 @@ class SearchWindow {
                 SearchWindow._CopySelected()
                 return 0
             case 0x4C:                                                      ; Ctrl+L
-                SearchWindow._ShowLargeType()
+                if LargeType.Enabled()
+                    SearchWindow._ShowLargeType()
+                return 0
+            case 0x45:
+                SearchWindow._EditFileSelected()
                 return 0
             case 0xBC:                                                      ; Ctrl+,
                 SearchWindow.Hide()
@@ -698,6 +768,23 @@ class SearchWindow {
             return
         text := item.AutoComplete != "" ? item.AutoComplete : item.Kind = "folder" ? RTrim(item.Arg, "\/") A_DirSeparator : item.Title
         SearchWindow._SetInput(text)
+    }
+
+    static _TabKey(ctrl := false, shift := false) {
+        if (!ctrl && AppSettings.General["TabKey"] = "Next")
+            SearchWindow.MoveSelection(shift ? -1 : 1, true)
+        else
+            SearchWindow._AutoComplete()
+    }
+
+    static _CanOpenActions(lParam := 0) => !(lParam & 0x40000000) && SearchWindow._CaretAtEnd() && !SearchWindow._HasTextSelection()
+
+    static _EditFileSelected() {
+        item := SearchWindow.SelectedItem()
+        if !(IsObject(item) && item.Kind = "file" && IsObject(ActionCatalog.EditorFor(item.Arg)))
+            return
+        SearchWindow.Hide()
+        SearchWindow._SafeRun(() => ActionCatalog.EditFile(item.Arg))
     }
 
     static _CopySelected() {
