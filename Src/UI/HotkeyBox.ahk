@@ -52,6 +52,10 @@ class HotkeyBox {
     }
 
     static IsAlive(state) {
+#if KEYSHARP
+        if state.Ctrl.ToClr().IsDisposed
+            return false
+#endif
         try return (state.Ctrl.Hwnd = state.Hwnd)
         return false
     }

@@ -1,4 +1,4 @@
-; PreferencesWindow.ahk - Portable settings and command editors using toolkit events.
+; PreferencesWindow.ahk - Themed portable settings with native fields and a painted window frame.
 
 class PreferencesWindow {
     static Gui := "", Working := "", Pages := [], Binds := [], PageList := ""
@@ -17,6 +17,10 @@ class PreferencesWindow {
     static _positionReset := false
     static _pageKey := "", _wider := Map()                                  ; 正在建的页; 标签放不下的页 -> 需要的左列宽度
     static _labelWidths := Map()                                            ; "语言 页" -> 加宽后的左列宽度 (打开过一次就记住)
+    static Chrome := "", Palette := Map(), UiFont := 10, HintFont := 9
+    static WindowW := 980, WindowH := 700, _viewHeight := 700
+    static SidebarW := 224, HeaderH := 92, RowGap := 10
+    static Footer := []
 
     static Show(pageIndex := 1, x := "", y := "") {
         if IsObject(PreferencesWindow.Gui) {
@@ -30,28 +34,68 @@ class PreferencesWindow {
         PreferencesWindow.Pages := [], PreferencesWindow.Binds := [], PreferencesWindow._lists := Map()
         PreferencesWindow._dirty := false, PreferencesWindow._ready := false, PreferencesWindow._page := 0
         PreferencesWindow._positionReset := false
-        g := Gui("-MinimizeBox", I18n.T("Prefs.Title"))
-        g.SetFont("s9", ThemeManager.FontName())
+        PreferencesWindow.Palette := PreferencesWindow.Colors()
+        PreferencesWindow.UiFont := ThemeManager.Density = "Compact" ? 9.5 : ThemeManager.Density = "Comfortable" ? 10.5 : 10
+        PreferencesWindow.HintFont := Max(8.5, PreferencesWindow.UiFont - 1)
+        PreferencesWindow.RowGap := ThemeManager.Density = "Compact" ? 8 : 10
+        g := Gui("-MinimizeBox +AutoScroll", I18n.T("Prefs.Title"))
+        g.BackColor := PreferencesWindow.Palette["Background"]
+        g.MarginX := 0, g.MarginY := 0
+        g.SetFont("s" PreferencesWindow.UiFont " c" PreferencesWindow.Palette["Text"], ThemeManager.FontName())
         PreferencesWindow.Gui := g
-        pageList := g.AddListView("x12 y12 w160 h" (PreferencesWindow.ButtonY - 24) " -Hdr -Multi Report", [""])
+        MonitorGetWorkArea(MonitorGetPrimary(), &left, &top, &right, &bottom)
+        screenScale := LauncherCanvas.ScreenScale(g)
+        PreferencesWindow.WindowW := Max(740, Min(980, Floor((right - left) / screenScale) - 64))
+        PreferencesWindow._viewHeight := Max(500, Min(900, Floor((bottom - top) / screenScale) - 74))
+        PreferencesWindow.ContentX := PreferencesWindow.SidebarW + 28
+        PreferencesWindow.ContentW := PreferencesWindow.WindowW - PreferencesWindow.ContentX - 30
+        PreferencesWindow.ButtonH := ThemeManager.Density = "Compact" ? 30 : 34
+        PreferencesWindow.Chrome := g.AddPicture("x0 y0 w" PreferencesWindow.WindowW " h100")
+        pageList := g.AddListView("x16 y108 w" (PreferencesWindow.SidebarW - 30) " h460 -Hdr -Multi Report -E0x200 c" PreferencesWindow.Palette["Text"] " Background" PreferencesWindow.Palette["Sidebar"], [""])
+        navigationColors := PreferencesWindow.Palette.Clone()
+        navigationColors["Surface"] := navigationColors["Sidebar"]
+        PreferencesWindow.StyleNative(pageList, "Navigation", navigationColors)
+        try pageList.ToClr().RowHeight := ThemeManager.Density = "Compact" ? 29 : 33
         PreferencesWindow.PageList := pageList
         PreferencesWindow._BuildPages()
+        contentBottom := PreferencesWindow.HeaderH
+        for page in PreferencesWindow.Pages {
+            page.Bottom := PreferencesWindow.HeaderH
+            for control in page.Controls {
+                control.GetPos(, &controlY, , &controlH)
+                contentBottom := Max(contentBottom, controlY + controlH)
+                page.Bottom := Max(page.Bottom, controlY + controlH)
+            }
+        }
+        PreferencesWindow.ButtonY := Max(620, contentBottom + 24)
+        PreferencesWindow.WindowH := PreferencesWindow.ButtonY + 60
+        PreferencesWindow.Chrome.Move(, , , PreferencesWindow.WindowH)
+        pageList.Move(, , , Min(PreferencesWindow.Pages.Length * 34 + 12, PreferencesWindow.ButtonY - 122))
         for page in PreferencesWindow.Pages
             pageList.Add("", page.Name)
-        pageList.ModifyCol(1, 154)
+        pageList.ModifyCol(1, PreferencesWindow.SidebarW - 38)
         pageList.OnEvent("ItemSelect", (ctrl, row, selected) => selected ? PreferencesWindow.SelectPage(row) : "")
         pageList.OnEvent("Click", (ctrl, row) => row ? PreferencesWindow.SelectPage(row) : "")
-        g.AddButton("x190 y" PreferencesWindow.ButtonY " w85", I18n.T("Prefs.Help")).OnEvent("Click", (*) => PreferencesWindow.Help())
-        g.AddButton("x475 yp w85 Default", "OK").OnEvent("Click", (*) => PreferencesWindow.OK())
-        g.AddButton("x570 yp w85", I18n.T("Prefs.Cancel")).OnEvent("Click", (*) => PreferencesWindow.Cancel())
-        PreferencesWindow.ApplyButton := g.AddButton("x665 yp w85 Disabled", I18n.T("Prefs.Apply"))
+        buttonColors := " Background" PreferencesWindow.Palette["Surface"] " c" PreferencesWindow.Palette["Text"]
+        help := g.AddButton("x" PreferencesWindow.ContentX " y" PreferencesWindow.ButtonY " w90 h" PreferencesWindow.ButtonH buttonColors, I18n.T("Prefs.Help"))
+        help.OnEvent("Click", (*) => PreferencesWindow.Help())
+        okay := g.AddButton("x" (PreferencesWindow.WindowW - 330) " yp w90 h" PreferencesWindow.ButtonH " Default" buttonColors, "OK")
+        okay.OnEvent("Click", (*) => PreferencesWindow.OK())
+        cancel := g.AddButton("x+10 yp w90 h" PreferencesWindow.ButtonH buttonColors, I18n.T("Prefs.Cancel"))
+        cancel.OnEvent("Click", (*) => PreferencesWindow.Cancel())
+        PreferencesWindow.ApplyButton := g.AddButton("x+10 yp w100 h" PreferencesWindow.ButtonH " Disabled Background" PreferencesWindow.Palette["Selected"] " c" PreferencesWindow.Palette["SelectedText"], I18n.T("Prefs.Apply"))
+        PreferencesWindow.Footer := [help, okay, cancel, PreferencesWindow.ApplyButton]
+        for button in PreferencesWindow.Footer
+            PreferencesWindow.StyleNative(button, button = PreferencesWindow.ApplyButton ? "PrimaryButton" : "Button", PreferencesWindow.Palette)
         PreferencesWindow.ApplyButton.OnEvent("Click", (*) => PreferencesWindow.Apply())
         g.OnEvent("Close", (*) => PreferencesWindow.Cancel())
         g.OnEvent("Escape", (*) => PreferencesWindow.Cancel())
+        g.OnEvent("DpiChanged", (*) => PreferencesWindow._PaintChrome())
         if !IsInteger(pageIndex)
             pageIndex := PreferencesWindow._PageIndex(pageIndex)
         PreferencesWindow._SelectRow(Max(1, Min(pageIndex, PreferencesWindow.Pages.Length)))
-        g.Show((IsInteger(x) && IsInteger(y) ? "x" x " y" y " " : "") "w765 h" (PreferencesWindow.ButtonY + 41))
+        PreferencesWindow._PaintChrome()
+        g.Show((IsInteger(x) && IsInteger(y) ? "x" x " y" y " " : "") "w" (PreferencesWindow.WindowW + 18) " h" Min(PreferencesWindow.WindowH, PreferencesWindow._viewHeight))
         pageList.Focus()
         PreferencesWindow._ready := true
     }
@@ -59,6 +103,54 @@ class PreferencesWindow {
     static _SelectRow(index) {
         PreferencesWindow.SelectPage(index)
         PreferencesWindow.PageList.Modify(index, "Select Focus Vis")
+    }
+
+    static Colors() {
+        background := PreferencesWindow._Color("Background", "F6F7FA")
+        border := PreferencesWindow._Color("Border", "D9DEE8")
+        return Map("Background", background, "Sidebar", PreferencesWindow._Mix(background, border, 0.18)
+            , "Surface", PreferencesWindow._Mix(background, border, ThemeManager.IsDarkColor(background) ? 0.3 : 0.1), "Border", border
+            , "Text", PreferencesWindow._Color("Title", "202530"), "InputText", PreferencesWindow._Color("InputText", "202530")
+            , "Muted", PreferencesWindow._Color("Subtitle", "667085"), "Accent", PreferencesWindow._Color("Highlight", "2563EB")
+            , "Selected", PreferencesWindow._Color("SelectedBackground", "E7EDFA"), "SelectedText", PreferencesWindow._Color("SelectedTitle", "202530"))
+    }
+
+    static _Color(key, fallback) {
+        value := ThemeManager.Get(key)
+        return RegExMatch(value, "i)^[0-9a-f]{6}$") ? value : fallback
+    }
+
+    static _Mix(first, second, amount) {
+        first := Integer("0x" first), second := Integer("0x" second), result := ""
+        for shift in [16, 8, 0]
+            result .= Format("{:02X}", Round(((first >> shift) & 255) * (1 - amount) + ((second >> shift) & 255) * amount))
+        return result
+    }
+
+    static _PaintChrome() {
+        if !IsObject(PreferencesWindow.Chrome) || !IsObject(PreferencesWindow.Gui)
+            return
+        colors := PreferencesWindow.Palette
+        width := PreferencesWindow.WindowW, height := PreferencesWindow.WindowH
+        canvas := Image.Create(width, height, , PreferencesWindow.Gui.PixelScale)
+        try {
+            canvas.FillRoundRect(0, 0, width, height, 0, "0xFF" colors["Background"])
+            canvas.FillRoundRect(0, 0, PreferencesWindow.SidebarW, height, 0, "0xFF" colors["Sidebar"])
+            canvas.DrawLine(PreferencesWindow.SidebarW, 0, PreferencesWindow.SidebarW, height, "0xFF" colors["Border"], 1)
+            font := ThemeManager.FontName()
+            try canvas.DrawImage(App.IconFile, 22, 22, 28, 28)
+            canvas.DrawText(App.Name, 61, 24, "0xFF" colors["Text"], "s14 bold", font)
+            canvas.DrawText(I18n.T("Prefs.Title"), 22, 67, "0xFF" colors["Muted"], "s" PreferencesWindow.HintFont, font)
+            title := PreferencesWindow._page ? PreferencesWindow.Pages[PreferencesWindow._page].Name : I18n.T("Prefs.Title")
+            canvas.FillRoundRect(PreferencesWindow.SidebarW + 12, 25, 3, 32, 1, "0xFF" colors["Accent"])
+            canvas.DrawText(title, PreferencesWindow.ContentX, 22, "0xFF" colors["Text"], "s19 bold", font)
+            canvas.DrawLine(PreferencesWindow.ContentX, 73, width - 30, 73, "0xFF" colors["Border"], 1)
+            canvas.DrawLine(PreferencesWindow.ContentX, PreferencesWindow.ButtonY - 16, width - 30, PreferencesWindow.ButtonY - 16, "0xFF" colors["Border"], 1)
+            canvas.DrawText(I18n.T("Prefs.Version", App.Version), 22, height - 42, "0xFF" colors["Muted"], "s" PreferencesWindow.HintFont, font)
+            PreferencesWindow.Chrome.Value := "HBITMAP:" canvas.ToBitmap()
+        } finally {
+            canvas.Dispose()
+        }
     }
 
     static _PageIndex(nameKey) {
@@ -82,13 +174,45 @@ class PreferencesWindow {
         for index, page in PreferencesWindow.Pages
             for ctrl in page.Controls
                 ctrl.Visible := index = pageIndex
+        PreferencesWindow._LayoutPage()
+        PreferencesWindow._PaintChrome()
+    }
+
+    static _LayoutPage() {
+        if !PreferencesWindow._page || !PreferencesWindow.Footer.Length
+            return
+        PreferencesWindow.ButtonY := Max(620, PreferencesWindow.Pages[PreferencesWindow._page].Bottom + 28)
+        PreferencesWindow.WindowH := PreferencesWindow.ButtonY + 60
+        PreferencesWindow.Chrome.Move(, , , PreferencesWindow.WindowH)
+        PreferencesWindow.PageList.Move(, , , Min(PreferencesWindow.Pages.Length * 34 + 12, PreferencesWindow.ButtonY - 122))
+        for button in PreferencesWindow.Footer
+            button.Move(, PreferencesWindow.ButtonY)
+        if PreferencesWindow._ready
+            PreferencesWindow.Gui.Show("NA h" Min(PreferencesWindow.WindowH, PreferencesWindow._viewHeight))
+    }
+
+    static StyleNative(control, kind, colors) {
+#if WINDOWS
+        ALTRunStylePreferenceControl(control.ToClr(), kind, colors["Surface"], colors["InputText"], colors["Border"], colors["Selected"], colors["SelectedText"], colors["Background"], colors["Text"], colors["Muted"])
+#elif LINUX
+        ALTRunStyleGtkPreferenceControl(control.ToClr(), kind, colors["Surface"], colors["InputText"], colors["Border"], colors["Selected"], colors["SelectedText"], colors["Background"], colors["Text"], colors["Muted"])
+#endif
+    }
+
+    static FitText(control) {
+#if WINDOWS || LINUX
+        control.GetPos(, , &width, &height)
+        preferred := ALTRunPreferenceTextHeight(control.ToClr(), width)
+        if preferred > height
+            control.Move(, , , preferred)
+#endif
     }
 
     static Close() {
         HotkeyBox.CancelActive()                                            ; 正在录制热键时关窗口: 先结束录制, 恢复 ALTRun 的热键
         if IsObject(PreferencesWindow.Gui)
             PreferencesWindow.Gui.Destroy()
-        PreferencesWindow.Gui := "", PreferencesWindow._lists := Map()
+        PreferencesWindow.Gui := "", PreferencesWindow.Chrome := "", PreferencesWindow.Footer := [], PreferencesWindow._lists := Map()
     }
 
     static AddCommands(paths) {
@@ -297,8 +421,8 @@ class PreferencesWindow {
         features := ["Applications", "CustomCommands", "Snippets", "Calculator", "WebSearch", "Recent", "FileSearch", "Scripts", "Terminal", "System", "Help", "Clipboard", "Windows", "Bookmarks", "LargeType"]
         top := PreferencesWindow._y
         for index, feature in features
-            PreferencesWindow._FeatureCheck(feature, PreferencesWindow.ContentX + Mod(index - 1, 2) * 280, top + ((index - 1) // 2) * 30)
-        PreferencesWindow._y := top + Ceil(features.Length / 2) * 30 + 8
+            PreferencesWindow._FeatureCheck(feature, PreferencesWindow.ContentX + Mod(index - 1, 2) * (PreferencesWindow.ContentW // 2), top + ((index - 1) // 2) * 34)
+        PreferencesWindow._y := top + Ceil(features.Length / 2) * 34 + 12
         PreferencesWindow._Check("Features.Windows.InDefaultResults", "Prefs.ShowInNormal", , , "Prefs.Feature.Windows")
         PreferencesWindow._Field("Features.Windows.Keyword", "Prefs.Feature.Windows", "M")
         PreferencesWindow._Check("Features.Bookmarks.InDefaultResults", "Prefs.ShowInNormal", , , "Prefs.Feature.Bookmarks")
@@ -310,7 +434,7 @@ class PreferencesWindow {
     static _FeatureCheck(feature, x, y) {
         PreferencesWindow._y := y
         path := "Features." feature ".Enabled"
-        control := PreferencesWindow._Add("Checkbox", "x" x " w265", I18n.T("Prefs.Feature." feature))
+        control := PreferencesWindow._Add("Checkbox", "x" x " w" (PreferencesWindow.ContentW // 2 - 12), I18n.T("Prefs.Feature." feature))
         control.Value := PreferencesWindow.GetPath(PreferencesWindow.Working, path) ? 1 : 0
         PreferencesWindow._Bind(path, () => control.Value)
     }
@@ -441,7 +565,7 @@ class PreferencesWindow {
     static _BuildAdvanced() {
         PreferencesWindow._BeginPage("Prefs.Page.Advanced", 140)
         PreferencesWindow._Info("Prefs.Page.Advanced", I18n.T("Prefs.Version", App.Version))
-        PreferencesWindow._Info("Prefs.Group.DataFolder", AppSettings.DataDir, "w500")
+        PreferencesWindow._Info("Prefs.Group.DataFolder", AppSettings.DataDir)
         PreferencesWindow._Button("Prefs.EditJson", (*) => Platform.Edit(AppSettings.File))
         PreferencesWindow._Button("Prefs.OpenDataFolder", (*) => Platform.Open(AppSettings.DataDir))
         PreferencesWindow._Button("Prefs.OpenThemes", (*) => Platform.Open(ThemeManager.UserDir))
@@ -462,19 +586,35 @@ class PreferencesWindow {
 
     static _BeginPage(nameKey, labelW := 190) {
         PreferencesWindow.Pages.Push({Key: nameKey, Name: I18n.T(nameKey), Wiki: PreferencesWindow.WikiPage(nameKey), Controls: []})
-        PreferencesWindow._y := 14
+        PreferencesWindow._y := PreferencesWindow.HeaderH
         PreferencesWindow._pageKey := nameKey
         PreferencesWindow._pairX := 0                                       ; 这一页成对设置的右列位置, 见 _Pair
-        PreferencesWindow.LabelW := Max(labelW, PreferencesWindow._labelWidths.Get(I18n.Lang " " nameKey, 0))
+        PreferencesWindow.LabelW := Max(180, labelW, PreferencesWindow._labelWidths.Get(I18n.Lang " " nameKey, 0))
     }
 
     static _FitLabel(ctrl, text) {
-        ; The portable pages reserve a fixed label column and let long labels wrap.
+        PreferencesWindow.FitText(ctrl)
     }
 
     static _Add(type, options, text := "") {
+        if ((type = "Edit" || type = "Text") && !IsObject(text))
+            text := text ""
+        options := RegExReplace(options, "i)(^|\s)cGray\b", "$1c" PreferencesWindow.Palette["Muted"])
+        if !RegExMatch(options, "i)(^|\s)c[0-9a-f]{6}\b")
+            options .= " c" PreferencesWindow.Palette[(type = "Edit" || type = "DropDownList" || type = "ComboBox") ? "InputText" : "Text"]
+        switch type, false {
+            case "Edit", "DropDownList", "ComboBox", "ListView", "Button":
+                options .= " Background" PreferencesWindow.Palette["Surface"]
+                if (type = "Edit" && InStr(options, "-Multi") && !RegExMatch(options, "i)(^|\s)h\d"))
+                    options .= " h" PreferencesWindow.ButtonH
+            case "Text", "Checkbox", "Radio":
+                options .= " Background" PreferencesWindow.Palette["Background"]
+        }
         pos := InStr(options, " x") || InStr(options, "x") = 1 ? "" : "x" PreferencesWindow.ContentX " "
         ctrl := PreferencesWindow.Gui.Add(type, pos "y" PreferencesWindow._y " " options " Hidden", text)
+        PreferencesWindow.StyleNative(ctrl, type, PreferencesWindow.Palette)
+        if (type = "Text" && text != "")
+            PreferencesWindow.FitText(ctrl)
         PreferencesWindow.Pages[PreferencesWindow.Pages.Length].Controls.Push(ctrl)
         switch type, false {                                                ; 用户修改 -> "应用" 可用 (类型名不区分大小写)
             case "Edit", "DropDownList", "ComboBox": ctrl.OnEvent("Change", (*) => PreferencesWindow.MarkDirty())
@@ -499,12 +639,10 @@ class PreferencesWindow {
     static _Section(labelKey) {
         if (PreferencesWindow._y > 20)
             PreferencesWindow._y += 8
-        PreferencesWindow.Gui.SetFont("bold")
-        ctrl := PreferencesWindow._Add("Text", "w" PreferencesWindow.ContentW, I18n.T(labelKey))
-        PreferencesWindow.Gui.SetFont("norm")
-        PreferencesWindow._Below(3, ctrl)
-        line := PreferencesWindow._Add("Text", "w" PreferencesWindow.ContentW " h1 0x10")   ; SS_ETCHEDHORZ
-        PreferencesWindow._Below(PreferencesWindow._HasDesc(labelKey) ? 4 : 10, line)
+        PreferencesWindow.Gui.SetFont("s" (PreferencesWindow.UiFont + 1) " bold")
+        ctrl := PreferencesWindow._Add("Text", "w" PreferencesWindow.ContentW " c" PreferencesWindow.Palette["Accent"], I18n.T(labelKey))
+        PreferencesWindow.Gui.SetFont("s" PreferencesWindow.UiFont " norm")
+        PreferencesWindow._Below(PreferencesWindow._HasDesc(labelKey) ? 6 : 14, ctrl)
         PreferencesWindow._Desc(labelKey, PreferencesWindow.ContentX)
     }
 
@@ -518,10 +656,10 @@ class PreferencesWindow {
                 return
             text := I18n.T(labelKey ".Desc")
         }
-        PreferencesWindow.Gui.SetFont("s8")
-        ctrl := PreferencesWindow._Add("Text", "x" x " w" (PreferencesWindow.ContentX + PreferencesWindow.ContentW - x) " cGray", text)
-        PreferencesWindow.Gui.SetFont("s9")
-        PreferencesWindow._Below(10, ctrl)
+        PreferencesWindow.Gui.SetFont("s" PreferencesWindow.HintFont)
+        ctrl := PreferencesWindow._Add("Text", "x" x " w" (PreferencesWindow.ContentX + PreferencesWindow.ContentW - x) " c" PreferencesWindow.Palette["Muted"], text)
+        PreferencesWindow.Gui.SetFont("s" PreferencesWindow.UiFont)
+        PreferencesWindow._Below(12, ctrl)
     }
 
     static _Note(textKey) {
@@ -534,7 +672,7 @@ class PreferencesWindow {
 
     static _Label(labelKey) {
         PreferencesWindow._y += 3
-        ctrl := PreferencesWindow._Add("Text", "w" (PreferencesWindow.LabelW - 12) " Right", I18n.T(labelKey))
+        ctrl := PreferencesWindow._Add("Text", "w" (PreferencesWindow.LabelW - 20), I18n.T(labelKey))
         PreferencesWindow._y -= 3
         PreferencesWindow._FitLabel(ctrl, I18n.T(labelKey))
         return ctrl
@@ -560,20 +698,22 @@ class PreferencesWindow {
 
     static _Check(path, labelKey, x := 0, desc := "", group := "", width := 0) {
         x := x ? x : PreferencesWindow._InputX()
-        if (group != "")
-            PreferencesWindow._GroupLabel(group)
+        groupControl := (group != "") ? PreferencesWindow._GroupLabel(group) : ""
         ctrl := PreferencesWindow._Add("Checkbox", "x" x " w" (width ? width : PreferencesWindow.ContentX + PreferencesWindow.ContentW - x), I18n.T(labelKey))
         ctrl.Value := PreferencesWindow.GetPath(PreferencesWindow.Working, path) ? 1 : 0
         PreferencesWindow._Bind(path, () => ctrl.Value)
         hasDesc := (desc != "" || PreferencesWindow._HasDesc(labelKey))
-        PreferencesWindow._Below(hasDesc ? 0 : 6, ctrl)
+        if IsObject(groupControl)
+            PreferencesWindow._Below(hasDesc ? 2 : PreferencesWindow.RowGap, ctrl, groupControl)
+        else
+            PreferencesWindow._Below(hasDesc ? 2 : PreferencesWindow.RowGap, ctrl)
         PreferencesWindow._Desc(labelKey, x + 18, desc)                     ; 和复选框的文字对齐
         return ctrl
     }
 
     static _GroupLabel(labelKey, dy := 1) {
         PreferencesWindow._y += dy
-        ctrl := PreferencesWindow._Add("Text", "x" PreferencesWindow.ContentX " w" (PreferencesWindow.LabelW - 12) " Right", I18n.T(labelKey))
+        ctrl := PreferencesWindow._Add("Text", "x" PreferencesWindow.ContentX " w" (PreferencesWindow.LabelW - 20), I18n.T(labelKey))
         PreferencesWindow._y -= dy
         PreferencesWindow._FitLabel(ctrl, I18n.T(labelKey))
         return ctrl
@@ -623,7 +763,7 @@ class PreferencesWindow {
 
     static _BelowInput(labelKey, controls*) {
         hasDesc := PreferencesWindow._HasDesc(labelKey)
-        PreferencesWindow._Below(hasDesc ? 3 : 8, controls*)
+        PreferencesWindow._Below(hasDesc ? 5 : PreferencesWindow.RowGap, controls*)
         PreferencesWindow._Desc(labelKey, PreferencesWindow._InputX())
     }
 
@@ -772,6 +912,8 @@ class PreferencesWindow {
     static _HotkeyBox(x, path) {
         ctrl := HotkeyBox.Add(PreferencesWindow.Gui, "x" x " y" PreferencesWindow._y " w" PreferencesWindow.WidthK " Hidden"
             , PreferencesWindow.GetPath(PreferencesWindow.Working, path), false, () => PreferencesWindow.MarkDirty())
+        ctrl.Opt("Background" PreferencesWindow.Palette["Surface"] " c" PreferencesWindow.Palette["InputText"])
+        PreferencesWindow.StyleNative(ctrl, "Edit", PreferencesWindow.Palette)
         PreferencesWindow.Pages[PreferencesWindow.Pages.Length].Controls.Push(ctrl)
         PreferencesWindow._Bind(path, () => HotkeyBox.Value(ctrl))
         return ctrl
@@ -785,11 +927,13 @@ class PreferencesWindow {
     }
 
     static _List(path, height, columns, fields, newItem, check := "") {
+        height := Min(height, Max(220, PreferencesWindow._viewHeight - PreferencesWindow.HeaderH - 155))
         items := PreferencesWindow.GetPath(PreferencesWindow.Working, path)
         headers := []
         for column in columns
             headers.Push(I18n.T(column[1]))
-        listView := PreferencesWindow._Add("ListView", "w" PreferencesWindow.ContentW " h" (height - 40) " -Multi NoSort Grid", headers)
+        listView := PreferencesWindow._Add("ListView", "w" PreferencesWindow.ContentW " h" (height - 40) " -Multi NoSort", headers)
+        try listView.ToClr().RowHeight := ThemeManager.Density = "Compact" ? 27 : 31
         for index, column in columns
             listView.ModifyCol(index, column[3])
         pageName := PreferencesWindow.Pages[PreferencesWindow.Pages.Length].Name
@@ -913,6 +1057,8 @@ class PreferencesWindow {
             PreferencesWindow._Add("Button", "x+24 yp w100", I18n.T("Prefs.CheckTargets")).OnEvent("Click", CheckItems)
         listView.GetPos(&listX, , &listW)
         filterBox := PreferencesWindow.Gui.Add("Edit", "x" (listX + listW - 160) " yp+1 w160 r1 -Multi Hidden")   ; 不用 _Add: 筛选不算修改设置
+        filterBox.Opt("Background" PreferencesWindow.Palette["Surface"] " c" PreferencesWindow.Palette["InputText"])
+        PreferencesWindow.StyleNative(filterBox, "Edit", PreferencesWindow.Palette)
         PreferencesWindow.Pages[PreferencesWindow.Pages.Length].Controls.Push(filterBox)
         filterBox.SetCue(I18n.T("Prefs.Filter"))
         filterBox.OnEvent("Change", (*) => Refresh())
@@ -1046,3 +1192,301 @@ class PreferencesWindow {
         return out
     }
 }
+
+#if WINDOWS
+#CSharp
+public static long ALTRunPreferenceTextHeight(Keysharp.Builtins.Ks.Clr.ManagedInstance Wrapped, double Width)
+{
+    if (Wrapped.Native is not System.Windows.Forms.Label label) return 0;
+    double scale = label.DeviceDpi / 96d;
+    return (long)System.Math.Ceiling(label.GetPreferredSize(new System.Drawing.Size((int)System.Math.Ceiling(Width * scale), 0)).Height / scale) + 2;
+}
+
+public static object ALTRunStylePreferenceControl(Keysharp.Builtins.Ks.Clr.ManagedInstance Wrapped, string Kind,
+    string Background, string Foreground, string Border, string Selected, string SelectedText, string Backdrop, string BodyText, string Muted)
+{
+    System.Drawing.Color Color(string value) => System.Drawing.Color.FromArgb(unchecked((int)0xFF000000) | System.Convert.ToInt32(value, 16));
+    var background = Color(Background);
+    var foreground = Color(Foreground);
+    var border = Color(Border);
+    var selected = Color(Selected);
+    var selectedText = Color(SelectedText);
+    var muted = Color(Muted);
+    var bodyText = Color(BodyText);
+    if (Wrapped.Native is System.Windows.Forms.ComboBox combo)
+    {
+        combo.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+        combo.BackColor = background;
+        combo.ForeColor = foreground;
+        combo.DrawMode = System.Windows.Forms.DrawMode.OwnerDrawFixed;
+        combo.ItemHeight = System.Math.Max(20, combo.Font.Height + 8);
+        combo.DrawItem += (_, e) =>
+        {
+            bool chosen = (e.State & System.Windows.Forms.DrawItemState.Selected) != 0 && combo.DroppedDown;
+            using var brush = new System.Drawing.SolidBrush(chosen ? selected : background);
+            e.Graphics.FillRectangle(brush, e.Bounds);
+            string label = e.Index >= 0 && e.Index < combo.Items.Count ? combo.GetItemText(combo.Items[e.Index]) : combo.Text;
+            var bounds = System.Drawing.Rectangle.Inflate(e.Bounds, -6, 0);
+            System.Windows.Forms.TextRenderer.DrawText(e.Graphics, label, combo.Font, bounds, !combo.Enabled ? muted : chosen ? selectedText : foreground,
+                System.Windows.Forms.TextFormatFlags.Left | System.Windows.Forms.TextFormatFlags.VerticalCenter
+                | System.Windows.Forms.TextFormatFlags.EndEllipsis | System.Windows.Forms.TextFormatFlags.NoPrefix);
+        };
+    }
+    else if (Wrapped.Native is System.Windows.Forms.TextBox edit)
+    {
+        edit.BorderStyle = System.Windows.Forms.BorderStyle.None;
+        edit.BackColor = background;
+        edit.ForeColor = foreground;
+    }
+    else if (Wrapped.Native is System.Windows.Forms.Button button)
+    {
+        button.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+        button.UseVisualStyleBackColor = false;
+        var normalBackground = button.BackColor.ToArgb() == selected.ToArgb() ? selected : background;
+        var normalText = normalBackground.ToArgb() == selected.ToArgb() ? selectedText : bodyText;
+        button.BackColor = normalBackground;
+        button.ForeColor = button.Enabled ? normalText : muted;
+        button.FlatAppearance.BorderColor = border;
+        button.FlatAppearance.BorderSize = 1;
+        button.FlatAppearance.MouseOverBackColor = selected;
+        button.FlatAppearance.MouseDownBackColor = selected;
+        button.MouseEnter += (_, _) => { if (button.Enabled) button.ForeColor = selectedText; };
+        button.MouseLeave += (_, _) => button.ForeColor = button.Enabled ? normalText : muted;
+        button.EnabledChanged += (_, _) => button.ForeColor = button.Enabled ? normalText : muted;
+        button.Paint += (_, e) =>
+        {
+            if (button.Enabled) return;
+            using var brush = new System.Drawing.SolidBrush(normalBackground);
+            using var pen = new System.Drawing.Pen(border);
+            e.Graphics.FillRectangle(brush, button.ClientRectangle);
+            var bounds = button.ClientRectangle;
+            bounds.Width -= 1;
+            bounds.Height -= 1;
+            e.Graphics.DrawRectangle(pen, bounds);
+            System.Windows.Forms.TextRenderer.DrawText(e.Graphics, button.Text, button.Font, button.ClientRectangle, muted,
+                System.Windows.Forms.TextFormatFlags.HorizontalCenter | System.Windows.Forms.TextFormatFlags.VerticalCenter
+                | System.Windows.Forms.TextFormatFlags.EndEllipsis | System.Windows.Forms.TextFormatFlags.NoPrefix);
+        };
+    }
+    else if (Wrapped.Native is System.Windows.Forms.CheckBox checkbox)
+    {
+        checkbox.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+        checkbox.UseVisualStyleBackColor = false;
+        checkbox.BackColor = Color(Backdrop);
+        checkbox.ForeColor = bodyText;
+        checkbox.FlatAppearance.BorderColor = border;
+        checkbox.FlatAppearance.CheckedBackColor = selected;
+    }
+    else if (Wrapped.Native is System.Windows.Forms.ListView list)
+    {
+        list.BorderStyle = System.Windows.Forms.BorderStyle.None;
+        list.BackColor = background;
+        list.ForeColor = bodyText;
+        list.OwnerDraw = true;
+        if (Kind == "Navigation")
+        {
+            int height = System.Math.Max((int)System.Math.Ceiling(32d * list.DeviceDpi / 96d), list.Font.Height + 12);
+            var spacing = new System.Windows.Forms.ImageList { ImageSize = new System.Drawing.Size(1, height), ColorDepth = System.Windows.Forms.ColorDepth.Depth32Bit };
+            var blank = new System.Drawing.Bitmap(1, height);
+            spacing.Images.Add(blank);
+            list.SmallImageList = spacing;
+            list.Disposed += (_, _) => { spacing.Dispose(); blank.Dispose(); };
+        }
+        list.DrawColumnHeader += (_, e) =>
+        {
+            using var brush = new System.Drawing.SolidBrush(background);
+            e.Graphics.FillRectangle(brush, e.Bounds);
+            var bounds = System.Drawing.Rectangle.Inflate(e.Bounds, -6, 0);
+            System.Windows.Forms.TextRenderer.DrawText(e.Graphics, e.Header.Text, list.Font, bounds, muted,
+                System.Windows.Forms.TextFormatFlags.Left | System.Windows.Forms.TextFormatFlags.VerticalCenter
+                | System.Windows.Forms.TextFormatFlags.EndEllipsis | System.Windows.Forms.TextFormatFlags.NoPrefix);
+        };
+        list.DrawItem += (_, e) =>
+        {
+            using var brush = new System.Drawing.SolidBrush(e.Item.Selected ? selected : background);
+            e.Graphics.FillRectangle(brush, e.Bounds);
+        };
+        list.DrawSubItem += (_, e) =>
+        {
+            bool chosen = e.Item.Selected;
+            using var brush = new System.Drawing.SolidBrush(chosen ? selected : background);
+            e.Graphics.FillRectangle(brush, e.Bounds);
+            var bounds = System.Drawing.Rectangle.Inflate(e.Bounds, -6, 0);
+            System.Windows.Forms.TextRenderer.DrawText(e.Graphics, e.SubItem.Text, list.Font, bounds, !list.Enabled ? muted : chosen ? selectedText : bodyText,
+                System.Windows.Forms.TextFormatFlags.Left | System.Windows.Forms.TextFormatFlags.VerticalCenter
+                | System.Windows.Forms.TextFormatFlags.EndEllipsis | System.Windows.Forms.TextFormatFlags.NoPrefix);
+        };
+    }
+    return null;
+}
+#EndCSharp
+#endif
+
+#if LINUX
+#CSharp
+public static long ALTRunPreferenceTextHeight(Keysharp.Builtins.Ks.Clr.ManagedInstance Wrapped, double Width)
+{
+    if (Wrapped.Native is not Eto.Forms.Label label) return 0;
+    return ALTRunGtkPreferenceStyle.MeasureTextHeight(label.NativeHandle, Width);
+}
+
+public static object ALTRunStyleGtkPreferenceControl(Keysharp.Builtins.Ks.Clr.ManagedInstance Wrapped, string Kind,
+    string Background, string Foreground, string Border, string Selected, string SelectedText, string Backdrop, string BodyText, string Muted)
+{
+    if (Wrapped.Native is not Eto.Forms.Control control || control is Eto.Forms.Label) return null;
+    var palette = new ALTRunGtkPreferenceStyle.Palette(Background, Foreground, Border, Selected, SelectedText, Backdrop, BodyText, Muted);
+    ALTRunGtkPreferenceStyle.Apply(control.NativeHandle, Kind, palette);
+    if (control is Eto.Forms.ComboBox)
+        ALTRunGtkPreferenceStyle.WatchPopup(control.NativeHandle);
+    if (control is Eto.Forms.GridView grid)
+    {
+        Eto.Drawing.Color Color(string value)
+        {
+            int rgb = System.Convert.ToInt32(value, 16);
+            return Eto.Drawing.Color.FromArgb((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+        }
+        var background = Color(Background);
+        var foreground = Color(BodyText);
+        var selected = Color(Selected);
+        var selectedText = Color(SelectedText);
+        grid.CellFormatting += (_, e) =>
+        {
+            bool chosen = System.Linq.Enumerable.Contains(grid.SelectedRows, e.Row);
+            e.ForegroundColor = chosen ? selectedText : foreground;
+            e.BackgroundColor = chosen ? selected : background;
+        };
+    }
+    return null;
+}
+
+private static class ALTRunGtkPreferenceStyle
+{
+    internal sealed record Palette(string Surface, string Input, string Border, string Selected, string SelectedText, string Background, string Text, string Muted);
+    private sealed record Binding(System.IntPtr Screen, System.IntPtr Provider, Palette Colors);
+    private static readonly System.Collections.Generic.Dictionary<System.IntPtr, Binding> Bindings = new();
+    private static long next;
+    [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private delegate void Destroyed(System.IntPtr widget, System.IntPtr data);
+    [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private delegate void Notified(System.IntPtr widget, System.IntPtr parameter, System.IntPtr data);
+    private static readonly Destroyed DestroyCallback = Release;
+    private static readonly Notified PopupCallback = StylePopup;
+
+    internal static long MeasureTextHeight(System.IntPtr widget, double width)
+    {
+        var original = GetLabelLayout(widget);
+        if (original == System.IntPtr.Zero) return 0;
+        var layout = CopyLayout(original);
+        try
+        {
+            // GTK's preferred size can retain the label's explicit one-line height request.
+            SetLayoutWidth(layout, (int)System.Math.Max(1, System.Math.Floor(width) - 4) * 1024);
+            SetLayoutWrap(layout, 2);
+            SetLayoutEllipsize(layout, 0);
+            SetSingleParagraph(layout, 0);
+            GetLayoutPixelSize(layout, out _, out var height);
+            return height + 4L;
+        }
+        finally { Unref(layout); }
+    }
+
+    internal static void Apply(System.IntPtr widget, string kind, Palette colors)
+    {
+        if (widget == System.IntPtr.Zero) return;
+        Release(widget, System.IntPtr.Zero);
+        string name = "altrun-prefs-" + System.Threading.Interlocked.Increment(ref next);
+        SetName(widget, name);
+        string root = "#" + name;
+        bool plain = kind is "Text" or "Checkbox" or "Radio" or "check" or "CheckBox";
+        bool primary = kind == "PrimaryButton";
+        string background = primary ? colors.Selected : plain ? colors.Background : colors.Surface;
+        string foreground = primary ? colors.SelectedText : plain || kind is "Button" or "Navigation" or "ListView" ? colors.Text : colors.Input;
+        string css = root + ", " + root + " * { background-image: none; background-color: #" + background
+            + "; color: #" + foreground + "; border-color: #" + colors.Border + "; box-shadow: none; text-shadow: none; }\n"
+            + root + " button:hover, " + root + " button:hover *, " + root + " menuitem:hover, " + root + " menuitem:hover *, "
+            + root + ":selected, " + root + " *:selected, " + root + " selection { background-color: #" + colors.Selected
+            + "; color: #" + colors.SelectedText + "; }\n"
+            + root + ":disabled, " + root + " *:disabled { background-image: none; background-color: #" + background + "; color: #" + colors.Muted + "; }\n"
+            + root + " check, " + root + " radio { background-color: #" + colors.Surface + "; border-color: #" + colors.Border + "; }\n"
+            + root + " check:checked, " + root + " radio:checked { background-color: #" + colors.Selected + "; color: #" + colors.SelectedText + "; }\n"
+            + root + ":focus { outline-color: #" + colors.Selected + "; outline-style: solid; outline-width: 1px; outline-offset: 1px; }\n";
+        if (kind is "Button" or "PrimaryButton")
+            css += root + ":hover, " + root + ":hover *, " + root + ":active, " + root + ":active * { background-color: #" + colors.Selected + "; color: #" + colors.SelectedText + "; }\n";
+        var provider = NewProvider();
+        if (Load(provider, css, new System.IntPtr(-1), out var error) == 0)
+        {
+            string message = error == System.IntPtr.Zero ? "Unknown GTK CSS error." : System.Runtime.InteropServices.Marshal.PtrToStringUTF8(System.Runtime.InteropServices.Marshal.ReadIntPtr(error, 8));
+            if (error != System.IntPtr.Zero) FreeError(error);
+            Unref(provider);
+            throw new System.InvalidOperationException(message);
+        }
+        var screen = GetScreen(widget);
+        AddProvider(screen, provider, 801);
+        Bindings[widget] = new Binding(screen, provider, colors);
+        ConnectDestroy(widget, "destroy", DestroyCallback, System.IntPtr.Zero, System.IntPtr.Zero, 0);
+    }
+
+    internal static void WatchPopup(System.IntPtr widget) => ConnectNotify(widget, "notify::popup-shown", PopupCallback, System.IntPtr.Zero, System.IntPtr.Zero, 0);
+
+    private static void StylePopup(System.IntPtr widget, System.IntPtr parameter, System.IntPtr data)
+    {
+        try
+        {
+            if (!Bindings.TryGetValue(widget, out var binding)) return;
+            var accessible = GetPopupAccessible(widget);
+            if (accessible == System.IntPtr.Zero) return;
+            var popup = GetAccessibleWidget(accessible);
+            if (popup != System.IntPtr.Zero && popup != widget && !Bindings.ContainsKey(popup))
+                Apply(popup, "Popup", binding.Colors);
+        }
+        catch (System.Exception error) { System.Diagnostics.Debug.WriteLine(error); }
+    }
+
+    private static void Release(System.IntPtr widget, System.IntPtr data)
+    {
+        if (!Bindings.Remove(widget, out var binding)) return;
+        RemoveProvider(binding.Screen, binding.Provider);
+        Unref(binding.Provider);
+    }
+
+    [System.Runtime.InteropServices.DllImport("libgtk-3.so.0", EntryPoint = "gtk_widget_set_name", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern void SetName(System.IntPtr widget, [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string name);
+    [System.Runtime.InteropServices.DllImport("libgtk-3.so.0", EntryPoint = "gtk_widget_get_screen", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern System.IntPtr GetScreen(System.IntPtr widget);
+    [System.Runtime.InteropServices.DllImport("libgtk-3.so.0", EntryPoint = "gtk_css_provider_new", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern System.IntPtr NewProvider();
+    [System.Runtime.InteropServices.DllImport("libgtk-3.so.0", EntryPoint = "gtk_css_provider_load_from_data", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern int Load(System.IntPtr provider, [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string css, System.IntPtr length, out System.IntPtr error);
+    [System.Runtime.InteropServices.DllImport("libgtk-3.so.0", EntryPoint = "gtk_style_context_add_provider_for_screen", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern void AddProvider(System.IntPtr screen, System.IntPtr provider, uint priority);
+    [System.Runtime.InteropServices.DllImport("libgtk-3.so.0", EntryPoint = "gtk_style_context_remove_provider_for_screen", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern void RemoveProvider(System.IntPtr screen, System.IntPtr provider);
+    [System.Runtime.InteropServices.DllImport("libgobject-2.0.so.0", EntryPoint = "g_object_unref", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern void Unref(System.IntPtr value);
+    [System.Runtime.InteropServices.DllImport("libglib-2.0.so.0", EntryPoint = "g_error_free", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern void FreeError(System.IntPtr error);
+    [System.Runtime.InteropServices.DllImport("libgobject-2.0.so.0", EntryPoint = "g_signal_connect_data", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern ulong ConnectDestroy(System.IntPtr widget, [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string signal, Destroyed callback, System.IntPtr data, System.IntPtr destroy, int flags);
+    [System.Runtime.InteropServices.DllImport("libgobject-2.0.so.0", EntryPoint = "g_signal_connect_data", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern ulong ConnectNotify(System.IntPtr widget, [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string signal, Notified callback, System.IntPtr data, System.IntPtr destroy, int flags);
+    [System.Runtime.InteropServices.DllImport("libgtk-3.so.0", EntryPoint = "gtk_combo_box_get_popup_accessible", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern System.IntPtr GetPopupAccessible(System.IntPtr combo);
+    [System.Runtime.InteropServices.DllImport("libgtk-3.so.0", EntryPoint = "gtk_accessible_get_widget", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern System.IntPtr GetAccessibleWidget(System.IntPtr accessible);
+    [System.Runtime.InteropServices.DllImport("libgtk-3.so.0", EntryPoint = "gtk_label_get_layout", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern System.IntPtr GetLabelLayout(System.IntPtr widget);
+    [System.Runtime.InteropServices.DllImport("libpango-1.0.so.0", EntryPoint = "pango_layout_copy", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern System.IntPtr CopyLayout(System.IntPtr layout);
+    [System.Runtime.InteropServices.DllImport("libpango-1.0.so.0", EntryPoint = "pango_layout_set_width", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern void SetLayoutWidth(System.IntPtr layout, int width);
+    [System.Runtime.InteropServices.DllImport("libpango-1.0.so.0", EntryPoint = "pango_layout_set_wrap", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern void SetLayoutWrap(System.IntPtr layout, int wrap);
+    [System.Runtime.InteropServices.DllImport("libpango-1.0.so.0", EntryPoint = "pango_layout_set_ellipsize", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern void SetLayoutEllipsize(System.IntPtr layout, int ellipsize);
+    [System.Runtime.InteropServices.DllImport("libpango-1.0.so.0", EntryPoint = "pango_layout_set_single_paragraph_mode", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern void SetSingleParagraph(System.IntPtr layout, int singleParagraph);
+    [System.Runtime.InteropServices.DllImport("libpango-1.0.so.0", EntryPoint = "pango_layout_get_pixel_size", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern void GetLayoutPixelSize(System.IntPtr layout, out int width, out int height);
+}
+#EndCSharp
+#endif

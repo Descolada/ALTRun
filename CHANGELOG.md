@@ -6,6 +6,9 @@
 ## [未发布]
 
 ### Linux / Keysharp
+- Use a shared Picture-rendered launcher on every platform, with stacked result text, rounded selections, semantic icons, shortcut badges and theme-aware notifications. Restyle Preferences and item editors, fix blank numeric fields and dark dropdown contrast, and size Preferences to its selected page.
+- Give ALTRun its own Windows process application identity before setting its icon, separating it from the shared Keysharp executable's taskbar group.
+- Pair GTK button, list and dropdown colors in dark themes; measure wrapped hints using their actual fonts. Preserve Windows shell/resource icons and input helpers, decode icons at display density, and correct scaled window placement and dragging. Emoji in result titles no longer break match highlighting.
 - Synced upstream through `cdc163c` (2026.10.26.4), retaining the Keysharp source port and schema 6 migrations.
 - Added portable recursive folder monitoring with recovery, asynchronous HTTP requests, XDG autostart, private-aware recent-document search, file-manager selection and Trash actions.
 - Improved localized desktop application search, XDG desktop IDs and raster icons, shebang scripts and terminal discovery; added installed-tool-based Linux session, power, audio, media and desktop commands.
@@ -17,6 +20,7 @@
 - 独立的跨平台冒烟测试，使用临时数据并把错误和警告写到标准输出/错误，不显示错误对话框。
 
 ### 修复
+- Windows 设置 ALTRun 独立的进程应用标识后再设置图标，避免与其它 Keysharp 脚本共用任务栏分组；各平台采用同一套 Picture 启动器，并改善设置和编辑器的深色控件对比度、数字字段和页面布局。
 - Windows 专用集成在其它系统上禁用；Unix 文件身份保留大小写，应用缓存记录系统类型。
 - Keysharp 更新检查不会用上游 AutoHotkey 发布包替换程序；当前源码需要 Keysharp 及其编译器组件，原 AutoHotkey 发布工作流不能直接打包此移植版。
 - 单实例转交使用当前用户的命名管道与单行 JSON，保留中文、换行和引号参数；网址编码正确保留 emoji 等补充 Unicode 字符。

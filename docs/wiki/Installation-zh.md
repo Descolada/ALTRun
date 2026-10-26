@@ -21,7 +21,7 @@
 /path/to/Keysharp ALTRun.ahk
 ```
 
-Linux/macOS 使用标准控件界面。Linux 通过 XDG `.desktop` 文件发现应用，macOS 扫描 `.app` 包。文件浏览支持 `/绝对路径/`、`~/`、`$HOME/`，Unix 文件身份保留大小写。终端与 `.sh`、`.py`、`.ps1`、`.ahk`/`.ks` 脚本使用本机解释器及参数数组；后台脚本捕获标准输出/错误，超时会终止整个进程树。输出按 UTF-8 解码；Windows 脚本调用仍输出 OEM 编码的旧工具时，应把输出转为 UTF-8。运行源码脚本时须保留 Keysharp 编译器。
+Windows、Linux 和 macOS 共用 Picture 绘制的启动器，保留原生搜索输入框和主题设置控件。Windows 上先设置 ALTRun 独立的进程应用标识再设置图标，使其它 Keysharp 脚本保留自己的任务栏标识。Linux 通过 XDG `.desktop` 文件发现应用，macOS 扫描 `.app` 包。文件浏览支持 `/绝对路径/`、`~/`、`$HOME/`，Unix 文件身份保留大小写。终端与 `.sh`、`.py`、`.ps1`、`.ahk`/`.ks` 脚本使用本机解释器及参数数组；后台脚本捕获标准输出/错误，超时会终止整个进程树。输出按 UTF-8 解码；Windows 脚本调用仍输出 OEM 编码的旧工具时，应把输出转为 UTF-8。运行源码脚本时须保留 Keysharp 编译器。
 
 标准界面已在 Windows 和 Ubuntu 24.04 的 X11/Xvfb 环境通过冒烟检查，涵盖搜索结果、操作面板、偏好设置和文件夹浏览。这些检查不代表验证了原生 Wayland 或全局钩子集成。macOS 为实验性支持，尚未验证。全局热键、托盘、窗口枚举/激活和剪贴板自动化取决于 Keysharp 桌面后端与桌面会话。窗口管理器可能占用 `Alt+Space`，可在偏好设置里换一个热键。
 

@@ -99,9 +99,17 @@ class PortableSmoke {
         PortableSmoke.Assert(SearchWindow.IsVisible(), "The search window did not show.")
         PortableSmoke.Assert(SearchWindow.Results.Length > 0, "The calculator search returned no rows.")
         PortableSmoke.Assert(SearchWindow.Results[1].Title == "4", "The calculator result was not 4.")
-        PortableSmoke.Assert(SearchWindow.List.GetCount() > 0, "The result ListView has no rows.")
-        PortableSmoke.Assert(SearchWindow.List.GetText(1, 1) == "4", "The result ListView did not contain actual calculator text.")
-        PortableSmoke.Mark("calculator ListView text")
+        PortableSmoke.AssertRenderedRow(1, "4")
+        if (Platform.IsWindows || (Platform.IsLinux && !Platform.IsWayland)) {
+            WinGetPos(&windowX, &windowY, &windowWidth, &windowHeight, "ahk_id " SearchWindow.Gui.Hwnd)
+            nativeScale := LauncherCanvas.ScreenScale(SearchWindow.Gui)
+            PortableSmoke.Assert(Abs(windowWidth - Round(SearchWindow.Width * nativeScale)) <= 4 * nativeScale, "The visible launcher width does not match its display scale.")
+            area := SearchWindow._ScreenArea(AppSettings.Appearance["ShowOn"])
+            PortableSmoke.Assert(windowX >= area.Left - 4 && windowY >= area.Top - 4
+                && windowX + windowWidth <= area.Right + 4 && windowY + windowHeight <= area.Bottom + 4, "The visible launcher extends beyond its screen work area.")
+        }
+        PortableSmoke.Mark("calculator painted row, image and hit testing")
+        PortableSmoke.FooterNavigation()
         Platform.SelectEdit(SearchWindow.Input, 0, StrLen(SearchWindow.Input.Value))
         previousResults := SearchWindow.Results
         SearchWindow.Show("", false)
@@ -140,7 +148,8 @@ class PortableSmoke {
 
         SearchWindow.ShowActions(ResultItem("Portable text", "", {Kind: "text", Arg: "portable text"}))
         PortableSmoke.Assert(SearchWindow.Mode == "actions", "The action panel did not open.")
-        PortableSmoke.Assert(SearchWindow.Results.Length > 0 && SearchWindow.List.GetText(1, 1) != "", "The action panel has no readable rows.")
+        PortableSmoke.Assert(SearchWindow.Results.Length > 0, "The action panel has no rows.")
+        PortableSmoke.AssertRenderedRow(1, SearchWindow.Results[1].Title)
         SearchWindow._CloseActions()
         PortableSmoke.Mark("action panel")
 
@@ -149,8 +158,7 @@ class PortableSmoke {
         for index, item in SearchWindow.Results {
             if (item.Arg == PortableSmoke.File && item.Title == "note.txt") {
                 found := true
-                PortableSmoke.Assert(index <= SearchWindow.List.GetCount(), "The temporary file was not visible.")
-                PortableSmoke.Assert(SearchWindow.List.GetText(index, 1) == "note.txt", "The temporary file's displayed title was incorrect.")
+                PortableSmoke.AssertRenderedRow(index - SearchWindow.Offset, "note.txt")
                 SearchWindow.Selected := index
                 PortableSmoke.Assert(SearchWindow.ToggleMark() && SearchWindow.IsMarked(item), "The file could not be marked.")
                 break
@@ -203,15 +211,64 @@ class PortableSmoke {
         AppSettings.General["HistorySize"] := 17
         JSON.WriteFile(AppSettings.File, AppSettings.Data)
         PortableSmoke.Assert(FileExist(AppSettings.File), "JSON settings were not saved.")
-        AppSettings.Data := Map()
-        AppSettings.Load()
+        previousCritical := A_IsCritical
+        Critical("On")
+        try {
+            AppSettings.Data := Map()
+            AppSettings.Load()
+        } finally Critical(previousCritical)
         PortableSmoke.Assert(AppSettings.General["HistorySize"] = 17, "JSON settings did not reload.")
         PortableSmoke.Assert(AppSettings.CustomCommands.Length = 1 && AppSettings.CustomCommands[1]["Target"] == PortableSmoke.File, "Custom command settings did not round trip.")
         PortableSmoke.Mark("JSON settings round trip")
 
+        Hud.Show(" `t`n")
+        PortableSmoke.Assert(!IsObject(Hud.Gui), "An empty HUD message created a window.")
+        Hud.Show("Synthetic notice`nSaved and ready.", 5000)
+        PortableSmoke.Assert(IsObject(Hud.Gui) && IsObject(Hud.Picture), "The HUD did not create its painted notice.")
+        Hud.Picture.GetPos(, , &noticeWidth, &noticeHeight)
+        PortableSmoke.Assert(noticeWidth > 0 && noticeHeight > 0 && Hud._lines.Length = 2, "The HUD did not lay out its actual message.")
+        Hud.Hide()
+        Hud.Hide()
+        PortableSmoke.Assert(!IsObject(Hud.Gui) && !IsObject(Hud.Picture), "The HUD retained its window after hiding.")
+        PortableSmoke.Mark("painted HUD, multiline layout and disposal")
+
         PortableSmoke.Processes()
         PortableSmoke.Mark("complete " (A_TickCount - PortableSmoke.Started) "ms")
         ExitApp(0)
+    }
+
+    static AssertRenderedRow(visibleIndex, title) {
+        PortableSmoke.Assert(SearchWindow.Canvas.Visible && IsObject(SearchWindow.Frame), "The launcher has no visible painted canvas.")
+        PortableSmoke.Assert(visibleIndex >= 1 && visibleIndex <= SearchWindow.RowModel.Length, "The result has no visible painted row.")
+        row := SearchWindow.RowModel[visibleIndex]
+        PortableSmoke.Assert(row.Title == title && row.Index = SearchWindow.Offset + visibleIndex, "The painted row does not match its result.")
+        PortableSmoke.Assert(row.Width > 0 && row.Height > 0, "The painted row has empty bounds.")
+        PortableSmoke.Assert(SearchWindow.RowAt(row.X + row.Width // 2, row.Y + row.Height // 2) = visibleIndex, "The row's hit test did not match its painted bounds.")
+        PortableSmoke.Assert(SearchWindow.RowAt(-1, -1) = 0, "The row hit test accepted coordinates outside the canvas.")
+        rasterScale := SearchWindow.Frame.Width / SearchWindow.Width
+        sampleX := Round((row.X + 4) * rasterScale)
+        sampleY := Round((row.Y + row.Height // 2) * rasterScale)
+        PortableSmoke.Assert(SearchWindow.Frame.Width >= Round((row.X + row.Width) * rasterScale)
+            && SearchWindow.Frame.Height > sampleY, "The result row extends beyond its rendered image.")
+        PortableSmoke.Assert((SearchWindow.Frame.GetPixel(sampleX, sampleY) & 0xFFFFFF) = Integer("0x" row.Background), "The displayed row background does not match its selection state.")
+    }
+
+    static FooterNavigation() {
+        PortableSmoke.Assert(SearchWindow.FooterHeight > 0, "The test launcher has no clickable footer.")
+        footerY := SearchWindow._WindowHeight(SearchWindow._VisibleCount()) - SearchWindow.FooterHeight / 2
+        PortableSmoke.ClickCanvas(SearchWindow.Width - SearchWindow.Padding - 20, footerY)
+        PortableSmoke.Assert(SearchWindow.Mode == "actions" && SearchWindow.SavedQuery == "2 + 2", "The footer's Actions region did not open the selected result's actions.")
+        footerY := SearchWindow._WindowHeight(SearchWindow._VisibleCount()) - SearchWindow.FooterHeight / 2
+        PortableSmoke.ClickCanvas(SearchWindow.Padding + 30, footerY)
+        PortableSmoke.Assert(SearchWindow.Mode == "results" && SearchWindow.Input.Value == "2 + 2", "The footer's Back region did not restore the query.")
+        PortableSmoke.AssertRenderedRow(1, "4")
+        PortableSmoke.Mark("footer Actions and Back clicks through scaled canvas coordinates")
+    }
+
+    static ClickCanvas(x, y) {
+        coordinateScale := Platform.IsWindows ? SearchWindow.Gui.PixelScale : 1
+        encodedPoint := ((Round(y * coordinateScale) & 0xFFFF) << 16) | (Round(x * coordinateScale) & 0xFFFF)
+        SearchWindow._CanvasDown(encodedPoint)
     }
 
     static Navigation() {
@@ -330,6 +387,7 @@ class PortableSmoke {
         AppSettings.Appearance["Theme"] := "Light"
         AppSettings.Appearance["ShowOn"] := "Primary"
         AppSettings.Appearance["RememberPosition"] := 0
+        AppSettings.Appearance["StatusBar"] := 1
         for name in ["Clipboard", "Bookmarks", "Windows"]
             AppSettings.Feature(name)["Enabled"] := 0
         clipboardOptions := AppSettings.Feature("Clipboard")
@@ -386,6 +444,7 @@ class PortableSmoke {
     static CleanUp() {
         try ProcessRunner.CancelAll()
         try PreferencesWindow.Close()
+        try Hud.Hide()
         try SearchWindow.Hide()
         if (SearchWindow._prepareTimer != "")
             SetTimer(SearchWindow._prepareTimer, 0)

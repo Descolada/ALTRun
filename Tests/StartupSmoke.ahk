@@ -81,7 +81,8 @@ class StartupSmoke {
         StartupSmoke.Assert(AppSettings.General["Language"] == "en" && ThemeManager.Resolved == "Light", "App.Start did not load the configured language and theme.")
         SearchWindow.Show("2 + 2", false)
         StartupSmoke.Assert(SearchWindow.Results.Length > 0 && SearchWindow.Results[1].Title == "4", "The started application did not return the calculator result.")
-        StartupSmoke.Assert(SearchWindow.List.GetCount() > 0, "The started application has no visible result rows.")
+        StartupSmoke.Assert(SearchWindow.Canvas.Visible && IsObject(SearchWindow.Frame) && SearchWindow.RowModel.Length > 0, "The started application has no visible painted results.")
+        StartupSmoke.Assert(SearchWindow.RowModel[1].Title == "4", "The painted startup result did not contain the calculator text.")
         StartupSmoke.Mark("real App.Start, settings, providers and result rows")
         Hud.Hide()
         SearchWindow.Hide()
@@ -91,9 +92,6 @@ class StartupSmoke {
         marker := Platform.Join(StartupSmoke.Folder, "child-progress.txt")
         arguments := ["--handoff-child", payload, marker]
         host := ProcessRunner.ScriptHost(A_ScriptFullPath, arguments)
-#if WINDOWS && ALTRUN_PORTABLE_UI
-        host.Arguments.InsertAt(host.Arguments.Length - arguments.Length, "--define:ALTRUN_PORTABLE_UI")
-#endif
         StartupSmoke.ChildJob := ProcessRunner.Start(host.Executable, host.Arguments, StartupSmoke.Folder, true)
         started := A_TickCount
         while !ProcessRunner.IsFinished(StartupSmoke.ChildJob) {

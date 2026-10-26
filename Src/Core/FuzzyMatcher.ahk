@@ -182,12 +182,14 @@ class FuzzyMatcher {
 
     ; Position of the first character of each word (split like Initials: characters other than letters and digits separate, camel case counts as words)
     static WordStarts(text) {
-        starts := [], previous := ""
+        starts := [], previousWord := false, previousLower := false
         Loop Parse text {
-            isWord := RegExMatch(A_LoopField, "^[\p{L}\p{N}]$")
-            if (isWord && (previous = "" || !RegExMatch(previous, "^[\p{L}\p{N}]$") || (RegExMatch(previous, "^[a-z]$") && RegExMatch(A_LoopField, "^[A-Z]$"))))
+            code := Ord(A_LoopField)
+            ; Parsing UTF-16 visits each surrogate separately; Unicode regex cannot accept a lone surrogate.
+            isWord := (code < 0xD800 || code > 0xDFFF) && RegExMatch(A_LoopField, "^[\p{L}\p{N}]$")
+            if (isWord && (!previousWord || (previousLower && code >= 65 && code <= 90)))
                 starts.Push(A_Index)
-            previous := A_LoopField
+            previousWord := isWord, previousLower := code >= 97 && code <= 122
         }
         return starts
     }

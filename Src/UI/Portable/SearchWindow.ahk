@@ -2,7 +2,8 @@
 
 class SearchWindow {
     static _visible := false, _focusArmed := false, _imageList := 0
-    static Gui := "", Input := "", List := "", Separator := ""
+    static Gui := "", Input := "", List := "", Canvas := "", Frame := "", Separator := ""
+    static RowModel := [], FooterHeight := 38, Hovered := 0, _painting := false, _paintAgain := false, _drag := ""
     static Results := [], Selected := 0, Offset := 0
     static Mode := "results"                        ; results = 搜索结果; actions = 操作面板
     static HighlightText := ""                      ; 搜索结果标题里高亮和它匹配的字 (Highlight 颜色)
@@ -24,48 +25,61 @@ class SearchWindow {
     static ListTop := 58
 
     static Create() {
+        SearchWindow._CanvasUp()
+        if IsObject(SearchWindow.Canvas)
+            try SearchWindow.Canvas.Value := ""
+        if IsObject(SearchWindow.Frame)
+            SearchWindow.Frame.Dispose()
+        SearchWindow.Frame := "", SearchWindow.RowModel := [], SearchWindow.Hovered := 0
         if IsObject(SearchWindow.Gui)
             SearchWindow.Gui.Destroy()
-        if SearchWindow._imageList
-            IL_Destroy(SearchWindow._imageList)
         SearchWindow.Width := Max(480, AppSettings.Appearance["Width"])
         SearchWindow.VisibleRows := Max(1, Min(9, AppSettings.Appearance["VisibleRows"]))
         SearchWindow.Padding := Max(8, ThemeManager.Get("Padding"))
         SearchWindow.InputHeight := Max(34, Round(ThemeManager.Get("InputFontSize") * 1.8))
         SearchWindow.RowHeight := Max(24, ThemeManager.Get("RowHeight"))
         SearchWindow.IconSize := Max(16, ThemeManager.Get("IconSize"))
-        SearchWindow.ListTop := SearchWindow.InputHeight + SearchWindow.Padding * 2
+        SearchWindow.ListTop := SearchWindow.InputHeight + SearchWindow.Padding * 2 + 20
+        SearchWindow.FooterHeight := AppSettings.Appearance["StatusBar"] ? 38 : 0
         IconCache.Size := SearchWindow.IconSize
         SearchWindow._visible := false, SearchWindow._focusArmed := false
-        g := Gui("+AlwaysOnTop +ToolWindow -MinimizeBox", App.Name)
+        g := Gui("-Caption +AlwaysOnTop +ToolWindow -MinimizeBox", App.Name)
         g.MarginX := 0, g.MarginY := 0
         g.BackColor := ThemeManager.Get("Background")
-        g.SetFont("s" ThemeManager.Get("InputFontSize"), ThemeManager.FontName())
+        g.SetFont("s" ThemeManager.Get("InputFontSize") " c" ThemeManager.Get("InputText"), ThemeManager.FontName())
         pad := SearchWindow.Padding, contentWidth := SearchWindow.Width - pad * 2
-        searchBox := g.AddEdit("x" pad " y" pad " w" contentWidth " h" SearchWindow.InputHeight " r1 -Multi -WantReturn")
+        surface := LauncherCanvas.Blend(ThemeManager.Get("Background"), ThemeManager.Get("InputText"), 0.035)
+        canvasControl := g.AddPicture("x0 y0 w" SearchWindow.Width " h" SearchWindow._WindowHeight(0))
+        searchBox := g.AddEdit("x" (pad + 40) " y" (pad + 6) " w" (contentWidth - 54) " h" SearchWindow.InputHeight
+            . " r1 -Multi -WantReturn -Border -E0x200 Background" surface)
+        if !Platform.IsWindows
+            try searchBox.ToClr().ShowBorder := false
         searchBox.SetCue(SearchWindow.Placeholder())
+        LauncherCanvas.AccessibleLabel(searchBox, I18n.T("Search.Placeholder"))
         searchBox.OnEvent("Change", (*) => SearchWindow._OnInputChange())
-        list := g.AddListView("x" pad " y" SearchWindow.ListTop " w" contentWidth " h" (SearchWindow.RowHeight + 4) " Hidden -Hdr -Multi Report", ["Result", "Details", "Key"])
-        list.SetFont("s" ThemeManager.Get("TitleFontSize"))
-        list.ModifyCol(1, Round((contentWidth - 68) * 0.48))
-        list.ModifyCol(2, Round((contentWidth - 68) * 0.52))
-        list.ModifyCol(3, 64)
-        SearchWindow._imageList := IL_Create(16, 16)
-        list.SetImageList(SearchWindow._imageList, 1)
-        list.OnEvent("Click", (ctrl, row) => SearchWindow._OnRowClick(row))
-        list.OnEvent("DoubleClick", (ctrl, row) => SearchWindow._OnRowDoubleClick(row))
-        list.OnEvent("ContextMenu", (ctrl, row, right, x, y) => SearchWindow._OnRowContextMenu(row, x, y))
         g.OnEvent("Close", (*) => (SearchWindow.Hide(), true))
         g.OnEvent("Escape", (*) => SearchWindow.Hide())
-        SearchWindow.Gui := g, SearchWindow.Input := searchBox, SearchWindow.List := list
-        for control in [searchBox, list] {
+        SearchWindow.Gui := g, SearchWindow.Input := searchBox, SearchWindow.Canvas := canvasControl, SearchWindow.List := canvasControl
+        for control in [searchBox, canvasControl] {
             control.OnMessage(0x100, (ctrl, w, l, msg) => SearchWindow._OnKeyDown(w, l, msg, ctrl.Hwnd))
             control.OnMessage(0x104, (ctrl, w, l, msg) => SearchWindow._OnKeyDown(w, l, msg, ctrl.Hwnd))
             control.OnMessage(0x20A, (ctrl, w, l, msg) => SearchWindow._OnMouseWheel(w, l, msg, ctrl.Hwnd))
         }
+        canvasControl.OnMessage(0x200, (ctrl, w, l, msg) => SearchWindow._CanvasMove(w, l))
+        canvasControl.OnMessage(0x201, (ctrl, w, l, msg) => SearchWindow._CanvasDown(l))
+        canvasControl.OnMessage(0x202, (*) => SearchWindow._CanvasUp())
+        canvasControl.OnMessage(0x203, (ctrl, w, l, msg) => SearchWindow._CanvasDoubleClick(l))
+        canvasControl.OnMessage(0x204, (ctrl, w, l, msg) => SearchWindow._CanvasRightClick(l))
+        canvasControl.OnMessage(0x2A3, (*) => SearchWindow._CanvasLeave())
+#if WINDOWS
+        canvasControl.OnMessage(0x215, (*) => SearchWindow._CanvasUp())
+#endif
+        canvasControl.OnEvent("ContextMenu", (ctrl, info, right, x, y) => SearchWindow._OnRowContextMenu(SearchWindow.Hovered, x, y))
+        g.OnEvent("DpiChanged", (*) => SearchWindow._Repaint())
         g.Show("Hide w" SearchWindow.Width " h" SearchWindow._WindowHeight(0))
         SearchWindow._hideTimer := () => SearchWindow._HideIfInactive()
         BackgroundWork.IsBusy := () => !SearchWindow._AllowsBackgroundWork()
+        SearchWindow._Layout()
     }
 
     static IsVisible() {
@@ -77,14 +91,49 @@ class SearchWindow {
     }
 
     static _showing := false
-    static Show(text := "", typeAhead := true) {
+    static Show(text := "", catchTyping := true) {
         if (!IsObject(SearchWindow.Gui) || SearchWindow._showing)
             return
         SearchWindow._showing := true
         if (SearchWindow._prepareTimer != "")
             SetTimer(SearchWindow._prepareTimer, 0)
+#if WINDOWS
+        if catchTyping
+            TypeAhead.Start()
+#endif
         try SearchWindow._Show(text)
-        finally SearchWindow._showing := false
+        finally {
+            SearchWindow._showing := false
+#if WINDOWS
+            typed := TypeAhead.Take()
+#endif
+        }
+#if WINDOWS
+        if (typed.Text = "" && typed.Key = "")
+            return
+        if Logger.Enabled
+            Logger.Debug("SearchWindow: typed while showing " TypeAhead.Summary(typed))
+        if (typed.Key = "Escape")
+            return SearchWindow.Hide()
+        captured := typed.Text
+        if (captured != "") {
+            if (SubStr(captured, 1, 1) = " " && SearchWindow.Mode = "results" && !SearchWindow.FileMode) {
+                if SearchWindow._AllTextSelected()
+                    SearchWindow._SetInput("")
+                if SearchWindow._CanEnterFileMode() {
+                    SearchWindow._SetFileMode(true)
+                    captured := SubStr(captured, 2)
+                }
+            }
+            selection := Platform.EditSelection(SearchWindow.Input)
+            current := SearchWindow.Input.Value
+            SearchWindow._SetInput(SubStr(current, 1, selection.Start) captured SubStr(current, selection.End + 1))
+            caret := selection.Start + StrLen(captured)
+            Platform.SelectEdit(SearchWindow.Input, caret, caret)
+        }
+        if (typed.Key != "")
+            SearchWindow._Execute(typed.Modifier)
+#endif
     }
 
     static _Show(text) {
@@ -94,6 +143,9 @@ class SearchWindow {
             SearchWindow.Gui.Show()
             SearchWindow.Input.Focus()
             Platform.SelectEdit(SearchWindow.Input, selection.Start, selection.End)
+#if WINDOWS
+            SearchInputLanguage.SwitchOnShow(true)
+#endif
             return
         }
         App.RememberActiveWindow()
@@ -112,14 +164,20 @@ class SearchWindow {
         if restore
             SearchWindow.MoveSelection(last.Selected - SearchWindow.Selected)
         appearance := AppSettings.Appearance
-        pos := SearchWindow.Place(SearchWindow._ScreenArea(appearance["ShowOn"]), SearchWindow.Width
-            , SearchWindow._WindowHeight(SearchWindow.VisibleRows), appearance["RememberPosition"] ? appearance["Position"] : "")
+        scale := SearchWindow._ScreenScale()
+        pos := SearchWindow.Place(SearchWindow._ScreenArea(appearance["ShowOn"]), Round(SearchWindow.Width * scale)
+            , Round(SearchWindow._WindowHeight(SearchWindow.VisibleRows) * scale), appearance["RememberPosition"] ? appearance["Position"] : "")
+        wasVisible := SearchWindow.IsVisible()
+        SearchWindow._ApplyFade(true)
         SearchWindow.Gui.Show("x" pos.X " y" pos.Y " w" SearchWindow.Width " h" SearchWindow._WindowHeight(SearchWindow._VisibleCount()))
         SearchWindow._visible := true, SearchWindow._focusArmed := false
         SearchWindow._shownRows := SearchWindow._VisibleCount()
         SearchWindow.Input.Focus()
         length := StrLen(SearchWindow.Input.Value)
         Platform.SelectEdit(SearchWindow.Input, restore ? 0 : length, length)
+#if WINDOWS
+        SearchInputLanguage.SwitchOnShow(wasVisible)
+#endif
         if AppSettings.General["HideOnDeactivate"]
             SetTimer(SearchWindow._hideTimer, 200)
         if prepared
@@ -159,24 +217,47 @@ class SearchWindow {
     static _OnMoved(*) {
         if (!SearchWindow.IsVisible() || !AppSettings.Appearance["RememberPosition"])
             return
-        SearchWindow.Gui.GetPos(&x, &y)
-        area := Win.WorkAreaAt(x + SearchWindow.Width // 2, y + SearchWindow.InputHeight // 2)
-        AppSettings.Appearance["Position"] := SearchWindow.RelativePosition(area, SearchWindow.Width, x, y)
+        WinGetPos(&x, &y, &width, &height, "ahk_id " SearchWindow.Gui.Hwnd)
+        area := Win.WorkAreaAt(x + width // 2, y + height // 2)
+        AppSettings.Appearance["Position"] := SearchWindow.RelativePosition(area, width, x, y)
     }
 
+    static _ScreenScale() => LauncherCanvas.ScreenScale(SearchWindow.Gui)
+
     static Hide() {
+        SearchWindow._CanvasUp()
         if IsObject(SearchWindow._hideTimer)
             SetTimer(SearchWindow._hideTimer, 0)
         if SearchWindow.IsVisible() {
             SearchWindow._OnMoved()
-            SearchWindow.Gui.GetPos(&x, &y, &w, &h)
+            WinGetPos(&x, &y, &w, &h, "ahk_id " SearchWindow.Gui.Hwnd)
             SearchWindow.LastArea := Win.WorkAreaAt(x + w // 2, y + h // 2), SearchWindow.HiddenAt := A_TickCount
             SearchWindow._RememberQuery()
+#if WINDOWS
+            SearchInputLanguage.Restore()
+#endif
+            SearchWindow._ApplyFade(false)
             SearchWindow._visible := false
             SearchWindow.Gui.Hide()
             SearchWindow._PrepareLater()
         }
         LargeType.Close()
+    }
+
+    static _ApplyFade(showing) {
+#if WINDOWS
+        if showing {
+            WindowFade.Stop()
+            opacity := ThemeManager.Get("Opacity")
+            opacity := IsNumber(opacity) && opacity >= 1 && opacity < 255 ? Round(opacity) : 255
+            if (!SearchWindow.IsVisible() && AppSettings.Appearance["Fade"])
+                WindowFade.In(SearchWindow.Gui.Hwnd, opacity)
+            else
+                WindowFade.SetAlpha(SearchWindow.Gui.Hwnd, opacity)
+        } else if AppSettings.Appearance["Fade"] {
+            WindowFade.Out(SearchWindow.Gui.Hwnd)
+        }
+#endif
     }
 
     static _RememberQuery() {
@@ -272,7 +353,7 @@ class SearchWindow {
     static _recent := [], _blankLogged := false
     static _NoteResults(count) {
         SearchWindow._recent.Push(FormatTime(, "HH:mm:ss") "." Format("{:03}", A_MSec) " '" SubStr(SearchWindow.Input.Value, 1, 30) "' mode " SearchWindow.Mode
-            . (SearchWindow.FileMode ? " (files)" : "") " results " count " gen " SearchWindow._searchGen " list rows before " SearchWindow.List.GetCount())
+            . (SearchWindow.FileMode ? " (files)" : "") " results " count " gen " SearchWindow._searchGen " painted rows " SearchWindow.RowModel.Length)
         if (SearchWindow._recent.Length > 10)
             SearchWindow._recent.RemoveAt(1)
     }
@@ -280,7 +361,7 @@ class SearchWindow {
         if (SearchWindow._blankLogged || !Logger.Enabled)
             return
         SearchWindow._blankLogged := true
-        Logger.Warn("SearchWindow: row " row " has no result (results " count ", offset " SearchWindow.Offset ", list rows " SearchWindow.List.GetCount()
+        Logger.Warn("SearchWindow: row " row " has no result (results " count ", offset " SearchWindow.Offset ", painted rows " SearchWindow.RowModel.Length
             . ", window rows " SearchWindow._shownRows ", mode " SearchWindow.Mode ", input '" SubStr(SearchWindow.Input.Value, 1, 30) "')")
         for entry in SearchWindow._recent
             Logger.Debug("  recent results: " entry)
@@ -291,47 +372,185 @@ class SearchWindow {
     }
 
     static _WindowHeight(visibleCount) {
-        return SearchWindow.ListTop + SearchWindow.Padding + (visibleCount ? visibleCount * SearchWindow.RowHeight : 0)
+        return SearchWindow.ListTop + SearchWindow.Padding + visibleCount * SearchWindow.RowHeight + SearchWindow.FooterHeight
     }
 
     static _Layout() {
         count := SearchWindow._VisibleCount()
-        list := SearchWindow.List
-        if !count
-            list.Visible := false
-        if (list.GetCount() != count) {
-            list.Delete()
-            Loop count
-                list.Add("", "", "", "")
-        }
-        if count {
-            list.Move(, , , Max(SearchWindow.RowHeight + 4, count * SearchWindow.RowHeight))
-            list.Visible := true
-        }
-        SearchWindow._Repaint()
+        SearchWindow.Hovered := 0
+        SearchWindow.Canvas.Move(0, 0, SearchWindow.Width, SearchWindow._WindowHeight(count))
         if (SearchWindow.IsVisible() && SearchWindow._shownRows != count) {
             SearchWindow.Gui.Show("NA w" SearchWindow.Width " h" SearchWindow._WindowHeight(count))
             SearchWindow._shownRows := count
         }
+        SearchWindow._Repaint()
     }
 
     static _Repaint() {
-        list := SearchWindow.List
-        if !IsObject(list)
+        if !IsObject(SearchWindow.Canvas)
             return
-        count := SearchWindow._VisibleCount()
-        Loop count {
-            index := SearchWindow.Offset + A_Index
-            item := SearchWindow.Results[index]
-            title := (SearchWindow.IsMarked(item) ? Chr(0x2713) " " : item.Pinned ? Chr(0x2022) " " : "") item.Title
-            icon := IconCache.AddTo(SearchWindow._imageList, item.Icon)
-            list.Modify(A_Index, "Icon" icon, title, item.Subtitle, "Ctrl+" A_Index)
+        if SearchWindow._painting {
+            SearchWindow._paintAgain := true
+            return
         }
-        list.Modify(0, "-Select -Focus")
-        row := SearchWindow.Selected - SearchWindow.Offset
-        if (row >= 1 && row <= count)
-            list.Modify(row, "Select Focus Vis")
-        list.Redraw()
+        SearchWindow._painting := true
+        try {
+            rows := [], count := SearchWindow._VisibleCount(), pad := SearchWindow.Padding
+            Loop count {
+                index := SearchWindow.Offset + A_Index, item := SearchWindow.Results[index]
+                selected := index = SearchWindow.Selected
+                background := selected ? ThemeManager.Get("SelectedBackground") : A_Index = SearchWindow.Hovered
+                    ? LauncherCanvas.Blend(ThemeManager.Get("Background"), ThemeManager.Get("Title"), 0.045) : ThemeManager.Get("Background")
+                rows.Push({Index: index, Item: item, X: pad, Y: SearchWindow.ListTop + (A_Index - 1) * SearchWindow.RowHeight
+                    , Width: SearchWindow.Width - pad * 2, Height: SearchWindow.RowHeight - 4, Title: item.Title, Subtitle: item.Subtitle
+                    , Shortcut: "Ctrl+" A_Index, Background: background, Selected: selected})
+            }
+            IconCache.Scale := SearchWindow.Gui.PixelScale
+            frameImage := LauncherCanvas.Render(SearchWindow.Width, SearchWindow._WindowHeight(count), SearchWindow.Gui.PixelScale, rows)
+            try SearchWindow.Canvas.Value := "HBITMAP:" frameImage.ToBitmap()
+            catch {
+                frameImage.Dispose()
+                throw
+            }
+            previousFrame := SearchWindow.Frame
+            SearchWindow.Frame := frameImage, SearchWindow.RowModel := rows
+            SearchWindow.Canvas.Move(0, 0, SearchWindow.Width, SearchWindow._WindowHeight(count))
+            labels := []
+            for row in rows
+                labels.Push(row.Title (row.Subtitle != "" ? ": " row.Subtitle : ""))
+            LauncherCanvas.AccessibleLabel(SearchWindow.Canvas, TextTools.JoinList(labels, "; "))
+            if IsObject(previousFrame)
+                previousFrame.Dispose()
+        } finally {
+            SearchWindow._painting := false
+            if SearchWindow._paintAgain {
+                SearchWindow._paintAgain := false
+                SetTimer(() => SearchWindow._Repaint(), -1)
+            }
+        }
+    }
+
+    static RowAt(x, y) {
+        for row in SearchWindow.RowModel
+            if (x >= row.X && x < row.X + row.Width && y >= row.Y && y < row.Y + row.Height)
+                return A_Index
+        return 0
+    }
+
+    static _CanvasPoint(lParam) {
+        x := (lParam << 48) >> 48, y := (lParam << 32) >> 48
+        if Platform.IsWindows
+            x /= SearchWindow.Gui.PixelScale, y /= SearchWindow.Gui.PixelScale
+        return {X: x, Y: y}
+    }
+
+    static _CanvasMove(wParam, lParam) {
+        point := SearchWindow._CanvasPoint(lParam)
+        if IsObject(SearchWindow._drag) {
+            if !(wParam & 1)
+                return SearchWindow._CanvasUp()
+            pointer := SearchWindow._ScreenPointer()
+            SearchWindow.Gui.Show("NA x" (SearchWindow._drag.X + pointer.X - SearchWindow._drag.MouseX) " y" (SearchWindow._drag.Y + pointer.Y - SearchWindow._drag.MouseY))
+            return 0
+        }
+        row := SearchWindow.RowAt(point.X, point.Y)
+        if (row != SearchWindow.Hovered) {
+            SearchWindow.Hovered := row
+            SearchWindow._Repaint()
+        }
+    }
+
+    static _CanvasDown(lParam) {
+        point := SearchWindow._CanvasPoint(lParam), row := SearchWindow.RowAt(point.X, point.Y)
+        if row
+            SearchWindow._OnRowClick(row)
+        else if (SearchWindow.FooterHeight && point.Y >= SearchWindow._WindowHeight(SearchWindow._VisibleCount()) - SearchWindow.FooterHeight) {
+            if (point.X < SearchWindow.Padding + 150) {
+                if (SearchWindow.Mode = "actions")
+                    SearchWindow._CloseActions()
+                else
+                    SetTimer(() => SearchWindow._FooterMenu(), -1)
+            } else if (point.X > SearchWindow.Width * 0.68 && SearchWindow.Mode = "results")
+                SearchWindow._OpenActions()
+        }
+        else if (point.Y < SearchWindow.ListTop) {
+            pointer := SearchWindow._ScreenPointer()
+            WinGetPos(&x, &y, , , "ahk_id " SearchWindow.Gui.Hwnd)
+            SearchWindow._drag := {X: x, Y: y, MouseX: pointer.X, MouseY: pointer.Y}
+#if WINDOWS
+            DllCall("SetCapture", "Ptr", SearchWindow.Canvas.Hwnd, "Ptr")
+#endif
+        }
+        return 0
+    }
+
+    static _FooterMenu() {
+        later := (fn) => (*) => (SearchWindow.Hide(), SetTimer(fn, -1))
+        popup := Menu()
+        popup.Add(I18n.T("Tray.Preferences") "`tCtrl+,", later(() => App.OpenPreferences()))
+        popup.Add(I18n.T("Menu.CheatSheet") "`t?", (*) => SearchWindow._SetInput("?"))
+        popup.Add()
+        popup.Add(I18n.T("Tray.RebuildIndex"), later(() => App.RebuildIndex()))
+        popup.Add(I18n.T("Tray.CheckUpdate"), later(() => UpdateChecker.Check()))
+        popup.Add()
+        popup.Add(I18n.T("Tray.Reload"), later(() => App.Reload()))
+        popup.Add(I18n.T("Tray.Exit"), later(() => App.Quit()))
+        WinGetPos(&x, &y, , , "ahk_id " SearchWindow.Gui.Hwnd)
+        top := SearchWindow._WindowHeight(SearchWindow._VisibleCount()) - SearchWindow.FooterHeight
+        previousMode := A_CoordModeMenu
+        SearchWindow._keepOpen := true
+        try {
+            CoordMode("Menu", "Screen")
+            scale := SearchWindow._ScreenScale()
+            popup.Show(x + SearchWindow.Padding * scale, y + top * scale)
+        } finally {
+            CoordMode("Menu", previousMode)
+            SearchWindow._keepOpen := false
+        }
+        if SearchWindow.IsVisible()
+            SearchWindow.Input.Focus()
+    }
+
+    static _CanvasUp() {
+        if IsObject(SearchWindow._drag) {
+            SearchWindow._drag := ""
+#if WINDOWS
+            if (DllCall("GetCapture", "Ptr") = SearchWindow.Canvas.Hwnd)
+                DllCall("ReleaseCapture")
+#endif
+            SearchWindow._OnMoved()
+        }
+        return 0
+    }
+
+    static _ScreenPointer() {
+        previousMode := A_CoordModeMouse
+        CoordMode("Mouse", "Screen")
+        try {
+            MouseGetPos(&x, &y)
+            return {X: x, Y: y}
+        } finally CoordMode("Mouse", previousMode)
+    }
+
+    static _CanvasDoubleClick(lParam) {
+        point := SearchWindow._CanvasPoint(lParam), row := SearchWindow.RowAt(point.X, point.Y)
+        if row
+            SearchWindow._OnRowDoubleClick(row)
+        return 0
+    }
+
+    static _CanvasRightClick(lParam) {
+        point := SearchWindow._CanvasPoint(lParam)
+        SearchWindow.Hovered := SearchWindow.RowAt(point.X, point.Y)
+        if SearchWindow.Hovered
+            SearchWindow._OnRowClick(SearchWindow.Hovered)
+    }
+
+    static _CanvasLeave() {
+        if SearchWindow.Hovered {
+            SearchWindow.Hovered := 0
+            SearchWindow._Repaint()
+        }
     }
 
     static SelectedItem() {
@@ -541,9 +760,7 @@ class SearchWindow {
                 contextMenu.Default := label
         }
         Critical("Off")
-        SearchWindow.List.Modify(0, "-Select -Focus")
         SearchWindow._Repaint()
-        SearchWindow.List.Redraw()
         SearchWindow._keepOpen := true
         contextMenu.Show(x, y)
         SearchWindow._keepOpen := false

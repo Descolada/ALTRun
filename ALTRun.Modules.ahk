@@ -34,35 +34,25 @@
 
 ; --- Src/UI ---
 #Include Src/UI/ThemeManager.ahk
-#if WINDOWS && !ALTRUN_PORTABLE_UI
-#Include Src/UI/ThemePreview.ahk
-#Include Src/UI/NavIcons.ahk
-#Include Src/UI/IconCache.ahk
-#Include Src/UI/SearchWindow.ahk
-#Include Src/UI/ResultRows.ahk
-#Include Src/UI/SearchStatusBar.ahk
+#if WINDOWS
 #Include Src/UI/TypeAhead.ahk
 #Include Src/UI/SearchInputLanguage.ahk
-#Include Src/UI/SearchKeys.ahk
 #Include Src/UI/WindowFade.ahk
-#Include Src/UI/LargeType.ahk
-#Include Src/UI/Hud.ahk
-#Include Src/UI/ItemEditor.ahk
-#Include Src/UI/HotkeyBox.ahk
-#Include Src/UI/PreferencesWindow.ahk
-#Include Src/UI/PrefsForm.ahk
-#Include Src/UI/PrefsPages.ahk
-#else
+#endif
 #Include Src/UI/Portable/ThemePreview.ahk
 #Include Src/UI/Portable/NavIcons.ahk
 #Include Src/UI/Portable/IconCache.ahk
+#Include Src/UI/Portable/LauncherCanvas.ahk
 #Include Src/UI/Portable/SearchWindow.ahk
 #Include Src/UI/Portable/LargeType.ahk
 #Include Src/UI/Portable/Hud.ahk
 #Include Src/UI/Portable/ItemEditor.ahk
+#if WINDOWS
+#Include Src/UI/HotkeyBox.ahk
+#else
 #Include Src/UI/Portable/HotkeyBox.ahk
-#Include Src/UI/Portable/PreferencesWindow.ahk
 #endif
+#Include Src/UI/Portable/PreferencesWindow.ahk
 #Include Src/UI/ResultActions.ahk
 
 ; --- Src/Providers ---

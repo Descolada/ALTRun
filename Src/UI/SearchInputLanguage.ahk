@@ -17,21 +17,36 @@ class SearchInputLanguage {
     static SwitchOnShow(wasVisible) {
         switch AppSettings.General["SwitchToEnglishInput"] {
             case 1:                                                         ; switch to the English (US) keyboard
-                SearchWindow._Step("input language: read")                  ; logged in two steps: right after boot this once took 17 s; see which step
+                SearchInputLanguage._Step("input language: read")           ; logged separately because the first layout read can be slow
                 step := Logger.Ms()
                 if (!wasVisible || !SearchInputLanguage._layoutBefore)          ; switch back to the previous input language on hide
                     SearchInputLanguage._layoutBefore := App.PreviousWindow ? Win.KeyboardLayout(App.PreviousWindow) : 0
-                SearchWindow._LogSlowStep("input language: read", step)
-                SearchWindow._Step("input language: switch")
+                SearchInputLanguage._LogSlowStep("input language: read", step)
+                SearchInputLanguage._Step("input language: switch")
                 step := Logger.Ms()
                 Win.SwitchToEnglishIME()
-                SearchWindow._LogSlowStep("input language: switch", step)
+                SearchInputLanguage._LogSlowStep("input language: switch", step)
             case 2:                                                         ; keep the input method, switch it to English mode
-                SearchWindow._Step("input mode")
+                SearchInputLanguage._Step("input mode")
                 step := Logger.Ms()
                 SearchInputLanguage._SwitchModeToEnglish(wasVisible)
-                SearchWindow._LogSlowStep("input mode", step)
+                SearchInputLanguage._LogSlowStep("input mode", step)
         }
+    }
+
+    static _Step(name) {
+        if HasMethod(SearchWindow, "_Step")
+            SearchWindow._Step(name)
+        else
+            Logger.Trace("show: " name)
+    }
+
+    static _LogSlowStep(name, started) {
+        if HasMethod(SearchWindow, "_LogSlowStep")
+            return SearchWindow._LogSlowStep(name, started)
+        elapsed := Logger.Ms() - started
+        if (Logger.Enabled && elapsed >= 100)
+            Logger.Debug("Perf: slow show step " name " " Round(elapsed) " ms")
     }
 
     ; Switches the search box's IME to English mode (setting the open status and conversion mode like the CapsLock Chinese / English toggle), keeping the old state to restore on hide.

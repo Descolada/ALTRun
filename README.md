@@ -57,7 +57,13 @@ Install or build [Keysharp](https://github.com/keysharp-org/Keysharp) for your o
 /path/to/Keysharp ALTRun.ahk
 ```
 
-The source port provides a standard-control interface for Linux/macOS, Linux `.desktop` application discovery, macOS `.app` discovery, native path handling, installed terminals, and portable script output capture. The portable interface passed smoke checks on Windows and Ubuntu 24.04 under X11/Xvfb, including search results, actions, preferences and folder browsing. macOS is experimental and unverified. Global shortcuts, tray icons, window switching and clipboard automation depend on the Keysharp desktop backend and the desktop session; native Wayland integration has not been verified. Choose another shortcut in Preferences if the window manager owns `Alt+Space`.
+The source port uses the same Picture-rendered launcher on Windows, Linux and macOS: stacked result titles and paths, rounded selection highlights, icons and keyboard hints, with a native search field. Preferences, item editors and notifications follow the selected theme. Windows and GTK settings controls use paired text/background colors, including dropdown items and disabled buttons. On Windows, ALTRun sets its own process application identity before assigning its icon, keeping its taskbar grouping separate from other Keysharp scripts.
+
+![Keysharp launcher with synthetic results, dark theme](docs/images/screenshots/keysharp-launcher-dark.png)
+
+[Dark Preferences on Windows](docs/images/screenshots/keysharp-preferences-windows-dark.png) · [Dark Preferences on Linux/GTK](docs/images/screenshots/keysharp-preferences-linux-dark.png)
+
+Linux `.desktop` application discovery, macOS `.app` discovery, native path handling, installed terminals and portable script output capture are included. The portable interface passed smoke checks on Windows and Ubuntu 24.04 under X11/Xvfb, including search results, actions, preferences and folder browsing. macOS is experimental and unverified. Global shortcuts, tray icons, window switching and clipboard automation depend on the Keysharp desktop backend and the desktop session; native Wayland integration has not been verified. Choose another shortcut in Preferences if the window manager owns `Alt+Space`.
 
 Everything, Microsoft Store indexing, Explorer/Total Commander Quick Switch, Windows input-language/CapsLock integration, shell properties/elevation and Windows startup/Send To shortcuts remain Windows integrations and are guarded off elsewhere. Linux/macOS use a local file index. Scripts support `.ahk`/`.ks`, `.sh`, `.py` and `.ps1` when their interpreters are installed; `.bat`/`.cmd` are Windows-only. Keep Keysharp's compiler deployed when launching source scripts from the Scripts provider.
 

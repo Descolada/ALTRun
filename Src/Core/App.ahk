@@ -89,12 +89,15 @@ class App {
     static RepoUrl := "https://github.com/zhugecaomao/ALTRun"
     static Website := "https://zhugecaomao.github.io/ALTRun/"
     static IconFile := Platform.Join(A_ScriptDir, "Resources", "ALTRun.ico")
+    static ApplicationId := "Keysharp.ALTRun"
+    static _applicationIdentitySet := false
     static PreviousWindow := 0
     static _settingsTime := ""
     static _watchTimer := ""
     static _handOffNote := ""
 
     static Start() {
+        App._SetApplicationIdentity()
         if (Platform.IsWindows && A_Args.Length && A_Args[1] = CapsLockHelper.Arg)
             return CapsLockHelper.Run()
         if App.HandOff()
@@ -616,9 +619,34 @@ class App {
         return (*) => (App.RememberActiveWindow(), SystemProvider.RunCommand(actionId))
     }
 
-    static _SetIcon() {
-        if FileExist(App.IconFile)
-            try TraySetIcon(App.IconFile)
+    ; A shared script host needs a separate taskbar identity before any ALTRun windows acquire its icon.
+    static _SetApplicationIdentity(setter := "") {
+        App._applicationIdentitySet := false
+#if WINDOWS
+        setter := IsObject(setter) ? setter : (identity) => DllCall("shell32\SetCurrentProcessExplicitAppUserModelID", "WStr", identity, "Int")
+        try {
+            status := setter.Call(App.ApplicationId)
+            if (status < 0)
+                throw Error(Format("SetCurrentProcessExplicitAppUserModelID failed (0x{:08X}).", status & 0xFFFFFFFF))
+            App._applicationIdentitySet := true
+        } catch as e {
+            Logger.Warn("App: cannot isolate the taskbar icon - " e.Message)
+        }
+#endif
+        return App._applicationIdentitySet
+    }
+
+    static _SetIcon(setter := "") {
+        if (Platform.IsWindows && !App._applicationIdentitySet)
+            return false
+        if !FileExist(App.IconFile)
+            return false
+        setter := IsObject(setter) ? setter : TraySetIcon
+        try {
+            setter.Call(App.IconFile)
+            return true
+        }
+        return false
     }
 
     ; The start-up / Explorer "Send to" / Start menu shortcuts, created or deleted as set.

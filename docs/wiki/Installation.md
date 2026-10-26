@@ -21,7 +21,7 @@ This source checkout requires [Keysharp](https://github.com/keysharp-org/Keyshar
 /path/to/Keysharp ALTRun.ahk
 ```
 
-Linux/macOS use a standard-control interface. Linux discovers applications through XDG `.desktop` entries; macOS scans `.app` bundles. File browsing accepts `/absolute/paths/`, `~/` and `$HOME/`, and preserves case in Unix file identities. Installed terminals and `.sh`, `.py`, `.ps1`, `.ahk`/`.ks` scripts use platform interpreters and argument arrays; background scripts capture stdout/stderr and terminate their process tree on timeout. Captured output is decoded as UTF-8; Windows scripts invoking legacy OEM-encoded tools should convert their output to UTF-8. Keep the Keysharp compiler deployed for source scripts.
+Windows, Linux and macOS share a Picture-rendered launcher with a native search field and themed settings controls. On Windows, ALTRun sets its own process application identity before assigning its icon so other Keysharp scripts keep their taskbar identity. Linux discovers applications through XDG `.desktop` entries; macOS scans `.app` bundles. File browsing accepts `/absolute/paths/`, `~/` and `$HOME/`, and preserves case in Unix file identities. Installed terminals and `.sh`, `.py`, `.ps1`, `.ahk`/`.ks` scripts use platform interpreters and argument arrays; background scripts capture stdout/stderr and terminate their process tree on timeout. Captured output is decoded as UTF-8; Windows scripts invoking legacy OEM-encoded tools should convert their output to UTF-8. Keep the Keysharp compiler deployed for source scripts.
 
 The portable interface passed smoke checks on Windows and Ubuntu 24.04 under X11/Xvfb, covering search results, action panels, preferences and folder browsing. These checks do not establish native Wayland or global-hook integration. macOS support is experimental and unverified. Global shortcuts, tray support, window enumeration/activation and clipboard automation depend on the Keysharp desktop backend and session. A window manager may reserve `Alt+Space`; choose another hotkey in Preferences.
 
@@ -37,7 +37,7 @@ Application and file indexes monitor folder changes recursively and recover when
 
 The action panel supports file copying through the clipboard and Trash when `gio` is installed; file cutting remains Windows-only. Reveal selects files through the file manager's `org.freedesktop.FileManager1` interface when `gdbus` and a supporting session are available, otherwise it opens their containing folder. Linux system commands detect `systemctl`/`loginctl`, `wpctl`/`pactl`, `playerctl`, and GNOME/KDE/Xfce tools. Existing confirmation settings apply to power, logout and empty-Trash commands. Tool presence does not guarantee desktop authorization, an active media player or hibernation support.
 
-Update and currency downloads run asynchronously. The standard-control interface exposes clipboard settings, bookmarks, window search, display density, configurable input hints and Tab navigation. Native Wayland global input and Windows-specific extensions remain outside the verified support described above.
+Update and currency downloads run asynchronously. The shared interface exposes clipboard settings, bookmarks, window search, display density, configurable input hints and Tab navigation. Native Wayland global input and Windows-specific extensions remain outside the verified support described above.
 
 ## Installing the published Windows package
 ALTRun is portable: there is nothing to install and nothing is written to the registry.

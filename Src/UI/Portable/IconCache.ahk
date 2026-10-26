@@ -1,8 +1,8 @@
-; IconCache.ahk - Portable result images use bundled icons and ordinary image files.
+; IconCache.ahk - Decoded result images, including Windows shell icons, at the display's pixel density.
 #Import Ks { Image }
 
 class IconCache {
-    static Size := 32, OnLoaded := "", MaxIcons := 1500
+    static Size := 32, Scale := 1, OnLoaded := "", MaxIcons := 1500
     static _images := IconCache._FileMap(), _sources := IconCache._FileMap(), _indices := IconCache._FileMap()
     static PrefetchMax := 300, PrefetchGapMs := 30, _prefetch := [], _prefetchTimer := "", _prefetchBusy := false
 
@@ -15,37 +15,116 @@ class IconCache {
     static Own(name, fallback := "") {
         SplitPath(App.IconFile, , &resources)
         file := Platform.Join(resources, "Icons", name ".ico")
-        return FileExist(file) ? file : App.IconFile
+        return FileExist(file) ? file : Platform.IsWindows && fallback != "" ? fallback : App.IconFile
     }
 
     static File(spec) {
-        if (spec = "")
+        if (spec = "" || IconCache.IsRemote(spec))
             return ""
         if (SubStr(spec, 1, 6) = "thumb:")
             spec := SubStr(spec, 7)
+        if (Platform.IsWindows && RegExMatch(spec, "i)^(res:|ext:|url:|folder:|shell:|::\{)"))
+            return spec
         if FileExist(spec) {
             SplitPath(spec, , , &ext)
-            if RegExMatch(ext, "i)^(ico|png|jpg|jpeg|gif|bmp|tif|tiff)$")
+            if (Platform.IsWindows || RegExMatch(ext, "i)^(ico|png|jpg|jpeg|gif|bmp|tif|tiff|svg|webp)$"))
                 return spec
         }
-        return App.IconFile
+        return ""
     }
 
     static Get(spec) {
         file := IconCache.File(spec)
-        if (file = "" || !FileExist(file))
+        if (file = "")
             return ""
-        key := Platform.Identity(file)
+        pixels := IconCache._Pixels(), key := IconCache._Key(file, pixels)
         if !IconCache._images.Has(key) {
             if (IconCache._images.Count >= IconCache.MaxIcons)
                 IconCache.Clear()
-            try IconCache._images[key] := Image.FromFile(file, IconCache.Size, IconCache.Size)
+            try decoded := IconCache._Decode(file, pixels)
             catch
                 return ""
+            if !IsObject(decoded)
+                return ""
+            IconCache._images[key] := decoded
             IconCache._sources[key] := file
         }
         return IconCache._images[key]
     }
+
+    static _Pixels() => Max(1, Round(IconCache.Size * IconCache.Scale))
+    static _Key(spec, pixels) => pixels "|" Platform.Identity(spec)
+
+    static _Decode(spec, pixels) {
+#if WINDOWS
+        if (SubStr(spec, 1, 4) = "res:") {
+            resource := SubStr(spec, 5), index := 0
+            if RegExMatch(resource, "^(.*),\s*(-?\d+)\s*$", &match)
+                resource := Trim(match[1]), index := Integer(match[2])
+            resource := Path.Resolve(resource)
+            if IconCache.IsRemote(resource)
+                return ""
+            return Image.FromFile(resource, pixels, pixels, index >= 0 ? index + 1 : index)
+        }
+        if RegExMatch(spec, "i)^(ext:|url:|folder:|shell:|::\{)")
+            return IconCache._ShellImage(spec, pixels)
+        SplitPath(spec, , , &extension)
+        if !RegExMatch(extension, "i)^(ico|png|jpg|jpeg|gif|bmp|tif|tiff|svg|webp|exe|dll|icl|cpl|scr)$")
+            return IconCache._ShellImage(spec, pixels)
+#endif
+        return Image.FromFile(spec, pixels, pixels)
+    }
+
+#if WINDOWS
+    static _ShellImage(spec, pixels) {
+        attributes := 0, flags := 0x4000, pidl := 0
+        switch {
+            case SubStr(spec, 1, 4) = "ext:": target := SubStr(spec, 5), attributes := 0x80, flags |= 0x10
+            case spec = "url:": target := ".html", attributes := 0x80, flags |= 0x10
+            case spec = "folder:": target := "folder", attributes := 0x10, flags |= 0x10
+            default: target := spec
+        }
+        if RegExMatch(target, "i)^(shell:|::\{)") {
+            if DllCall("shell32\SHParseDisplayName", "WStr", target, "Ptr", 0, "Ptr*", &pidl, "UInt", 0, "Ptr", 0, "Int") != 0
+                return ""
+            flags |= 0x8
+        }
+        info := Buffer(A_PtrSize + 688, 0)
+        try {
+            if pidl
+                found := DllCall("shell32\SHGetFileInfoW", "Ptr", pidl, "UInt", attributes, "Ptr", info, "UInt", info.Size, "UInt", flags, "UPtr")
+            else
+                found := DllCall("shell32\SHGetFileInfoW", "WStr", target, "UInt", attributes, "Ptr", info, "UInt", info.Size, "UInt", flags, "UPtr")
+        } finally {
+            if pidl
+                DllCall("ole32\CoTaskMemFree", "Ptr", pidl)
+        }
+        if !found
+            return ""
+        icon := IconCache._SystemIcon(NumGet(info, A_PtrSize, "Int"), pixels)
+        if !icon
+            return ""
+        ; The decoder copies a borrowed icon; ALTRun releases the shell's owned handle even on failure.
+        try return Image.FromFile("HICON:*" icon, pixels, pixels)
+        finally DllCall("DestroyIcon", "Ptr", icon)
+    }
+
+    static _SystemIcon(index, pixels) {
+        iid := Buffer(16)
+        DllCall("ole32\CLSIDFromString", "WStr", "{46EB5926-582E-4017-9FDF-E8998DAA0950}", "Ptr", iid)
+        for listType in [1, 0, 2, 4] {
+            list := 0, width := 0, height := 0
+            if DllCall("shell32\SHGetImageList", "Int", listType, "Ptr", iid, "Ptr*", &list, "Int") != 0 || !list
+                continue
+            try {
+                DllCall("comctl32\ImageList_GetIconSize", "Ptr", list, "Int*", &width, "Int*", &height)
+                if (width >= pixels || listType = 4)
+                    return DllCall("comctl32\ImageList_GetIcon", "Ptr", list, "Int", index, "UInt", 1, "Ptr")
+            } finally ObjRelease(list)
+        }
+        return 0
+    }
+#endif
 
     static GetNow(spec) {
         return IconCache.Get(spec)
@@ -53,15 +132,15 @@ class IconCache {
 
     static AddTo(imageList, spec) {
         file := IconCache.File(spec)
-        if (file = "" || !FileExist(file))
+        if (file = "")
             return 0
-        key := imageList "|" Platform.Identity(file)
+        key := imageList "|" IconCache._Key(file, IconCache._Pixels())
         if !IconCache._indices.Has(key) {
-            image := IconCache.Get(file)
-            if !IsObject(image)
+            iconImage := IconCache.Get(file)
+            if !IsObject(iconImage)
                 return 0
             ; IL_Add consumes this bitmap copy; the decoded image stays cached for other lists.
-            try IconCache._indices[key] := IL_Add(imageList, "HBITMAP:" image.ToBitmap(), 0xFF00FF, true)
+            try IconCache._indices[key] := IL_Add(imageList, "HBITMAP:" iconImage.ToBitmap(), 0xFF00FF, true)
             catch
                 return 0
         }
@@ -84,8 +163,8 @@ class IconCache {
         for spec in specs {
             if (spec = "" || IconCache.IsRemote(spec) || pending.Length >= IconCache.PrefetchMax)
                 continue
-            file := IconCache.File(spec), key := Platform.Identity(file)
-            if (file = "" || !FileExist(file) || seen.Has(key) || IconCache._images.Has(key))
+            file := IconCache.File(spec), key := IconCache._Key(file, IconCache._Pixels())
+            if (file = "" || seen.Has(key) || IconCache._images.Has(key))
                 continue
             seen[key] := true
             pending.Push(file)
@@ -138,7 +217,7 @@ class IconCache {
         finally Critical(previousCritical)
     }
 
-    ; Portable icons already live in image files; keep their paths to warm the decoder on the next launch.
+    ; Remember source specifications to warm the decoder on the next launch.
     static DiskFile() => Platform.Join(AppSettings.DataDir, "IconCache", "Icons-" IconCache.Size ".json")
 
     static LoadDisk(file := "") {
@@ -162,10 +241,10 @@ class IconCache {
         if !IconCache._sources.Count
             return false
         try {
-            files := []
+            files := [], seen := IconCache._FileMap()
             for key, source in IconCache._sources
-                if (files.Length < IconCache.PrefetchMax && FileExist(source))
-                    files.Push(source)
+                if (files.Length < IconCache.PrefetchMax && !seen.Has(source) && IconCache.File(source) != "")
+                    files.Push(source), seen[source] := true
             SplitPath(file, , &folder)
             DirCreate(folder)
             JSON.WriteFile(file, Map("Size", IconCache.Size, "Files", files))
@@ -181,7 +260,11 @@ class IconCache {
     }
 
     static IsRemote(target) {
-        return RegExMatch(target, "^(\\\\|//|smb:|nfs:)") != 0
+        if (SubStr(target, 1, 6) = "thumb:")
+            target := SubStr(target, 7)
+        if (SubStr(target, 1, 4) = "res:")
+            target := SubStr(target, 5)
+        return RegExMatch(target, "i)^(\\\\|//|smb:|nfs:)") != 0 || Path.IsRemote(target)
     }
 
     static _Extension(target) {
