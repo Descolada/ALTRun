@@ -38,7 +38,7 @@ class PreferencesWindow {
         PreferencesWindow.UiFont := ThemeManager.Density = "Compact" ? 9.5 : ThemeManager.Density = "Comfortable" ? 10.5 : 10
         PreferencesWindow.HintFont := Max(8.5, PreferencesWindow.UiFont - 1)
         PreferencesWindow.RowGap := ThemeManager.Density = "Compact" ? 8 : 10
-        g := Gui("-MinimizeBox +AutoScroll", I18n.T("Prefs.Title"))
+        g := Gui("-MinimizeBox +Resize +MinSize640x420 +AutoScroll", I18n.T("Prefs.Title"))
         g.BackColor := PreferencesWindow.Palette["Background"]
         g.MarginX := 0, g.MarginY := 0
         g.SetFont("s" PreferencesWindow.UiFont " c" PreferencesWindow.Palette["Text"], ThemeManager.FontName())
@@ -168,7 +168,7 @@ class PreferencesWindow {
     }
 
     static SelectPage(pageIndex) {
-        if (pageIndex < 1 || pageIndex > PreferencesWindow.Pages.Length)
+        if (pageIndex < 1 || pageIndex > PreferencesWindow.Pages.Length || pageIndex = PreferencesWindow._page)
             return
         PreferencesWindow._page := pageIndex
         for index, page in PreferencesWindow.Pages
@@ -187,8 +187,6 @@ class PreferencesWindow {
         PreferencesWindow.PageList.Move(, , , Min(PreferencesWindow.Pages.Length * 34 + 12, PreferencesWindow.ButtonY - 122))
         for button in PreferencesWindow.Footer
             button.Move(, PreferencesWindow.ButtonY)
-        if PreferencesWindow._ready
-            PreferencesWindow.Gui.Show("NA h" Min(PreferencesWindow.WindowH, PreferencesWindow._viewHeight))
     }
 
     static StyleNative(control, kind, colors) {

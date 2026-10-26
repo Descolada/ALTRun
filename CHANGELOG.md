@@ -6,7 +6,8 @@
 ## [未发布]
 
 ### Linux / Keysharp
-- Use a shared Picture-rendered launcher on every platform, with stacked result text, rounded selections, semantic icons, shortcut badges and theme-aware notifications. Restyle Preferences and item editors, fix blank numeric fields and dark dropdown contrast, and size Preferences to its selected page.
+- Keep Preferences window dimensions stable across page changes and allow resizing. Preserve Windows recorded hotkeys when theming recreates control handles; repair saved hotkey display labels on startup, including the launcher and clipboard shortcuts.
+- Use a shared Picture-rendered launcher on every platform, with stacked result text, rounded selections, semantic icons, shortcut badges and theme-aware notifications. Restyle Preferences and item editors, and fix blank numeric fields and dark dropdown contrast.
 - Give ALTRun its own Windows process application identity before setting its icon, separating it from the shared Keysharp executable's taskbar group.
 - Pair GTK button, list and dropdown colors in dark themes; measure wrapped hints using their actual fonts. Preserve Windows shell/resource icons and input helpers, decode icons at display density, and correct scaled window placement and dragging. Emoji in result titles no longer break match highlighting.
 - Synced upstream through `cdc163c` (2026.10.26.4), retaining the Keysharp source port and schema 6 migrations.
@@ -20,6 +21,7 @@
 - 独立的跨平台冒烟测试，使用临时数据并把错误和警告写到标准输出/错误，不显示错误对话框。
 
 ### 修复
+- 偏好设置可调整大小，切换页面时不再反复缩小窗口。Windows 热键框在控件句柄重建后仍保留录制值，启动时自动修复被误存为显示名称的启动器、剪贴板等热键。
 - Windows 设置 ALTRun 独立的进程应用标识后再设置图标，避免与其它 Keysharp 脚本共用任务栏分组；各平台采用同一套 Picture 启动器，并改善设置和编辑器的深色控件对比度、数字字段和页面布局。
 - Windows 专用集成在其它系统上禁用；Unix 文件身份保留大小写，应用缓存记录系统类型。
 - Keysharp 更新检查不会用上游 AutoHotkey 发布包替换程序；当前源码需要 Keysharp 及其编译器组件，原 AutoHotkey 发布工作流不能直接打包此移植版。

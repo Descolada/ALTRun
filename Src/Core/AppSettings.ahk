@@ -172,6 +172,8 @@ class AppSettings {
             changed := true
         if AppSettings._MergeDefaults(data, AppSettings.Defaults())
             changed := true
+        if AppSettings._NormalizeHotkeys(data)
+            changed := true
         if (!AppSettings._SameLocation(AppSettings.DataDir, AppSettings.DefaultDataDir()) && data.Has("DataLocation"))
             data.Delete("DataLocation")                                     ; this entry has no effect in the folder redirected to: remove it to avoid confusion
         data["SchemaVersion"] := AppSettings.CurrentVersion
@@ -180,6 +182,39 @@ class AppSettings {
         if (changed)
             AppSettings.Save()
         AppSettings.EffectiveDefaults(data)
+    }
+
+    static _NormalizeHotkeys(data) {
+        changed := false
+        for path in [["General", "Hotkey"], ["General", "SecondaryHotkey"], ["General", "SelectionHotkey"]
+            , ["Features", "Clipboard", "Hotkey"], ["Extensions", "QuickSwitch", "Hotkey"]
+            , ["Extensions", "QuickSwitch", "MenuHotkey"], ["Extensions", "AutoDate", "Hotkey"]] {
+            parent := data
+            Loop path.Length - 1 {
+                if !(parent is Map) || !parent.Has(path[A_Index]) {
+                    parent := ""
+                    break
+                }
+                parent := parent[path[A_Index]]
+            }
+            if AppSettings._NormalizeHotkey(parent, path[path.Length])
+                changed := true
+        }
+        if (data is Map && data.Has("Hotkeys") && data["Hotkeys"] is Array)
+            for entry in data["Hotkeys"]
+                if AppSettings._NormalizeHotkey(entry, "Key")
+                    changed := true
+        return changed
+    }
+
+    static _NormalizeHotkey(section, key) {
+        if !(section is Map) || !section.Has(key) || !(section[key] is String)
+            return false
+        normalized := Win.NormalizeHotkeyLabel(section[key])
+        if (normalized == section[key])
+            return false
+        section[key] := normalized
+        return true
     }
 
     static Save() {

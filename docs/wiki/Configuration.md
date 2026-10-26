@@ -10,6 +10,8 @@ All settings and user data are saved in `Data\ALTRun.json` in the program folder
 
 ## Preferences pages and documentation
 
+The Keysharp source port's Preferences window can be resized; switching pages preserves its dimensions, and longer pages scroll. Windows shortcut fields keep their recorded hotkeys when theme styling recreates a native control. On startup, known hotkey settings saved as display labels such as `Alt+Space` or `Ctrl+Alt+C` are repaired to `!Space` or `^!c`; custom AutoHotkey syntax is preserved.
+
 The **Help** button at the bottom of Preferences, or `F1`, opens the documentation for the current page. This table lists every Preferences page and its Wiki entry:
 
 | Preferences page | Documentation |

@@ -554,6 +554,27 @@ class Win {
         return label Win.KeyLabel(key, names) up
     }
 
+    ; Recover display labels persisted by an editor without changing AutoHotkey hotkey syntax.
+    static NormalizeHotkeyLabel(hk) {
+        original := hk, key := Trim(hk), mods := "", suffix := ""
+        symbols := Map("ctrl", "^", "alt", "!", "shift", "+", "win", "#")
+        while RegExMatch(key, "i)^(Ctrl|Alt|Shift|Win)\s*\+\s*(.+)$", &part) {
+            mods .= symbols[StrLower(part[1])]
+            key := part[2]
+        }
+        if (mods = "")
+            return original
+        if RegExMatch(key, "i)^(.+?)\s+up$", &part)
+            key := part[1], suffix := " up"
+        if (StrLen(key) != 1 && GetKeyName(key) = "")
+            return original
+        ordered := ""
+        for symbol in ["^", "!", "+", "#"]
+            if InStr(mods, symbol)
+                ordered .= symbol
+        return ordered (StrLen(key) = 1 ? StrLower(key) : key) suffix
+    }
+
     ; The display name of a key: "space" -> "Space", "c" -> "C", "esc" -> "Escape"
     static KeyLabel(key, names := "") {
         if (StrLen(key) = 1)                                                ; a single character is shown as it is (GetKeyName("+") would give "=", on the same key)

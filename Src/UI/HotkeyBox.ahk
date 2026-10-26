@@ -46,9 +46,16 @@ class HotkeyBox {
 
     ; drop boxes of windows that have closed: window handles get reused by the system, and a middle click on another control would count as recording
     static Prune() {
-        for hwnd in [HotkeyBox.Boxes*]
-            if !HotkeyBox.IsAlive(HotkeyBox.Boxes[hwnd])
-                HotkeyBox.Boxes.Delete(hwnd)
+        alive := []
+        for hwnd, state in HotkeyBox.Boxes
+            if HotkeyBox.IsAlive(state)
+                alive.Push(state)
+        HotkeyBox.Boxes.Clear()
+        for state in alive {
+            ; Native styling can recreate the handle while preserving the control and its recorded value.
+            state.Hwnd := state.Ctrl.Hwnd
+            HotkeyBox.Boxes[state.Hwnd] := state
+        }
     }
 
     static IsAlive(state) {
@@ -56,7 +63,7 @@ class HotkeyBox {
         if state.Ctrl.ToClr().IsDisposed
             return false
 #endif
-        try return (state.Ctrl.Hwnd = state.Hwnd)
+        try return DllCall("IsWindow", "Ptr", state.Ctrl.Hwnd, "Int") ? true : false
         return false
     }
 
@@ -68,7 +75,8 @@ class HotkeyBox {
     }
 
     static Value(ctrl) {
-        return HotkeyBox.Boxes.Has(ctrl.Hwnd) ? HotkeyBox.Boxes[ctrl.Hwnd].Value : ctrl.Value
+        HotkeyBox.Prune()
+        return HotkeyBox.Boxes.Has(ctrl.Hwnd) ? HotkeyBox.Boxes[ctrl.Hwnd].Value : Win.NormalizeHotkeyLabel(ctrl.Value)
     }
 
     static Label(hk) {
@@ -104,6 +112,9 @@ class HotkeyBox {
     ; Recording
     ;---------------------------------------------------------------------------
     static Start(state) {
+        HotkeyBox.Prune()
+        if !HotkeyBox.IsAlive(state)
+            return
         if (HotkeyBox._active == state)
             return
         HotkeyBox._End()
@@ -133,6 +144,7 @@ class HotkeyBox {
 
     ; the box lost focus (clicked elsewhere, switched windows) or the window closed: end recording
     static _Watch() {
+        HotkeyBox.Prune()
         state := HotkeyBox._active
         if !IsObject(state)
             return SetTimer(HotkeyBox._watchTimer, 0)
@@ -225,6 +237,7 @@ class HotkeyBox {
 
     ; a middle / side button click in the box (only in boxes with mouse = true)
     static _OnMouse(wParam, msg, hwnd) {
+        HotkeyBox.Prune()
         if !HotkeyBox.Boxes.Has(hwnd)
             return
         if !HotkeyBox.IsAlive(state := HotkeyBox.Boxes[hwnd])
@@ -280,7 +293,8 @@ class HotkeyBox {
     }
 
     static _Show(state) {
-        if !DllCall("IsWindow", "Ptr", state.Hwnd)                          ; the window has closed
+        HotkeyBox.Prune()
+        if !HotkeyBox.IsAlive(state)
             return
         Win.SetCueBanner(state.Hwnd, I18n.T("Hotkey.None"))
         try state.Ctrl.Value := HotkeyBox.Label(state.Value)

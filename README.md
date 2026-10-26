@@ -63,6 +63,8 @@ The source port uses the same Picture-rendered launcher on Windows, Linux and ma
 
 [Dark Preferences on Windows](docs/images/screenshots/keysharp-preferences-windows-dark.png) · [Dark Preferences on Linux/GTK](docs/images/screenshots/keysharp-preferences-linux-dark.png)
 
+Preferences is resizable and keeps its window size while switching pages. Windows hotkey fields retain their recorded shortcuts when controls are themed; saved display labels such as `Alt+Space` are repaired automatically to hotkey syntax on startup.
+
 Linux `.desktop` application discovery, macOS `.app` discovery, native path handling, installed terminals and portable script output capture are included. The portable interface passed smoke checks on Windows and Ubuntu 24.04 under X11/Xvfb, including search results, actions, preferences and folder browsing. macOS is experimental and unverified. Global shortcuts, tray icons, window switching and clipboard automation depend on the Keysharp desktop backend and the desktop session; native Wayland integration has not been verified. Choose another shortcut in Preferences if the window manager owns `Alt+Space`.
 
 Everything, Microsoft Store indexing, Explorer/Total Commander Quick Switch, Windows input-language/CapsLock integration, shell properties/elevation and Windows startup/Send To shortcuts remain Windows integrations and are guarded off elsewhere. Linux/macOS use a local file index. Scripts support `.ahk`/`.ks`, `.sh`, `.py` and `.ps1` when their interpreters are installed; `.bat`/`.cmd` are Windows-only. Keep Keysharp's compiler deployed when launching source scripts from the Scripts provider.

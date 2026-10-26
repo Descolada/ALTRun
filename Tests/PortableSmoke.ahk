@@ -180,6 +180,7 @@ class PortableSmoke {
         PortableSmoke.Actions()
 
         PreferencesWindow.Show("Prefs.Page.General")
+        initialPreferencesBounds := PortableSmoke.PreferenceBounds()
         PortableSmoke.Assert(PreferencesWindow.Pages.Length = PreferencesWindow.PageKeys.Length, "Preferences pages were not built.")
         controls := 0
         for page in PreferencesWindow.Pages
@@ -204,6 +205,7 @@ class PortableSmoke {
         PortableSmoke.Assert(ItemEditor._ChoiceIndex(fields[1].Choices, editorItem["Type"]) = 2, "Editor choices did not resolve the stored value.")
         controlsForFields := Map("Type", {Value: 2})
         PortableSmoke.Assert(ItemEditor.KindFor(["Type", "Folder"], fields, controlsForFields) == "folder", "The structured editor did not select the folder field kind.")
+        PortableSmoke.PreferenceGeometry(initialPreferencesBounds)
         PreferencesWindow.Gui.Hide()
         PreferencesWindow.Close()
         PortableSmoke.Mark("preferences and command editor")
@@ -251,6 +253,37 @@ class PortableSmoke {
         PortableSmoke.Assert(SearchWindow.Frame.Width >= Round((row.X + row.Width) * rasterScale)
             && SearchWindow.Frame.Height > sampleY, "The result row extends beyond its rendered image.")
         PortableSmoke.Assert((SearchWindow.Frame.GetPixel(sampleX, sampleY) & 0xFFFFFF) = Integer("0x" row.Background), "The displayed row background does not match its selection state.")
+    }
+
+    static PreferenceBounds() {
+        Sleep(25)
+        PreferencesWindow.Gui.GetClientPos(&clientX, &clientY, &clientWidth, &clientHeight)
+        PreferencesWindow.Gui.GetPos(&outerX, &outerY, &outerWidth, &outerHeight)
+        return {ClientWidth: clientWidth, ClientHeight: clientHeight, OuterWidth: outerWidth, OuterHeight: outerHeight}
+    }
+
+    static AssertPreferenceBounds(expected, actual, operation) {
+        for dimension in ["ClientWidth", "ClientHeight", "OuterWidth", "OuterHeight"]
+            PortableSmoke.Assert(expected.%dimension% = actual.%dimension%, operation " changed " dimension " from " expected.%dimension% " to " actual.%dimension%)
+    }
+
+    static PreferenceGeometry(initialBounds) {
+        baselines := Map("Prefs.Page.General", initialBounds, "Prefs.Page.Commands", PortableSmoke.PreferenceBounds())
+        for pageKey in ["Prefs.Page.Appearance", "Prefs.Page.General", "Prefs.Page.Commands", "Prefs.Page.Appearance", "Prefs.Page.General"] {
+            pageIndex := PreferencesWindow._PageIndex(pageKey)
+            PreferencesWindow._SelectRow(pageIndex)
+            selectedBounds := PortableSmoke.PreferenceBounds()
+            PortableSmoke.Assert(selectedBounds.OuterWidth = initialBounds.OuterWidth, "Selecting " pageKey " changed the Preferences outer width from " initialBounds.OuterWidth " to " selectedBounds.OuterWidth)
+            if baselines.Has(pageKey)
+                PortableSmoke.AssertPreferenceBounds(baselines[pageKey], selectedBounds, "Returning to " pageKey)
+            else
+                baselines[pageKey] := selectedBounds
+            PreferencesWindow.SelectPage(pageIndex)
+            PortableSmoke.AssertPreferenceBounds(selectedBounds, PortableSmoke.PreferenceBounds(), "Selecting " pageKey " again")
+        }
+        PreferencesWindow.Show("Prefs.Page.General")
+        PortableSmoke.AssertPreferenceBounds(baselines["Prefs.Page.General"], PortableSmoke.PreferenceBounds(), "Showing the existing Preferences window")
+        PortableSmoke.Mark("preferences client and outer geometry across sidebar selections and repeated Show")
     }
 
     static FooterNavigation() {

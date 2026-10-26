@@ -63,6 +63,8 @@
 
 [Windows 深色设置](docs/images/screenshots/keysharp-preferences-windows-dark.png) · [Linux/GTK 深色设置](docs/images/screenshots/keysharp-preferences-linux-dark.png)
 
+偏好设置窗口可调整大小，切换页面时保留窗口尺寸。Windows 热键框在应用控件主题后仍保留已录制的快捷键；启动时会自动修复被保存为 `Alt+Space` 等显示名称的热键。
+
 支持 Linux `.desktop` 应用索引、macOS `.app` 索引、本机路径处理、已安装的终端和跨平台脚本输出捕获。标准界面已在 Windows 和 Ubuntu 24.04 的 X11/Xvfb 环境通过冒烟检查，涵盖搜索结果、操作面板、偏好设置和文件夹浏览。macOS 为实验性支持，尚未验证。全局热键、托盘、窗口切换和剪贴板自动化取决于 Keysharp 桌面后端与桌面会话，尚未验证原生 Wayland 集成。如果窗口管理器占用了 `Alt+Space`，可在偏好设置里换一个热键。
 
 Everything、Microsoft Store 索引、资源管理器/Total Commander 对话框快速跳转、Windows 输入法/CapsLock 集成、外壳属性/提权、Windows 开机启动和“发送到”快捷方式仍是 Windows 集成，在其它系统上会禁用。Linux/macOS 使用本地文件索引。脚本支持 `.ahk`/`.ks`、`.sh`、`.py`、`.ps1`，需要对应解释器；`.bat`/`.cmd` 仅限 Windows。通过脚本扩展启动源码脚本时，Keysharp 的编译器组件也必须保留。
