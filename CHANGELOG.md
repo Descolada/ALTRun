@@ -6,6 +6,10 @@
 ## [未发布]
 
 ### Linux / Keysharp
+- Reapply the requested Wayland window size when showing the launcher, preventing an empty search from retaining a previous large results area after hiding and reopening.
+- Keep the launcher bitmap's rendered pixel dimensions when assigning it to the Picture control, avoiding resampling to GTK's previous allocation and squeezed, blurry rows until hover. Swap the bitmap before resizing the native window. Document a scoped Hyprland animation rule and a Cairo-renderer workaround for Nautilus in virtual machines.
+- Keep Nix-wrapped Keysharp native libraries out of external app, browser and terminal launches, fixing Firefox's libffi/XPCOM startup failure while preserving the runtime environment for child Keysharp scripts. Report missing Unix folder targets, including case mismatches, before invoking the desktop opener.
+- Preserve the launcher's top-left corner when result counts change on Hyprland, and allow the Wayland window to shrink after displaying more results. Add a native placement regression.
 - Give GTK search-field selections explicit theme colors so Ctrl+A and partial selections remain visible in light and dark themes; verify their rendered highlight pixels.
 - Keep Escape dismissal and result execution working when Wayland window geometry is unavailable, including while the desktop broker recovers. Treat remembered placement and header dragging as optional geometry operations, and explicitly present the GTK window before focusing its search field; X11 activation uses a fresh server timestamp to recover after another window was focused. Document Cinnamon broker recovery and the compositor integration required for always-on-top behavior.
 - Show footer commands and result context menus in the launcher's action panel on Linux, avoiding GTK popup grabs that can crash Cinnamon on Wayland. Keep repeated menu clicks safe, support filtering and keyboard navigation, and defer external commands until the launcher is hidden.
@@ -25,6 +29,10 @@
 - 独立的跨平台冒烟测试，使用临时数据并把错误和警告写到标准输出/错误，不显示错误对话框。
 
 ### 修复
+- 显示 Wayland 启动器时重新应用所需窗口尺寸，避免隐藏后再次打开空搜索时保留上一次较大的结果区域。
+- 启动器位图赋给 Picture 控件时保留渲染后的像素尺寸，避免按 GTK 的旧尺寸重采样，导致结果在悬停前被挤压、模糊；调整原生窗口尺寸前先替换位图。补充仅针对 ALTRun 的 Hyprland 动画规则，以及虚拟机 Nautilus 的 Cairo 渲染器解决方法。
+- Nix 环境启动外部应用、浏览器及终端时不再继承 Keysharp 的本机库搜索路径，修复 Firefox 的 libffi/XPCOM 启动失败；子 Keysharp 脚本仍保留运行时环境。Unix 文件夹目标不存在（包括大小写不匹配）时，在调用桌面打开程序前显示错误。
+- Hyprland 搜索结果数量变化时保持启动器左上角的位置，并允许 Wayland 窗口在结果减少后缩小；增加原生窗口位置回归测试。
 - GTK 搜索框显式设置选中文字的主题颜色，修复浅色、深色主题下 Ctrl+A 全选与部分选择不可见的问题，并通过实际渲染像素验证高亮。
 - Wayland 无法提供窗口几何信息或桌面代理正在恢复时，仍可按 Escape 隐藏启动器并执行搜索结果；记住位置与拖动标题区域只在几何信息可用时进行。显示窗口时先请求 GTK 激活，再聚焦搜索框；X11 使用最新的服务器时间戳，确保切换到其它窗口后仍能恢复激活。补充 Cinnamon 桌面代理恢复与窗口置顶所需合成器集成的说明。
 - Linux 底部菜单命令和结果右键菜单改在启动器内的操作面板中显示，避免 GTK 弹出菜单抓取输入时导致 Cinnamon 的 Wayland 会话崩溃。连续点击菜单不会重复执行命令；支持筛选和键盘导航，外部命令延迟到启动器隐藏后执行。

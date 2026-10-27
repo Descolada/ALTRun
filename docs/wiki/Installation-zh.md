@@ -27,6 +27,22 @@ Windows、Linux 和 macOS 共用 Picture 绘制的启动器，保留原生搜索
 
 Linux 显示启动器时先请求 GTK 激活窗口，再聚焦搜索框；全选和部分文字选区显式使用主题颜色，保持高亮可见。Wayland 无法提供窗口几何信息时，仍可按 Escape 隐藏窗口或执行搜索结果；记住位置与拖动标题区域只在几何信息可用时进行。Wayland 上的窗口置顶需要 Keysharp 桌面代理与合成器集成正常工作。
 
+Hyprland 中，结果数量变化时启动器保持左上角的位置，通过 Keysharp 的 Wayland 定位功能在搜索框下方增高或缩小。已在 NixOS 验证结果变化时的位置、实际高度与焦点。
+
+NixOS（或 Keysharp 本身从 Nix store 运行）启动外部桌面程序时移除继承的 `LD_LIBRARY_PATH`，避免 Keysharp 的 GTK/本机库覆盖目标应用所需的库。此处理覆盖 `xdg-open`、桌面应用、直接应用命令和终端，子 Keysharp 脚本仍保留运行时环境；已验证此隔离可解决 Firefox 的 libffi/XPCOM 启动失败。文件夹命令使用原路径大小写，并在打开前报告不存在的本地文件夹。
+
+若虚拟机中的 Nautilus 退出并报告“Lost connection to Wayland compositor”，可尝试 `GSK_RENDERER=cairo keysharp ALTRun.ahk`。桌面打开程序会继承软件渲染设置；ALTRun 的 GTK 3 启动器不使用 GTK 4 渲染器。已在此 NixOS/Hyprland 虚拟机中验证 Nautilus 可通过此方式打开。
+
+Hyprland 窗口动画可能在结果尺寸变化时拉伸启动器位图。Hyprland 0.55 的 Lua 配置可仅禁用此窗口的动画：
+
+```lua
+hl.window_rule({
+    name = "altrun-immediate-resize",
+    match = { class = "^keysharp$", title = "^ALTRun$" },
+    no_anim = true,
+})
+```
+
 Everything、Microsoft Store 索引、资源管理器/Total Commander 对话框快速跳转、Windows 输入法/CapsLock、外壳属性/提权、Windows 启动/开始菜单/“发送到”集成仅限 Windows，在其它平台禁用。其它平台使用本地文件索引。可写的源码目录在程序旁保留 `Data/`；否则使用本机用户应用数据位置：Linux 的 `$XDG_DATA_HOME/ALTRun` 或 `~/.local/share/ALTRun`，macOS 的 `~/Library/Application Support/ALTRun`。
 
 现有可下载程序、Scoop/winget 包和发布工作流都是 AutoHotkey Windows 构建，不包含此 Keysharp 移植版。用 Keysharp 检查更新时打开发布页面或提示更新源码，不会用 AutoHotkey 包替换 Keysharp 可执行文件。请从源码更新此版本；Keysharp 发布需要单独的平台打包工作流。

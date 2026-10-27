@@ -107,8 +107,12 @@ class ActionCatalog {
 
     static OpenFolder(target) {
         resolved := Path.Resolve(target)
-        if !Platform.IsWindows
+        if !Platform.IsWindows {
+            ; Surface missing local folders before a detached desktop opener can discard the error.
+            if !RegExMatch(resolved, "i)^[a-z][a-z0-9+.\-]*:") && !DirExist(resolved)
+                throw Error(I18n.T("Files.FolderNotFound") ": " resolved)
             return Platform.Open(resolved)
+        }
         fileManager := AppSettings.General["FileManager"]
         if (fileManager = "" || InStr(fileManager, "explorer"))
             return Run('explorer.exe "' resolved '"')

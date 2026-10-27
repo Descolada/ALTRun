@@ -16,7 +16,7 @@ class SearchWindow {
     static _historyDraft := ""                       ; 开始翻记录之前输入框里的文字, Ctrl+↓ 翻回来时恢复
     static Width := 0, Padding := 0, InputHeight := 0, RowHeight := 0, IconSize := 0, VisibleRows := 8
     static SelectedRadius := 0
-    static _searchTimer := "", _hideTimer := ""
+    static _searchTimer := "", _hideTimer := "", _showResize := ""
     static _shownRows := -1                                                 ; 窗口当前按几行结果的高度显示
     static _tip := ""                                                       ; 这次显示时的使用提示 (HelpProvider.NextTip)
     static LastArea := "", HiddenAt := 0, _shownArea := ""                   ; 上次隐藏时所在屏幕的工作区和时间 (Hud 用)
@@ -26,6 +26,9 @@ class SearchWindow {
     static ListTop := 58
 
     static Create() {
+        if IsObject(SearchWindow._showResize)
+            SetTimer(SearchWindow._showResize, 0)
+        SearchWindow._showResize := ""
         SearchWindow._CanvasUp()
         if IsObject(SearchWindow.Canvas)
             try SearchWindow.Canvas.Value := ""
@@ -45,6 +48,9 @@ class SearchWindow {
         IconCache.Size := SearchWindow.IconSize
         SearchWindow._visible := false, SearchWindow._focusArmed := false
         g := Gui("-Caption +AlwaysOnTop +ToolWindow -MinimizeBox", App.Name)
+        ; GTK fixed-size windows can retain their largest content height; let the Wayland positioner size them.
+        if Platform.IsWayland
+            g.Opt("+Resize")
         g.MarginX := 0, g.MarginY := 0
         g.BackColor := ThemeManager.Get("Background")
         g.SetFont("s" ThemeManager.Get("InputFontSize") " c" ThemeManager.Get("InputText"), ThemeManager.FontName())
@@ -205,6 +211,8 @@ class SearchWindow {
         SearchWindow._FocusInput()
         length := StrLen(SearchWindow.Input.Value)
         Platform.SelectEdit(SearchWindow.Input, restore ? 0 : length, length)
+        if Platform.IsWayland
+            SearchWindow._ResizeAfterShow()
 #if WINDOWS
         SearchInputLanguage.SwitchOnShow(wasVisible)
 #endif
@@ -212,6 +220,23 @@ class SearchWindow {
             SetTimer(SearchWindow._hideTimer, 200)
         if prepared
             SetTimer(() => SearchWindow._RunSearch(), -1)
+    }
+
+    static _ResizeAfterShow() {
+        if IsObject(SearchWindow._showResize)
+            SetTimer(SearchWindow._showResize, 0)
+        windowGui := SearchWindow.Gui, deadline := A_TickCount + 2000
+        resize() {
+            if (!SearchWindow.IsVisible() || SearchWindow.Gui != windowGui)
+                return
+            ; Keysharp holds the window fixed until mapping completes; wait for its release before resizing.
+            if (!windowGui.ToClr().Resizable && A_TickCount < deadline)
+                return SetTimer(resize, -15)
+            SearchWindow._showResize := ""
+            windowGui.Move(, , SearchWindow.Width, SearchWindow._WindowHeight(SearchWindow._VisibleCount()))
+        }
+        SearchWindow._showResize := resize
+        SetTimer(resize, -1)
     }
 
     static _FocusInput() {
@@ -274,6 +299,9 @@ class SearchWindow {
     static _ScreenScale() => LauncherCanvas.ScreenScale(SearchWindow.Gui)
 
     static Hide() {
+        if IsObject(SearchWindow._showResize)
+            SetTimer(SearchWindow._showResize, 0)
+        SearchWindow._showResize := ""
         SearchWindow._CanvasUp()
         if IsObject(SearchWindow._hideTimer)
             SetTimer(SearchWindow._hideTimer, 0)
@@ -432,12 +460,15 @@ class SearchWindow {
     static _Layout() {
         count := SearchWindow._VisibleCount()
         SearchWindow.Hovered := 0
-        SearchWindow.Canvas.Move(0, 0, SearchWindow.Width, SearchWindow._WindowHeight(count))
-        if (SearchWindow.IsVisible() && SearchWindow._shownRows != count) {
-            SearchWindow.Gui.Show("NA w" SearchWindow.Width " h" SearchWindow._WindowHeight(count))
+        ; Swap the bitmap before a native resize can pump GTK and draw it at a different size.
+        SearchWindow._Repaint()
+        if (SearchWindow.IsVisible() && !SearchWindow._showing && SearchWindow._shownRows != count) {
+            if Platform.IsWayland
+                SearchWindow.Gui.Move(, , SearchWindow.Width, SearchWindow._WindowHeight(count))
+            else
+                SearchWindow.Gui.Show("NA w" SearchWindow.Width " h" SearchWindow._WindowHeight(count))
             SearchWindow._shownRows := count
         }
-        SearchWindow._Repaint()
     }
 
     static _Repaint() {
@@ -461,7 +492,8 @@ class SearchWindow {
             }
             IconCache.Scale := SearchWindow.Gui.PixelScale
             frameImage := LauncherCanvas.Render(SearchWindow.Width, SearchWindow._WindowHeight(count), SearchWindow.Gui.PixelScale, rows)
-            try SearchWindow.Canvas.Value := "HBITMAP:" frameImage.ToBitmap()
+            ; GTK may still report the previous allocation; keep this density-rendered bitmap's native pixels.
+            try SearchWindow.Canvas.Value := "*w0 *h0 HBITMAP:" frameImage.ToBitmap()
             catch {
                 frameImage.Dispose()
                 throw

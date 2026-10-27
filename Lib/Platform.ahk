@@ -63,11 +63,11 @@ class Platform {
         if Platform.IsWindows
             return Run('"' target '" ' arguments)
         if (arguments != "" || Platform.FindExecutable(target) != "")
-            return Run('"' target '" ' arguments)
+            return ProcessRunner.StartApplicationCommand('"' target '" ' arguments)
         opener := Platform.IsMac ? "/usr/bin/open" : Platform.FindExecutable("xdg-open")
         if (opener = "")
             throw Error("No desktop opener is installed (xdg-open).")
-        return ProcessRunner.Start(opener, [target])
+        return ProcessRunner.StartApplication(opener, [target])
     }
 
     static Reveal(target) {

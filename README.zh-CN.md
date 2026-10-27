@@ -67,9 +67,13 @@
 
 Linux 启动器使用本机按键事件及其修饰键处理导航，双击打开选中结果。显示启动器时先请求 GTK 激活窗口，再聚焦搜索框；搜索文字选区显式使用主题颜色，让 Ctrl+A 全选与部分选择清晰可见。根据本机窗口焦点在切换应用时隐藏。Wayland 无法提供窗口几何信息时，仍可按 Escape 隐藏窗口或执行搜索结果。底部菜单命令和结果右键菜单在启动器内的操作面板中显示，避免 GTK 弹出菜单抓取输入时导致 Cinnamon 的 Wayland 会话崩溃。应用图标采用兼容 GTK 的 ICO 帧，修复托盘和文件预览中的乱码图像。
 
+Hyprland 中，结果数量变化时搜索框的位置保持不变，窗口在其下方增高或缩小；重新打开空搜索时恢复紧凑高度。启动器位图保留渲染后的像素尺寸，无需悬停即可保持结果清晰、比例正确。Wayland 窗口尺寸与位置通过 Keysharp 的合成器集成调整。
+
+NixOS 启动外部应用、浏览器链接和终端时，不继承 Keysharp 私有的本机库搜索路径；子 Keysharp 脚本仍保留运行时所需的库。文件夹命令保留大小写，目标不存在时显示错误：在区分大小写的文件系统中，`docs ALTRun` 和 `docs ALTRUN` 指向不同文件夹。
+
 Wayland 上的窗口置顶需要 Keysharp 桌面代理与合成器集成正常工作。Cinnamon 会话崩溃后，可用 `systemctl --user restart keysharp-desktop.service` 重启失败的代理，再运行 `keysharp-desktop probe`，应显示 `backend=cinnamon` 且有可用操作。启动频率限制及恢复步骤见[安装与故障排查](docs/wiki/Installation-zh.md)。
 
-支持 Linux `.desktop` 应用索引、macOS `.app` 索引、本机路径处理、已安装的终端和跨平台脚本输出捕获。标准界面已在 Windows 和 Ubuntu 24.04 的 X11/Xvfb 环境通过冒烟检查，涵盖搜索结果、操作面板、偏好设置和文件夹浏览。macOS 为实验性支持，尚未验证。全局热键、托盘、窗口切换和剪贴板自动化取决于 Keysharp 桌面后端与桌面会话，尚未验证原生 Wayland 集成。如果窗口管理器占用了 `Alt+Space`，可在偏好设置里换一个热键。
+支持 Linux `.desktop` 应用索引、macOS `.app` 索引、本机路径处理、已安装的终端和跨平台脚本输出捕获。标准界面已在 Windows 和 Ubuntu 24.04 的 X11/Xvfb 环境通过冒烟检查，涵盖搜索结果、操作面板、偏好设置和文件夹浏览。macOS 为实验性支持，尚未验证。全局热键、托盘、窗口切换和剪贴板自动化取决于 Keysharp 桌面后端与桌面会话。Hyprland 验证覆盖启动器几何、位图绘制及基本交互；全局输入和其它合成器集成仍需单独验证。如果窗口管理器占用了 `Alt+Space`，可在偏好设置里换一个热键。
 
 Everything、Microsoft Store 索引、资源管理器/Total Commander 对话框快速跳转、Windows 输入法/CapsLock 集成、外壳属性/提权、Windows 开机启动和“发送到”快捷方式仍是 Windows 集成，在其它系统上会禁用。Linux/macOS 使用本地文件索引。脚本支持 `.ahk`/`.ks`、`.sh`、`.py`、`.ps1`，需要对应解释器；`.bat`/`.cmd` 仅限 Windows。通过脚本扩展启动源码脚本时，Keysharp 的编译器组件也必须保留。
 

@@ -168,7 +168,7 @@ class ApplicationProvider {
         if Platform.IsLinux && RegExMatch(target, "\.desktop$") {
             gio := Platform.FindExecutable("gio")
             if (gio != "")
-                return ProcessRunner.Start(gio, ["launch", target])
+                return ProcessRunner.StartApplication(gio, ["launch", target])
             entry := ProcessRunner.DesktopEntry(target)
             if !entry.Has("Exec") || entry["Exec"] = ""
                 throw Error("This desktop entry requires gio to launch.")
@@ -179,7 +179,7 @@ class ApplicationProvider {
                     command .= " " ProcessRunner.QuoteShell(argument)
                 return TerminalProvider._Launch(command, entry["Path"] != "" ? entry["Path"] : A_MyDocuments)
             }
-            return ProcessRunner.Start(spec.Executable, spec.Arguments, entry["Path"])
+            return ProcessRunner.StartApplication(spec.Executable, spec.Arguments, entry["Path"])
         }
         return Platform.Open(target)
     }

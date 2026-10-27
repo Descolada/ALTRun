@@ -62,6 +62,7 @@ class PlatformServices {
         ApplicationProvider.IndexFile := Platform.Join(AppSettings.DataDir, "AppIndex.json")
         Logger.Enabled := false
         PlatformServices.Paths()
+        PlatformServices.FolderActions()
         PlatformServices.Processes()
         PlatformServices.Cancellation()
         PlatformServices.DesktopEntries()
@@ -107,6 +108,37 @@ class PlatformServices {
         PlatformServices.Mark("paths, environment and executable discovery")
     }
 
+    static FolderActions() {
+        if Platform.IsWindows
+            return
+        parent := Platform.Join(PlatformServices.Folder, "Fixtures")
+        existing := Platform.Join(parent, "ALTRun")
+        DirCreate(existing)
+        originalOpen := Platform.GetOwnPropDesc("Open").Call
+        commands := AppSettings.Data["CustomCommands"], opened := []
+        AppSettings.Data["CustomCommands"] := [Map("Title", "Documents subfolder", "Type", "Folder"
+            , "Keyword", "docs", "Target", parent "/{query}", "Arguments", "")]
+        Platform.DefineProp("Open", {Call: (self, target, arguments := "") => opened.Push(target)})
+        try {
+            results := CustomCommandProvider.Search(SearchQuery("docs ALTRun"))
+            PlatformServices.Assert(results.Length = 1 && results[1].Arg == existing, "Custom folder queries must preserve path case")
+            ActionCatalog.RunDefault(results[1])
+            missing := Platform.Join(parent, "missing"), message := ""
+            try ActionCatalog.OpenFolder(missing)
+            catch as error
+                message := error.Message
+            PlatformServices.Equal(message, I18n.T("Files.FolderNotFound") ": " missing, "Missing folders must report the exact target")
+            uri := "smb://example.test/Share"
+            ActionCatalog.OpenFolder(uri)
+            PlatformServices.Assert(opened.Length = 2 && opened[1] == existing && opened[2] == uri
+                , "Only the existing folder and remote URI must reach the desktop opener")
+        } finally {
+            Platform.DefineProp("Open", {Call: originalOpen})
+            AppSettings.Data["CustomCommands"] := commands
+        }
+        PlatformServices.Mark("custom folder path case, missing-target error and remote URI")
+    }
+
     static Wait(job, timeout := 6000) {
         started := A_TickCount
         while !ProcessRunner.IsFinished(job) {
@@ -138,8 +170,7 @@ class PlatformServices {
             failed := true
         PlatformServices.Assert(failed, "A missing executable must report an exception")
 
-        script := PlatformServices.Write("args % ' 漢字/argv % ' café.ks", "#ErrorStdOut`n#Warn All, StdOut`n#Warn Experimental, Off`n#NoTrayIcon`n#Import Ks { Clr }`n"
-            . 'Clr.System.Console.OutputEncoding := Clr.System.Text.Encoding.UTF8' "`n"
+        script := PlatformServices.Write("args % ' 漢字/argv % ' café.ks", "#ErrorStdOut`n#Warn All, StdOut`n#Warn Experimental, Off`n#NoTrayIcon`n"
             . 'FileAppend(A_WorkingDir Chr(10), "*", "UTF-8")' "`n"
             . 'for value in A_Args' "`n    " 'FileAppend(value Chr(10), "*", "UTF-8")' "`n")
         values := ["space value", "100%literal", 'a"b', "Ελληνικά漢字"]

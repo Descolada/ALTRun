@@ -131,7 +131,7 @@ class TerminalProvider {
         } else {
             args.Push("-i")
         }
-        return ProcessRunner.Start(terminal, args, folder)
+        return ProcessRunner.StartApplication(terminal, args, folder)
 #endif
     }
 

@@ -31,8 +31,13 @@ private sealed class ALTRunProcessJob : IDisposable
 private static readonly ConcurrentDictionary<long, ALTRunProcessJob> ALTRunProcessJobs = new();
 private static long ALTRunProcessNextJob;
 
-private static long ALTRunStartInfo(ProcessStartInfo Start, bool Capture)
+private static long ALTRunStartInfo(ProcessStartInfo Start, bool Capture, bool Application)
 {
+    // Nix's Keysharp wrapper adds native libraries that can conflict with another application's own closure.
+    // Keep them for child Keysharp scripts, and change only the external application's environment.
+    if (Application && OperatingSystem.IsLinux()
+        && (File.Exists("/etc/NIXOS") || (Environment.ProcessPath ?? "").StartsWith("/nix/store/", StringComparison.Ordinal)))
+        Start.Environment.Remove("LD_LIBRARY_PATH");
     Start.UseShellExecute = false;
     Start.CreateNoWindow = Capture;
     Start.RedirectStandardOutput = Capture;
@@ -55,17 +60,17 @@ private static long ALTRunStartInfo(ProcessStartInfo Start, bool Capture)
     return job;
 }
 
-public static long ALTRunProcessStart(string Executable, string Arguments, string WorkingDirectory, bool Capture)
+public static long ALTRunProcessStart(string Executable, string Arguments, string WorkingDirectory, bool Capture, bool Application = false)
 {
     var start = new ProcessStartInfo(Executable);
     if (!string.IsNullOrEmpty(WorkingDirectory))
         start.WorkingDirectory = WorkingDirectory;
     foreach (var argument in JsonSerializer.Deserialize<string[]>(Arguments) ?? [])
         start.ArgumentList.Add(argument);
-    return ALTRunStartInfo(start, Capture);
+    return ALTRunStartInfo(start, Capture, Application);
 }
 
-public static long ALTRunProcessStartCommand(string Command, string WorkingDirectory, bool Capture)
+public static long ALTRunProcessStartCommand(string Command, string WorkingDirectory, bool Capture, bool Application = false)
 {
     var command = Command.Trim();
     var end = command.StartsWith('"') ? command.IndexOf('"', 1) + 1 : command.IndexOf(' ');
@@ -74,7 +79,7 @@ public static long ALTRunProcessStartCommand(string Command, string WorkingDirec
     var start = new ProcessStartInfo(command[..end].Trim('"')) { Arguments = command[end..].TrimStart() };
     if (!string.IsNullOrEmpty(WorkingDirectory))
         start.WorkingDirectory = WorkingDirectory;
-    return ALTRunStartInfo(start, Capture);
+    return ALTRunStartInfo(start, Capture, Application);
 }
 
 public static bool ALTRunProcessIsFinished(long Job)
@@ -364,6 +369,14 @@ class ProcessRunner {
 
     static StartCommand(command, workingDirectory := "", capture := false) {
         return ALTRunProcessStartCommand(command, workingDirectory, capture)
+    }
+
+    static StartApplication(executable, arguments := [], workingDirectory := "", capture := false) {
+        return ALTRunProcessStart(executable, JSON.Stringify(arguments), workingDirectory, capture, true)
+    }
+
+    static StartApplicationCommand(command, workingDirectory := "", capture := false) {
+        return ALTRunProcessStartCommand(command, workingDirectory, capture, true)
     }
 
     static IsFinished(job) => ALTRunProcessIsFinished(job)

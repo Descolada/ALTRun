@@ -27,6 +27,22 @@ The portable interface passed smoke checks on Windows and Ubuntu 24.04 under X11
 
 On Linux, showing the launcher requests GTK window activation before focusing the search field; explicit theme colors keep full and partial text selections visible. Escape dismissal and result execution work even when Wayland window geometry is unavailable; remembered placement and header dragging use geometry only when it is available. Always-on-top behavior on Wayland requires a functioning Keysharp desktop broker and compositor integration.
 
+On Hyprland, the launcher keeps its top-left corner while result counts change, growing and shrinking below the search field through Keysharp's Wayland positioner. Placement, height and focus during result changes have been checked on NixOS.
+
+External desktop launches on NixOS (or when Keysharp itself runs from the Nix store) omit the inherited `LD_LIBRARY_PATH`, so Keysharp's GTK/native libraries cannot override another application's libraries. This includes `xdg-open`, desktop entries, direct application commands and terminals; child Keysharp scripts retain their runtime environment. Firefox's libffi/XPCOM startup failure has been checked with this isolation. Folder commands use the exact path case and report missing local folders before opening them.
+
+On virtual machines where Nautilus exits with "Lost connection to Wayland compositor", try `GSK_RENDERER=cairo keysharp ALTRun.ahk`. The desktop opener inherits the software renderer setting; ALTRun's GTK 3 launcher does not use the GTK 4 renderer. This has been checked with Nautilus on this NixOS/Hyprland VM.
+
+Hyprland's window animations can stretch a launcher bitmap during result resizing. For Hyprland 0.55's Lua configuration, disable animations for this window only:
+
+```lua
+hl.window_rule({
+    name = "altrun-immediate-resize",
+    match = { class = "^keysharp$", title = "^ALTRun$" },
+    no_anim = true,
+})
+```
+
 Everything, Microsoft Store indexing, Explorer/Total Commander Quick Switch, Windows input-language/CapsLock handling, shell properties/elevation and Windows Startup/Start menu/Send To integration are Windows-only. Other platforms use the local file index, and these Windows integrations are disabled. Writable source folders keep `Data/` beside the program; otherwise user data uses the platform's application-data location (`$XDG_DATA_HOME/ALTRun` or `~/.local/share/ALTRun` on Linux, `~/Library/Application Support/ALTRun` on macOS).
 
 The existing downloadable executables, Scoop/winget packages and release workflow are AutoHotkey Windows builds, and do not package this Keysharp port. Keysharp update checks open the release page or suggest a source update; they never replace a Keysharp executable with an AutoHotkey package. Update this checkout from source. A Keysharp release needs a separate platform-specific packaging workflow.
