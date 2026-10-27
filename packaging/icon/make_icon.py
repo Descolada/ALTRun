@@ -8,7 +8,6 @@ Everything is drawn from simple shapes (no fonts, no third-party artwork), so th
 is ALTRun's own and can be used without licence questions. Small sizes are drawn with
 thicker strokes instead of being scaled down from the large one, so they stay sharp.
 """
-import io
 import os
 import struct
 import sys
@@ -103,12 +102,10 @@ def write_ico(images, path):
     entries, blobs = [], []
     for img in images:
         size = img.size[0]
-        if size >= 256:
-            buf = io.BytesIO()
-            img.save(buf, 'PNG')
-            data = buf.getvalue()
-        else:
-            data = dib(img)
+        # GDK's ICO loader cannot decode PNG-compressed entries. A mixed BMP/PNG
+        # file can even corrupt the preceding BMP frame used by Linux trays and
+        # file previews, so keep every resolution as an ordinary 32-bit DIB.
+        data = dib(img)
         entries.append((size, data))
     offset = 6 + 16 * len(entries)
     out = struct.pack('<HHH', 0, 1, len(entries))

@@ -6,6 +6,10 @@
 ## [未发布]
 
 ### Linux / Keysharp
+- Give GTK search-field selections explicit theme colors so Ctrl+A and partial selections remain visible in light and dark themes; verify their rendered highlight pixels.
+- Keep Escape dismissal and result execution working when Wayland window geometry is unavailable, including while the desktop broker recovers. Treat remembered placement and header dragging as optional geometry operations, and explicitly present the GTK window before focusing its search field; X11 activation uses a fresh server timestamp to recover after another window was focused. Document Cinnamon broker recovery and the compositor integration required for always-on-top behavior.
+- Show footer commands and result context menus in the launcher's action panel on Linux, avoiding GTK popup grabs that can crash Cinnamon on Wayland. Keep repeated menu clicks safe, support filtering and keyboard navigation, and defer external commands until the launcher is hidden.
+- Handle launcher shortcuts with native key-event modifiers and native window focus, restore activation after result resizing, and deliver result double-clicks directly. Encode every application ICO frame as a DIB so GTK tray icons and file previews display correctly. Add real keyboard/mouse regressions and a GTK icon-decoding check.
 - Keep Preferences window dimensions stable across page changes and allow resizing. Preserve Windows recorded hotkeys when theming recreates control handles; repair saved hotkey display labels on startup, including the launcher and clipboard shortcuts.
 - Use a shared Picture-rendered launcher on every platform, with stacked result text, rounded selections, semantic icons, shortcut badges and theme-aware notifications. Restyle Preferences and item editors, and fix blank numeric fields and dark dropdown contrast.
 - Give ALTRun its own Windows process application identity before setting its icon, separating it from the shared Keysharp executable's taskbar group.
@@ -21,6 +25,10 @@
 - 独立的跨平台冒烟测试，使用临时数据并把错误和警告写到标准输出/错误，不显示错误对话框。
 
 ### 修复
+- GTK 搜索框显式设置选中文字的主题颜色，修复浅色、深色主题下 Ctrl+A 全选与部分选择不可见的问题，并通过实际渲染像素验证高亮。
+- Wayland 无法提供窗口几何信息或桌面代理正在恢复时，仍可按 Escape 隐藏启动器并执行搜索结果；记住位置与拖动标题区域只在几何信息可用时进行。显示窗口时先请求 GTK 激活，再聚焦搜索框；X11 使用最新的服务器时间戳，确保切换到其它窗口后仍能恢复激活。补充 Cinnamon 桌面代理恢复与窗口置顶所需合成器集成的说明。
+- Linux 底部菜单命令和结果右键菜单改在启动器内的操作面板中显示，避免 GTK 弹出菜单抓取输入时导致 Cinnamon 的 Wayland 会话崩溃。连续点击菜单不会重复执行命令；支持筛选和键盘导航，外部命令延迟到启动器隐藏后执行。
+- Linux 启动器使用本机按键事件的修饰键与窗口焦点，修复结果尺寸变化后的激活及双击运行。应用 ICO 各尺寸均采用 DIB 编码，修复 GTK 托盘和文件预览中的乱码；增加真实键鼠输入和 GTK 图标解码回归测试。
 - 偏好设置可调整大小，切换页面时不再反复缩小窗口。Windows 热键框在控件句柄重建后仍保留录制值，启动时自动修复被误存为显示名称的启动器、剪贴板等热键。
 - Windows 设置 ALTRun 独立的进程应用标识后再设置图标，避免与其它 Keysharp 脚本共用任务栏分组；各平台采用同一套 Picture 启动器，并改善设置和编辑器的深色控件对比度、数字字段和页面布局。
 - Windows 专用集成在其它系统上禁用；Unix 文件身份保留大小写，应用缓存记录系统类型。

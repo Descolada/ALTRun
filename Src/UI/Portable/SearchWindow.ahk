@@ -10,6 +10,7 @@ class SearchWindow {
     static FileMode := false                        ; 文件搜索模式: 空的搜索框里按空格进入, 只搜文件
     static ActionSource := "", SavedQuery := "", AllActions := []
     static _actionsOnly := false                                            ; 直接打开的操作面板 (选中内容的操作): Esc / ← 关掉窗口
+    static _footerMenuActive := false, _footerMenuOrigin := ""
     static HistoryIndex := 0                         ; 正在看第几条搜索记录 (Knowledge.History, 1 = 最近), 0 = 没有在翻
     static Marked := SearchWindow._MarkedMap()
     static _historyDraft := ""                       ; 开始翻记录之前输入框里的文字, Ctrl+↓ 翻回来时恢复
@@ -18,7 +19,7 @@ class SearchWindow {
     static _searchTimer := "", _hideTimer := ""
     static _shownRows := -1                                                 ; 窗口当前按几行结果的高度显示
     static _tip := ""                                                       ; 这次显示时的使用提示 (HelpProvider.NextTip)
-    static LastArea := "", HiddenAt := 0                                    ; 上次隐藏时所在屏幕的工作区和时间 (Hud 用)
+    static LastArea := "", HiddenAt := 0, _shownArea := ""                   ; 上次隐藏时所在屏幕的工作区和时间 (Hud 用)
     static _last := ""                                                      ; 上次隐藏时的搜索 {Text, FileMode, Selected} (KeepLastQuery)
     static _keepOpen := false                        ; 右键菜单 / 删除确认期间不因失去焦点而隐藏
     static IconPrefetchDelay := 2000, PrepareDelay := 200, _prepareTimer := "", _prepared := false
@@ -54,21 +55,43 @@ class SearchWindow {
             . " r1 -Multi -WantReturn -Border -E0x200 Background" surface)
         if !Platform.IsWindows
             try searchBox.ToClr().ShowBorder := false
+        if Platform.IsLinux {
+            ; Some GTK themes lose their selection colors when the entry surface is customized.
+            selectionStyle := Clr.Gtk.CssProvider()
+            try {
+                selectionStyle.LoadFromData("entry selection { background-color: #" ThemeManager.Get("SelectedBackground")
+                    . "; color: #" ThemeManager.Get("SelectedTitle") "; }")
+                searchBox.ToClr().ControlObject.StyleContext.AddProvider(selectionStyle, 801)
+            } finally selectionStyle.Dispose()
+        }
         searchBox.SetCue(SearchWindow.Placeholder())
         LauncherCanvas.AccessibleLabel(searchBox, I18n.T("Search.Placeholder"))
         searchBox.OnEvent("Change", (*) => SearchWindow._OnInputChange())
         g.OnEvent("Close", (*) => (SearchWindow.Hide(), true))
+#if WINDOWS
         g.OnEvent("Escape", (*) => SearchWindow.Hide())
+#endif
         SearchWindow.Gui := g, SearchWindow.Input := searchBox, SearchWindow.Canvas := canvasControl, SearchWindow.List := canvasControl
+#if !WINDOWS
+        ; GTK routes some keys to the focused entry and others to the form. Share one dispatcher.
+        ALTRunLauncherAttachKeys(g.ToClr(), searchBox.ToClr(), canvasControl.ToClr()
+            , (vk, repeat, msg, modifiers) => SearchWindow._OnKeyDown(vk, repeat, msg, SearchWindow.Gui.Hwnd, modifiers))
+#endif
         for control in [searchBox, canvasControl] {
+#if WINDOWS
             control.OnMessage(0x100, (ctrl, w, l, msg) => SearchWindow._OnKeyDown(w, l, msg, ctrl.Hwnd))
             control.OnMessage(0x104, (ctrl, w, l, msg) => SearchWindow._OnKeyDown(w, l, msg, ctrl.Hwnd))
+#endif
             control.OnMessage(0x20A, (ctrl, w, l, msg) => SearchWindow._OnMouseWheel(w, l, msg, ctrl.Hwnd))
         }
         canvasControl.OnMessage(0x200, (ctrl, w, l, msg) => SearchWindow._CanvasMove(w, l))
         canvasControl.OnMessage(0x201, (ctrl, w, l, msg) => SearchWindow._CanvasDown(l))
         canvasControl.OnMessage(0x202, (*) => SearchWindow._CanvasUp())
+#if WINDOWS
         canvasControl.OnMessage(0x203, (ctrl, w, l, msg) => SearchWindow._CanvasDoubleClick(l))
+#else
+        ALTRunLauncherAttachDoubleClick(canvasControl.ToClr(), (point) => SearchWindow._CanvasDoubleClick(point))
+#endif
         canvasControl.OnMessage(0x204, (ctrl, w, l, msg) => SearchWindow._CanvasRightClick(l))
         canvasControl.OnMessage(0x2A3, (*) => SearchWindow._CanvasLeave())
 #if WINDOWS
@@ -87,7 +110,12 @@ class SearchWindow {
     }
 
     static IsActive() {
+#if WINDOWS
         return IsObject(SearchWindow.Gui) && WinActive("ahk_id " SearchWindow.Gui.Hwnd) ? true : false
+#else
+        ; Unix GUI handles name toolkit widgets, not desktop window IDs. Ask the owning native form.
+        return IsObject(SearchWindow.Gui) && SearchWindow.Gui.ToClr().HasFocus ? true : false
+#endif
     }
 
     static _showing := false
@@ -140,8 +168,8 @@ class SearchWindow {
         if (text = "" && SearchWindow.IsVisible()) {
             selection := Platform.EditSelection(SearchWindow.Input)
             Usage.Count("Show")
-            SearchWindow.Gui.Show()
-            SearchWindow.Input.Focus()
+            SearchWindow.Gui.Show(Platform.IsWindows ? "" : "Restore")
+            SearchWindow._FocusInput()
             Platform.SelectEdit(SearchWindow.Input, selection.Start, selection.End)
 #if WINDOWS
             SearchInputLanguage.SwitchOnShow(true)
@@ -149,7 +177,7 @@ class SearchWindow {
             return
         }
         App.RememberActiveWindow()
-        SearchWindow._actionsOnly := false, SearchWindow.Marked := SearchWindow._MarkedMap()
+        SearchWindow._actionsOnly := false, SearchWindow._footerMenuActive := false, SearchWindow._footerMenuOrigin := "", SearchWindow.Marked := SearchWindow._MarkedMap()
         Usage.Count("Show")
         last := SearchWindow._last
         restore := text = "" && AppSettings.General["KeepLastQuery"] && IsObject(last) && last.Text != ""
@@ -165,14 +193,16 @@ class SearchWindow {
             SearchWindow.MoveSelection(last.Selected - SearchWindow.Selected)
         appearance := AppSettings.Appearance
         scale := SearchWindow._ScreenScale()
-        pos := SearchWindow.Place(SearchWindow._ScreenArea(appearance["ShowOn"]), Round(SearchWindow.Width * scale)
+        SearchWindow._shownArea := SearchWindow._ScreenArea(appearance["ShowOn"])
+        pos := SearchWindow.Place(SearchWindow._shownArea, Round(SearchWindow.Width * scale)
             , Round(SearchWindow._WindowHeight(SearchWindow.VisibleRows) * scale), appearance["RememberPosition"] ? appearance["Position"] : "")
         wasVisible := SearchWindow.IsVisible()
         SearchWindow._ApplyFade(true)
-        SearchWindow.Gui.Show("x" pos.X " y" pos.Y " w" SearchWindow.Width " h" SearchWindow._WindowHeight(SearchWindow._VisibleCount()))
+        ; Restore also clears the toolkit's persistent no-activation flag left by a layout-only Show("NA").
+        SearchWindow.Gui.Show((Platform.IsWindows ? "" : "Restore ") "x" pos.X " y" pos.Y " w" SearchWindow.Width " h" SearchWindow._WindowHeight(SearchWindow._VisibleCount()))
         SearchWindow._visible := true, SearchWindow._focusArmed := false
         SearchWindow._shownRows := SearchWindow._VisibleCount()
-        SearchWindow.Input.Focus()
+        SearchWindow._FocusInput()
         length := StrLen(SearchWindow.Input.Value)
         Platform.SelectEdit(SearchWindow.Input, restore ? 0 : length, length)
 #if WINDOWS
@@ -182,6 +212,21 @@ class SearchWindow {
             SetTimer(SearchWindow._hideTimer, 200)
         if prepared
             SetTimer(() => SearchWindow._RunSearch(), -1)
+    }
+
+    static _FocusInput() {
+        ; GTK needs a toplevel activation request as well as focus on the entry.
+        if Platform.IsLinux {
+            nativeWindow := SearchWindow.Gui.ToClr().ControlObject
+            x11DisplayType := DllCall("libgdk-3.so.0\gdk_x11_display_get_type", "Ptr")
+            if DllCall("libgobject-2.0.so.0\g_type_check_instance_is_a", "Ptr", nativeWindow.Display.Handle, "Ptr", x11DisplayType, "Int") {
+                ; A stale user time can make the window manager reject activation after another app was used.
+                stamp := DllCall("libgdk-3.so.0\gdk_x11_get_server_time", "Ptr", nativeWindow.Window.Handle, "UInt")
+                nativeWindow.PresentWithTime(stamp)
+            } else
+                nativeWindow.Present()
+        }
+        SearchWindow.Input.Focus()
     }
 
     static Place(area, width, maxHeight, position := "") {
@@ -211,15 +256,19 @@ class SearchWindow {
                 if IsObject(area)
                     return area
         }
-        return Win.WorkAreaAtMouse()
+        try return Win.WorkAreaAtMouse()
+        catch
+            return Win.WorkArea(MonitorGetPrimary())
     }
 
     static _OnMoved(*) {
         if (!SearchWindow.IsVisible() || !AppSettings.Appearance["RememberPosition"])
             return
-        WinGetPos(&x, &y, &width, &height, "ahk_id " SearchWindow.Gui.Hwnd)
-        area := Win.WorkAreaAt(x + width // 2, y + height // 2)
-        AppSettings.Appearance["Position"] := SearchWindow.RelativePosition(area, width, x, y)
+        try {
+            WinGetPos(&x, &y, &width, &height, "ahk_id " SearchWindow.Gui.Hwnd)
+            area := Win.WorkAreaAt(x + width // 2, y + height // 2)
+            AppSettings.Appearance["Position"] := SearchWindow.RelativePosition(area, width, x, y)
+        }
     }
 
     static _ScreenScale() => LauncherCanvas.ScreenScale(SearchWindow.Gui)
@@ -230,8 +279,13 @@ class SearchWindow {
             SetTimer(SearchWindow._hideTimer, 0)
         if SearchWindow.IsVisible() {
             SearchWindow._OnMoved()
-            WinGetPos(&x, &y, &w, &h, "ahk_id " SearchWindow.Gui.Hwnd)
-            SearchWindow.LastArea := Win.WorkAreaAt(x + w // 2, y + h // 2), SearchWindow.HiddenAt := A_TickCount
+            ; Desktop geometry is optional on Wayland, including while its broker recovers.
+            SearchWindow.LastArea := SearchWindow._shownArea
+            try {
+                WinGetPos(&x, &y, &w, &h, "ahk_id " SearchWindow.Gui.Hwnd)
+                SearchWindow.LastArea := Win.WorkAreaAt(x + w // 2, y + h // 2)
+            }
+            SearchWindow.HiddenAt := A_TickCount
             SearchWindow._RememberQuery()
 #if WINDOWS
             SearchInputLanguage.Restore()
@@ -293,7 +347,7 @@ class SearchWindow {
     }
 
     static Toggle() {
-        if (SearchWindow.IsVisible() && WinActive("ahk_id " SearchWindow.Gui.Hwnd))
+        if (SearchWindow.IsVisible() && SearchWindow.IsActive())
             SearchWindow.Hide()
         else
             SearchWindow.Show()
@@ -446,6 +500,8 @@ class SearchWindow {
 
     static _CanvasMove(wParam, lParam) {
         point := SearchWindow._CanvasPoint(lParam)
+        if (IsObject(SearchWindow._footerMenuOrigin) && (Abs(point.X - SearchWindow._footerMenuOrigin.X) > 4 || Abs(point.Y - SearchWindow._footerMenuOrigin.Y) > 4))
+            SearchWindow._footerMenuOrigin := ""
         if IsObject(SearchWindow._drag) {
             if !(wParam & 1)
                 return SearchWindow._CanvasUp()
@@ -468,23 +524,49 @@ class SearchWindow {
             if (point.X < SearchWindow.Padding + 150) {
                 if (SearchWindow.Mode = "actions")
                     SearchWindow._CloseActions()
+                else if Platform.IsLinux
+                    SearchWindow._FooterMenu(point)
                 else
                     SetTimer(() => SearchWindow._FooterMenu(), -1)
             } else if (point.X > SearchWindow.Width * 0.68 && SearchWindow.Mode = "results")
                 SearchWindow._OpenActions()
         }
         else if (point.Y < SearchWindow.ListTop) {
-            pointer := SearchWindow._ScreenPointer()
-            WinGetPos(&x, &y, , , "ahk_id " SearchWindow.Gui.Hwnd)
-            SearchWindow._drag := {X: x, Y: y, MouseX: pointer.X, MouseY: pointer.Y}
+            try {
+                pointer := SearchWindow._ScreenPointer()
+                WinGetPos(&x, &y, , , "ahk_id " SearchWindow.Gui.Hwnd)
+                SearchWindow._drag := {X: x, Y: y, MouseX: pointer.X, MouseY: pointer.Y}
+            }
 #if WINDOWS
-            DllCall("SetCapture", "Ptr", SearchWindow.Canvas.Hwnd, "Ptr")
+            if IsObject(SearchWindow._drag)
+                DllCall("SetCapture", "Ptr", SearchWindow.Canvas.Hwnd, "Ptr")
 #endif
         }
         return 0
     }
 
-    static _FooterMenu() {
+    static _FooterMenu(point := "") {
+        if Platform.IsLinux {
+            if (!SearchWindow.IsVisible() || SearchWindow.Mode = "actions")
+                return
+            ; Keep Linux menus inside the launcher: parentless GTK popups can break Wayland grabs.
+            SearchWindow.SavedQuery := SearchWindow.Input.Value
+            SearchWindow.ActionSource := ResultItem(App.Name)
+            SearchWindow.AllActions := [
+                ResultItem(I18n.T("Tray.Preferences"), "Ctrl+,", {OnRun: (*) => App.OpenPreferences()}),
+                ResultItem(I18n.T("Menu.CheatSheet"), "?", {OnRun: (*) => SearchWindow._SetInput("?")}),
+                ResultItem(I18n.T("Tray.RebuildIndex"), "", {OnRun: (*) => App.RebuildIndex()}),
+                ResultItem(I18n.T("Tray.CheckUpdate"), "", {OnRun: (*) => UpdateChecker.Check()}),
+                ResultItem(I18n.T("Tray.Reload"), "", {OnRun: (*) => App.Reload()}),
+                ResultItem(I18n.T("Tray.Exit"), "", {OnRun: (*) => App.Quit()})
+            ]
+            SearchWindow._footerMenuActive := true, SearchWindow._footerMenuOrigin := point
+            SearchWindow.Mode := "actions"
+            SearchWindow.Input.SetCue(I18n.T("Search.ActionsFor", App.Name))
+            SearchWindow._SetInput("")
+            SearchWindow.Input.Focus()
+            return
+        }
         later := (fn) => (*) => (SearchWindow.Hide(), SetTimer(fn, -1))
         popup := Menu()
         popup.Add(I18n.T("Tray.Preferences") "`tCtrl+,", later(() => App.OpenPreferences()))
@@ -533,6 +615,9 @@ class SearchWindow {
     }
 
     static _CanvasDoubleClick(lParam) {
+        ; A panel resize can put a menu command under the click that opened it.
+        if (SearchWindow._footerMenuActive && IsObject(SearchWindow._footerMenuOrigin))
+            return 0
         point := SearchWindow._CanvasPoint(lParam), row := SearchWindow.RowAt(point.X, point.Y)
         if row
             SearchWindow._OnRowDoubleClick(row)
@@ -581,6 +666,14 @@ class SearchWindow {
             return
 
         if (SearchWindow.Mode = "actions") {
+            if SearchWindow._footerMenuActive {
+                cheatSheet := item = SearchWindow.AllActions[2]
+                SearchWindow._CloseActions()
+                if !cheatSheet
+                    SearchWindow.Hide()
+                SearchWindow._Later(() => SearchWindow._SafeRun(() => item.OnRun.Call()))
+                return
+            }
             source := SearchWindow.ActionSource
             Knowledge.Record(SearchWindow.SavedQuery, source.Uid)
             RecentProvider.Remember(source)
@@ -645,6 +738,7 @@ class SearchWindow {
             actions := ResultActions.ListFor(item)
         if !actions.Length
             return false
+        SearchWindow._footerMenuActive := false, SearchWindow._footerMenuOrigin := ""
         SearchWindow.SavedQuery := SearchWindow.Input.Value
         SearchWindow.ActionSource := item
         SearchWindow.AllActions := actions
@@ -655,6 +749,7 @@ class SearchWindow {
     }
 
     static _CloseActions() {
+        SearchWindow._footerMenuActive := false, SearchWindow._footerMenuOrigin := ""
         SearchWindow.Mode := "results"
         SearchWindow._UpdateCueBanner()
         SearchWindow._SetInput(SearchWindow.SavedQuery)
@@ -750,8 +845,16 @@ class SearchWindow {
         item := SearchWindow._TargetItem()
         if (!IsObject(item) || !item.Valid && !ResultActions.CanEdit(item))
             return
-        if (SearchWindow.Mode = "actions")                                  ; 操作面板里右键 = 执行这一项
-            return SearchWindow._Execute()
+        if (SearchWindow.Mode = "actions") {                                ; 操作面板里右键 = 执行这一项
+            if !SearchWindow._footerMenuActive
+                SearchWindow._Execute()
+            return
+        }
+        if Platform.IsLinux {
+            SearchWindow._OpenActionsFor(item)
+            SearchWindow.Input.Focus()
+            return
+        }
         contextMenu := Menu()
         for action in ResultActions.ListFor(item) {
             label := StrReplace(action.Title, "&", "&&") (action.Subtitle != "" ? "`t" action.Subtitle : "")
@@ -764,7 +867,7 @@ class SearchWindow {
         SearchWindow._keepOpen := true
         contextMenu.Show(x, y)
         SearchWindow._keepOpen := false
-        if (SearchWindow.IsVisible() && !WinActive("ahk_id " SearchWindow.Gui.Hwnd))
+        if (SearchWindow.IsVisible() && !SearchWindow.IsActive())
             try WinActivate("ahk_id " SearchWindow.Gui.Hwnd)
     }
 
@@ -786,13 +889,13 @@ class SearchWindow {
         return IsObject(SearchWindow.Gui) && (hwnd = SearchWindow.Gui.Hwnd || hwnd = SearchWindow.Input.Hwnd || hwnd = SearchWindow.List.Hwnd)
     }
 
-    static _OnKeyDown(wParam, lParam, msg, hwnd) {
+    static _OnKeyDown(wParam, lParam, msg, hwnd, modifiers := "") {
         if !SearchWindow._IsOwnWindow(hwnd)
             return
         vk := wParam
-        ctrl  := GetKeyState("Ctrl")
-        shift := GetKeyState("Shift")
-        alt   := (msg = 0x104) || GetKeyState("Alt")
+        ctrl  := modifiers = "" ? GetKeyState("Ctrl") : (modifiers & 1) != 0
+        shift := modifiers = "" ? GetKeyState("Shift") : (modifiers & 2) != 0
+        alt   := modifiers = "" ? (msg = 0x104) || GetKeyState("Alt") : (modifiers & 4) != 0
         actions := SearchWindow.Mode = "actions"
 
         switch vk {
@@ -1080,3 +1183,100 @@ class SearchWindow {
             SearchWindow.Hide()
     }
 }
+
+#if !WINDOWS
+#CSharp
+public static void ALTRunLauncherAttachDoubleClick(Keysharp.Builtins.Ks.Clr.ManagedInstance wrapped,
+    Keysharp.Builtins.KeysharpFunc callback)
+{
+    var control = (Eto.Forms.Control)wrapped.Native;
+    control.MouseDoubleClick += (_, e) =>
+    {
+        if (e.Buttons != Eto.Forms.MouseButtons.Primary) return;
+        long point = (ushort)(short)System.Math.Round(e.Location.X)
+            | ((long)(ushort)(short)System.Math.Round(e.Location.Y) << 16);
+        callback.Call(point);
+        e.Handled = true;
+    };
+}
+
+public static void ALTRunLauncherAttachKeys(Keysharp.Builtins.Ks.Clr.ManagedInstance window,
+    Keysharp.Builtins.Ks.Clr.ManagedInstance input, Keysharp.Builtins.Ks.Clr.ManagedInstance canvas,
+    Keysharp.Builtins.KeysharpFunc callback)
+{
+    Eto.Forms.Control[] controls = System.OperatingSystem.IsLinux()
+        ? [(Eto.Forms.Control)window.Native, (Eto.Forms.Control)input.Native, (Eto.Forms.Control)canvas.Native]
+        : [(Eto.Forms.Control)input.Native, (Eto.Forms.Control)canvas.Native];
+    var pressed = new System.Collections.Generic.HashSet<Eto.Forms.Keys>();
+    var recent = new System.Collections.Generic.Dictionary<(uint, Eto.Forms.Keys), bool>();
+    var order = new System.Collections.Generic.Queue<(uint, Eto.Forms.Keys)>();
+    foreach (var control in controls)
+    {
+        control.LostFocus += (_, _) => pressed.Clear();
+        control.KeyUp += (_, e) => pressed.Remove(e.Key & Eto.Forms.Keys.KeyMask);
+        control.KeyDown += (_, e) =>
+        {
+            var key = e.Key & Eto.Forms.Keys.KeyMask;
+            long vk = ALTRunLauncherVirtualKey(key);
+            if (vk == 0) return;
+            // GTK can offer one native key to a toplevel twice. Preserve the first decision, including
+            // suppression, while retaining separate timestamps for physical key repeats.
+            uint stamp = System.OperatingSystem.IsLinux() ? ALTRunLauncherCurrentEventTime() : 0;
+            var identity = (stamp, key);
+            if (stamp != 0 && recent.TryGetValue(identity, out bool handled))
+            {
+                e.Handled |= handled;
+                return;
+            }
+            if (stamp != 0)
+            {
+                // A callback may pump GTK again. Suppress a nested duplicate while it decides.
+                recent[identity] = true;
+                order.Enqueue(identity);
+                if (order.Count > 32) recent.Remove(order.Dequeue());
+            }
+            if (e.Handled) return;
+            long repeat = pressed.Add(key) ? 1 : 0x40000001;
+            long modifiers = ((e.Modifiers & Eto.Forms.Keys.Control) != 0 ? 1 : 0)
+                | ((e.Modifiers & Eto.Forms.Keys.Shift) != 0 ? 2 : 0)
+                | ((e.Modifiers & Eto.Forms.Keys.Alt) != 0 ? 4 : 0);
+            object result = callback.Call(vk, repeat, (modifiers & 4) != 0 ? 0x104L : 0x100L, modifiers);
+            if (result != null && (result is not string text || text.Length != 0))
+                e.Handled = true;
+            if (stamp != 0) recent[identity] = e.Handled;
+        };
+    }
+}
+
+[System.Runtime.InteropServices.DllImport("libgtk-3.so.0", EntryPoint = "gtk_get_current_event_time")]
+private static extern uint ALTRunLauncherCurrentEventTime();
+
+private static long ALTRunLauncherVirtualKey(Eto.Forms.Keys key)
+{
+    if (key >= Eto.Forms.Keys.A && key <= Eto.Forms.Keys.Z)
+        return 'A' + (key - Eto.Forms.Keys.A);
+    if (key >= Eto.Forms.Keys.D0 && key <= Eto.Forms.Keys.D9)
+        return '0' + (key - Eto.Forms.Keys.D0);
+    if (key >= Eto.Forms.Keys.F1 && key <= Eto.Forms.Keys.F4)
+        return 0x70 + (key - Eto.Forms.Keys.F1);
+    return key switch
+    {
+        Eto.Forms.Keys.Backspace => 0x08,
+        Eto.Forms.Keys.Tab => 0x09,
+        Eto.Forms.Keys.Enter => 0x0D,
+        Eto.Forms.Keys.Escape => 0x1B,
+        Eto.Forms.Keys.Space => 0x20,
+        Eto.Forms.Keys.PageUp => 0x21,
+        Eto.Forms.Keys.PageDown => 0x22,
+        Eto.Forms.Keys.Left => 0x25,
+        Eto.Forms.Keys.Up => 0x26,
+        Eto.Forms.Keys.Right => 0x27,
+        Eto.Forms.Keys.Down => 0x28,
+        Eto.Forms.Keys.Insert => 0x2D,
+        Eto.Forms.Keys.Delete => 0x2E,
+        Eto.Forms.Keys.Comma => 0xBC,
+        _ => 0
+    };
+}
+#EndCSharp
+#endif

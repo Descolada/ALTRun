@@ -23,11 +23,26 @@ This source checkout requires [Keysharp](https://github.com/keysharp-org/Keyshar
 
 Windows, Linux and macOS share a Picture-rendered launcher with a native search field and themed settings controls. On Windows, ALTRun sets its own process application identity before assigning its icon so other Keysharp scripts keep their taskbar identity. Linux discovers applications through XDG `.desktop` entries; macOS scans `.app` bundles. File browsing accepts `/absolute/paths/`, `~/` and `$HOME/`, and preserves case in Unix file identities. Installed terminals and `.sh`, `.py`, `.ps1`, `.ahk`/`.ks` scripts use platform interpreters and argument arrays; background scripts capture stdout/stderr and terminate their process tree on timeout. Captured output is decoded as UTF-8; Windows scripts invoking legacy OEM-encoded tools should convert their output to UTF-8. Keep the Keysharp compiler deployed for source scripts.
 
-The portable interface passed smoke checks on Windows and Ubuntu 24.04 under X11/Xvfb, covering search results, action panels, preferences and folder browsing. These checks do not establish native Wayland or global-hook integration. macOS support is experimental and unverified. Global shortcuts, tray support, window enumeration/activation and clipboard automation depend on the Keysharp desktop backend and session. A window manager may reserve `Alt+Space`; choose another hotkey in Preferences.
+The portable interface passed smoke checks on Windows and Ubuntu 24.04 under X11/Xvfb, covering search results, action panels, preferences and folder browsing. Linux launcher keys use native events and their modifiers; native focus controls dismissal, and double-click opens results. Footer commands and result context menus use the launcher's action panel to avoid GTK popup grabs that can crash Cinnamon on Wayland. Application ICO frames use GTK-compatible DIB encoding for tray icons and file previews. A separate Xvfb input fixture checks real keys, clicks and interaction with another window. These checks do not establish native Wayland or global-hook integration. macOS support is experimental and unverified. Global shortcuts, tray support, window enumeration/activation and clipboard automation depend on the Keysharp desktop backend and session. A window manager may reserve `Alt+Space`; choose another hotkey in Preferences.
+
+On Linux, showing the launcher requests GTK window activation before focusing the search field; explicit theme colors keep full and partial text selections visible. Escape dismissal and result execution work even when Wayland window geometry is unavailable; remembered placement and header dragging use geometry only when it is available. Always-on-top behavior on Wayland requires a functioning Keysharp desktop broker and compositor integration.
 
 Everything, Microsoft Store indexing, Explorer/Total Commander Quick Switch, Windows input-language/CapsLock handling, shell properties/elevation and Windows Startup/Start menu/Send To integration are Windows-only. Other platforms use the local file index, and these Windows integrations are disabled. Writable source folders keep `Data/` beside the program; otherwise user data uses the platform's application-data location (`$XDG_DATA_HOME/ALTRun` or `~/.local/share/ALTRun` on Linux, `~/Library/Application Support/ALTRun` on macOS).
 
 The existing downloadable executables, Scoop/winget packages and release workflow are AutoHotkey Windows builds, and do not package this Keysharp port. Keysharp update checks open the release page or suggest a source update; they never replace a Keysharp executable with an AutoHotkey package. Update this checkout from source. A Keysharp release needs a separate platform-specific packaging workflow.
+
+### Cinnamon Wayland troubleshooting
+
+A Cinnamon session crash or several session changes in quick succession can leave the per-user desktop broker failed after systemd's startup limit. Restart it as your graphical user, then inspect its backend:
+
+```sh
+systemctl --user restart keysharp-desktop.service
+keysharp-desktop probe
+```
+
+On Cinnamon Wayland, expect `backend=cinnamon` and nonzero `available_operations`. If systemd reports `start-limit-hit` or repeated startup requests, run `systemctl --user reset-failed keysharp-desktop.service` and repeat the restart. Inspect `systemctl --user status keysharp-desktop.service` and `journalctl --user -u keysharp-desktop.service` if it fails again. The system authority service can be healthy while this per-user broker is unavailable.
+
+Show ALTRun again after recovery so Keysharp can reapply its window placement and always-on-top request. Basic launcher dismissal does not require the broker to expose window geometry.
 
 ### Linux desktop features
 

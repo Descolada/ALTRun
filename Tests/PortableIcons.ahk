@@ -47,6 +47,10 @@ class PortableIcons {
         PortableIcons.Assert(IconCache.Get("\\ALTRun-unreachable.invalid\share\icon.png") = "", "A remote icon was allowed to probe the network.")
         PortableIcons.Assert(IconCache.Get("thumb:\\ALTRun-unreachable.invalid\share\icon.png") = "", "A remote thumbnail bypassed the network guard.")
         PortableIcons.Assert(IconCache.Get("res:\\ALTRun-unreachable.invalid\share\icons.dll,-1") = "", "A remote resource bypassed the network guard.")
+#if LINUX
+        appIcon := Platform.Join(Platform.FullPath("..", A_ScriptDir), "Resources", "ALTRun.ico")
+        PortableIcons.Assert(ALTRunGtkIconMatchesFrames(appIcon), "GDK's tray/file-preview icon differs from its decoded ICO frame.")
+#endif
 #if WINDOWS
         PortableIcons.Windows()
 #endif
@@ -95,3 +99,36 @@ class PortableIcons {
         return true
     }
 }
+
+#if LINUX
+#CSharp
+public static bool ALTRunGtkIconMatchesFrames(string path)
+{
+    using var icon = new Eto.Drawing.Icon(path);
+    // The tray and file manager use GDK's primary image, whereas the launcher
+    // decodes individual frames. Both must produce the same original pixels.
+    var actual = icon.Handler.GetType().GetProperty("Pixbuf").GetValue(icon.Handler);
+    int width = (int)actual.GetType().GetProperty("Width").GetValue(actual);
+    int height = (int)actual.GetType().GetProperty("Height").GetValue(actual);
+    Eto.Drawing.IconFrame matching = null;
+    foreach (var frame in icon.Frames)
+        if (frame.PixelSize.Width == width && frame.PixelSize.Height == height)
+            matching = frame;
+    if (matching == null) return false;
+    var expected = matching.Bitmap.Handler.GetType().GetProperty("Pixbuf").GetValue(matching.Bitmap.Handler);
+    var type = actual.GetType();
+    int channels = (int)type.GetProperty("NChannels").GetValue(actual);
+    if (channels != (int)type.GetProperty("NChannels").GetValue(expected)) return false;
+    int actualStride = (int)type.GetProperty("Rowstride").GetValue(actual);
+    int expectedStride = (int)type.GetProperty("Rowstride").GetValue(expected);
+    var actualPixels = (System.IntPtr)type.GetProperty("Pixels").GetValue(actual);
+    var expectedPixels = (System.IntPtr)type.GetProperty("Pixels").GetValue(expected);
+    for (int y = 0; y < height; y++)
+        for (int x = 0; x < width * channels; x++)
+            if (System.Runtime.InteropServices.Marshal.ReadByte(actualPixels, y * actualStride + x)
+                != System.Runtime.InteropServices.Marshal.ReadByte(expectedPixels, y * expectedStride + x))
+                return false;
+    return true;
+}
+#EndCSharp
+#endif
