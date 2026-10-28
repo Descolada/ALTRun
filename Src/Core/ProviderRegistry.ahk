@@ -241,10 +241,11 @@ class ProviderRegistry {
         if !Platform.IsWindows
             seen.CaseSense := "On"
         for item in items {
-            if (item.Uid != "") {
-                if seen.Has(item.Uid)
+            key := item.DedupeKey != "" ? item.DedupeKey : item.Uid
+            if (key != "") {
+                if seen.Has(key)
                     continue
-                seen[item.Uid] := true
+                seen[key] := true
             }
             kept.Push(item)
         }

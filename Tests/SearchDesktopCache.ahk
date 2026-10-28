@@ -52,6 +52,12 @@ class SearchDesktopCache {
         Loop 20
             WindowProvider.Search(SearchQuery("workbench"))
         SearchDesktopCache.Assert(SearchDesktopCache.Reads = 1, "Expired default searches refreshed windows while typing.")
+        first := SearchDesktopCache.Window("First Workbench"), second := SearchDesktopCache.Window("Second Workbench")
+        second.Hwnd := 124
+        firstItem := WindowProvider.ItemFor(first, 100), secondItem := WindowProvider.ItemFor(second, 100)
+        distinct := ProviderRegistry._Dedupe([firstItem, secondItem, firstItem])
+        SearchDesktopCache.Assert(distinct.Length = 2 && firstItem.Uid == secondItem.Uid && firstItem.Identity() != secondItem.Identity()
+            , "Windows from one application must remain distinct while sharing learned app ranking.")
 
         BackgroundWork.IsBusy := () => true
         WindowProvider._RefreshIfIdle()

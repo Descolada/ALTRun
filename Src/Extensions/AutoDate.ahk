@@ -22,6 +22,18 @@ class AutoDate {
         AutoDate.Options := options
         if !options["Enabled"]
             return
+        if Platform.IsMac {
+#if OSX
+            try {
+                HotIf((*) => ALTRunMacFinderActive())
+                Hotkey(options["Hotkey"], (*) => MacDesktop.DateStamp())
+            } catch as e {
+                Logger.Error("AutoDate: " e.Message)
+            }
+            HotIf()
+#endif
+            return
+        }
         for window in options["RenameWindows"]
             GroupAdd("ALTRunRenameWindows", window)
         for window in options["AppendWindows"]

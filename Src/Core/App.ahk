@@ -110,6 +110,7 @@ class App {
         Logger.Rotate()
         App._MoveLegacyResources()
         AppSettings.Load()
+        UpdateChecker.Configure()
         Logger.Enabled := AppSettings.General["SaveLog"] ? true : false
         Logger.Debug("===== " App.Name " " App.Version (A_IsAdmin ? " (administrator)" : "") " starting =====")
         Logger.Time("startup: settings", started)                          ; log the time of each start-up stage when "Write debug log" is on
@@ -122,7 +123,7 @@ class App {
         Logger.Time("startup: learning, usage, theme", phase)
 
         for provider in [ClipboardProvider, ApplicationProvider, CustomCommandProvider, SnippetProvider, SystemProvider
-                        , CalculatorProvider, WebSearchProvider, BookmarkProvider, WindowProvider, ScriptProvider, FileSearchProvider, TerminalProvider, HelpProvider, RecentProvider]
+                        , CalculatorProvider, WebSearchProvider, BookmarkProvider, WindowProvider, ScriptProvider, ShortcutsProvider, FileSearchProvider, TerminalProvider, HelpProvider, RecentProvider]
             ProviderRegistry.Register(provider)
         ProviderRegistry.InitAll()
 
@@ -134,10 +135,15 @@ class App {
         App._RegisterHotkeys()
         Logger.Time("startup: tray, hotkeys", phase), phase := Logger.Ms()
         SnippetExpander.Init()
-        if Platform.IsWindows {
+        if (Platform.IsWindows || Platform.IsMac) {
             QuickSwitch.Init(AppSettings.Extension("QuickSwitch"))
             AutoDate.Init(AppSettings.Extension("AutoDate"))
             PTToolsWindow.Load(AppSettings.Extension("PTTools"))
+        }
+        if Platform.IsMac {
+            MacApp.Init()
+            MacInputIntegration.Init()
+            MacDesktop.Init()
         }
         Logger.Time("startup: snippets, extensions", phase), phase := Logger.Ms()
         App._UpdateShellShortcuts()
@@ -189,6 +195,7 @@ class App {
     }
 
     static _PollRequests() {
+        MacApp.PollServices()
         while ((request := ALTRunInstanceNext()) != "")
             App._HandleCommandLine(JSON.Parse(request), true)
     }
@@ -696,6 +703,10 @@ class App {
 
     ; forwarded: arguments handed over by an ALTRun started later (no arguments = the exe was double-clicked: show the search window)
     static _HandleCommandLine(args, forwarded := false) {
+        if (Platform.IsMac && args.Length = 3 && args[1] = "-MacUpdateReady") {
+            MacUpdate.SignalReady(args[2], args[3])
+            return
+        }
         if (args.Length >= 2 && args[1] = "-SendTo") {
             paths := []                                                     ; with several files selected, all their paths come in at once
             Loop args.Length - 1 {
@@ -741,6 +752,16 @@ class App {
     ; a non-zero return from an OnExit callback cancels the exit, so nothing is returned here
     static _OnExit() {
         ALTRunInstanceClose()
+        ShortcutsProvider.Stop()
+        MacSpotlight.Stop()
+        if Platform.IsMac {
+            MacApp.Stop()
+            MacOcr.Stop()
+            MacQuickSwitch.Stop()
+            MacUpdate.Stop()
+            MacDesktop.Stop()
+            MacInputIntegration.Stop()
+        }
         ProcessRunner.CancelAll()
         if Platform.IsWindows
             CapsLockHelper.Stop()

@@ -2,6 +2,7 @@
 class Platform {
     static IsWindows => A_OSType = "Windows"
     static IsMac => A_OSType = "OSX"
+    static AppBundle => Platform.IsMac ? ALTRunOwnAppBundle(A_ScriptFullPath) : ""
     static IsLinux => A_OSType = "Linux"
     static IsWayland => Platform.IsLinux && (EnvGet("XDG_SESSION_TYPE") = "wayland"
         || (EnvGet("XDG_SESSION_TYPE") = "" && EnvGet("WAYLAND_DISPLAY") != ""))

@@ -2,6 +2,12 @@
 #Include Lib/Platform.ahk
 #Include Lib/ProcessRunner.ahk
 #Include Lib/DesktopIntegration.ahk
+#Include Lib/MacInputIntegration.ahk
+#Include Lib/MacDesktop.ahk
+#Include Lib/MacApp.ahk
+#Include Lib/MacUpdate.ahk
+#Include Lib/MacOcr.ahk
+#Include Lib/MacSpotlight.ahk
 ; --- Lib ---
 #Include Lib/JSON.ahk
 #Include Lib/Logger.ahk
@@ -34,8 +40,10 @@
 
 ; --- Src/UI ---
 #Include Src/UI/ThemeManager.ahk
-#if WINDOWS
+#if WINDOWS || OSX
 #Include Src/UI/TypeAhead.ahk
+#endif
+#if WINDOWS
 #Include Src/UI/SearchInputLanguage.ahk
 #Include Src/UI/WindowFade.ahk
 #endif
@@ -68,6 +76,7 @@
 #Include Src/Providers/RecentProvider.ahk
 #Include Src/Providers/ScriptProvider.ahk
 #Include Src/Providers/HelpProvider.ahk
+#Include Src/Providers/ShortcutsProvider.ahk
 
 ; --- Src/Extensions ---
 #Include Src/Extensions/SnippetExpander.ahk

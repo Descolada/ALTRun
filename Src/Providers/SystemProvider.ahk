@@ -200,9 +200,25 @@ class SystemProvider {
 #endif
 #if OSX
         add("Lock", "Sys.Lock", App.IconFile, () => Send("^#q"))
+        add("MediaPlayPause", "Sys.MediaPlayPause", App.IconFile, () => SystemProvider.MacMedia(16))
+        add("MediaNext", "Sys.MediaNext", App.IconFile, () => SystemProvider.MacMedia(17))
+        add("MediaPrev", "Sys.MediaPrev", App.IconFile, () => SystemProvider.MacMedia(18))
+        add("MediaStop", "Sys.MediaStop", App.IconFile, () => MacDesktop.AppleScript('if application id "com.apple.Music" is running then tell application id "com.apple.Music" to stop`nif application id "com.spotify.client" is running then tell application id "com.spotify.client" to pause', "Media"))
+        add("PTTools", "Sys.PTTools", IconCache.Own("Calculator", "res:imageres.dll,-182"), () => PTToolsWindow.Show())
+        add("SPF2M", "Sys.SPF2M", IconCache.Own("Calculator", "res:imageres.dll,-182"), () => PTToolsWindow.ShowSpf2m())
+        add("ExtractImageText", "Mac.ExtractText", ClipboardProvider.Icon, () => MacOcr.ExtractClipboard())
+        add("FinderDateStamp", "Mac.DateStamp", "folder:", () => MacDesktop.DateStamp())
+        add("ListProcesses", "Sys.ListProcesses", App.IconFile, () => SystemProvider._ShowCommandOutput("/bin/ps -axo pid,pcpu,pmem,comm", "ALTRun.Processes.txt"))
+        add("ListServices", "Sys.ListServices", App.IconFile, () => SystemProvider._ShowCommandOutput("/bin/launchctl list", "ALTRun.Services.txt"))
         for command in SystemProvider.MacCommands()
             add(command["Id"], command["TitleKey"], command.Has("Icon") ? command["Icon"] : App.IconFile, SystemProvider._NativeCommand(command)
                 , command["Confirm"], "Sys.Subtitle", command["Title"], command["English"])
+        for page in SystemProvider.MacSettingsPages() {
+            uri := "x-apple.systempreferences:" page[3]
+            add("Set" page[1], "", App.IconFile, SystemProvider._MacSettingsOpener(uri), false, "Sys.Subtitle"
+                , I18n.T("Tool.Settings") ": " I18n.T(page[2]), "System Settings " page[1] " " I18n.T(page[2]))
+            list[list.Length]["IsSetting"] := true
+        }
 #endif
         add("ShowIP", "Sys.ShowIP", "url:", () => SystemProvider.ShowIP())
 #endif
@@ -351,6 +367,63 @@ class SystemProvider {
         return list
     }
 
+    static _MacSettingsOpener(uri) => () => Platform.Open(uri)
+
+    static MacSettingsPages() {
+#if OSX
+        pages := [["Display", "Setting.Display", "com.apple.Displays-Settings.extension"]
+            , ["NightLight", "Setting.NightLight", "com.apple.Displays-Settings.extension"]
+            , ["Sound", "Setting.Sound", "com.apple.Sound-Settings.extension"]
+            , ["Notifications", "Setting.Notifications", "com.apple.Notifications-Settings.extension"]
+            , ["Focus", "Setting.Focus", "com.apple.Focus-Settings.extension"]
+            , ["Battery", "Setting.Battery", "com.apple.Battery-Settings.extension"]
+            , ["Storage", "Setting.Storage", "com.apple.settings.Storage"]
+            , ["Multitasking", "Setting.Multitasking", "com.apple.Desktop-Settings.extension"]
+            , ["About", "Mac.Settings.About", "com.apple.SystemProfiler.AboutExtension"]
+            , ["Bluetooth", "Setting.Bluetooth", "com.apple.BluetoothSettings"]
+            , ["Mouse", "Setting.Mouse", "com.apple.Mouse-Settings.extension"]
+            , ["Touchpad", "Setting.Touchpad", "com.apple.Trackpad-Settings.extension"]
+            , ["Typing", "Setting.Typing", "com.apple.Keyboard-Settings.extension"]
+            , ["Network", "Setting.Network", "com.apple.Network-Settings.extension"]
+            , ["Wifi", "Setting.Wifi", "com.apple.wifi-settings-extension"]
+            , ["Vpn", "Setting.Vpn", "com.apple.NetworkExtensionSettingsUI.NESettingsUIExtension"]
+            , ["Background", "Setting.Background", "com.apple.Wallpaper-Settings.extension"]
+            , ["Colors", "Setting.Colors", "com.apple.Appearance-Settings.extension"]
+            , ["LockScreen", "Setting.LockScreen", "com.apple.Lock-Screen-Settings.extension"]
+            , ["StartupApps", "Setting.StartupApps", "com.apple.LoginItems-Settings.extension"]
+            , ["Account", "Setting.Account", "com.apple.Users-Groups-Settings.extension"]
+            , ["SignIn", "Setting.SignIn", "com.apple.Touch-ID-Settings.extension"]
+            , ["DateTime", "Setting.DateTime", "com.apple.Date-Time-Settings.extension"]
+            , ["Language", "Setting.Language", "com.apple.Localization-Settings.extension"]
+            , ["Update", "Setting.Update", "com.apple.Software-Update-Settings.extension"]
+            , ["Privacy", "Setting.Privacy", "com.apple.settings.PrivacySecurity.extension"]
+            , ["Security", "Setting.Security", "com.apple.settings.PrivacySecurity.extension"]
+            , ["Backup", "Setting.Backup", "com.apple.Time-Machine-Settings.extension"]
+            , ["Accessibility", "Mac.Settings.Accessibility", "com.apple.Accessibility-Settings.extension"]
+            , ["Sharing", "Mac.Settings.Sharing", "com.apple.Sharing-Settings.extension"]
+            , ["Printers", "Tool.Printers", "com.apple.Print-Scan-Settings.extension"]
+            , ["Screensaver", "Mac.Settings.Screensaver", "com.apple.Wallpaper-Settings.extension"]]
+        available := []
+        for page in pages
+            if ALTRunMacHasSettingsPane(page[3])
+                available.Push(page)
+        return available
+#else
+        return []
+#endif
+    }
+
+    static MacMedia(key) {
+#if OSX
+        capabilities := RequestCapabilities()
+        if (capabilities.InputControl != "Granted")
+            return App.Notify("Enable Accessibility access for media-key control.")
+        return ALTRunMacMediaKey(key)
+#else
+        return false
+#endif
+    }
+
     ; The optional systemd flag lets tests inspect the table without touching real sessions or power settings.
     static LinuxCommands(systemdAvailable := -1) {
         list := []
@@ -457,9 +530,76 @@ class SystemProvider {
 
     ; Runs a console command and opens its output, written to a temporary file, with the default program for .txt (usually Notepad)
     static _ShowCommandOutput(command, fileName) {
+        if !Platform.IsWindows {
+            job := ProcessRunner.StartCommand(command, Platform.Home, true)
+            file := Platform.Join(A_Temp, Platform.NewUuid() "-" fileName)
+            poll := "", started := A_TickCount
+            poll := () => SystemProvider._CommandOutputReady(job, file, started, poll)
+            SetTimer(poll, 100)
+            return
+        }
         outFile := A_Temp "\" fileName
         try FileDelete(outFile)
         RunWait(A_ComSpec ' /c ' command ' > "' outFile '"', A_Temp, "Hide")
         Path.OpenText(outFile)
     }
+
+    static _CommandOutputReady(job, file, started, poll) {
+        if !ProcessRunner.IsFinished(job) && A_TickCount - started < 30000
+            return
+        SetTimer(poll, 0)
+        result := ProcessRunner.Result(job, !ProcessRunner.IsFinished(job))
+        if !result.Has("ExitCode") || result["ExitCode"] != 0
+            return App.Notify(result.Has("Error") ? result["Error"] : "Command failed.", 4000)
+        FileAppend(result["Output"], file, "UTF-8-RAW")
+        Platform.Edit(file)
+    }
 }
+
+#if OSX
+#CSharp
+private static System.Collections.Generic.HashSet<string> ALTRunMacSettingsPanes;
+public static bool ALTRunMacHasSettingsPane(string Identifier)
+{
+    if (!System.OperatingSystem.IsMacOS()) return false;
+    if (ALTRunMacSettingsPanes == null)
+    {
+        ALTRunMacSettingsPanes = new(System.StringComparer.Ordinal);
+        foreach (string root in new[] { "/System/Library/ExtensionKit/Extensions", "/System/Applications/System Settings.app/Contents/PlugIns" })
+        {
+            if (!System.IO.Directory.Exists(root)) continue;
+            foreach (string path in System.IO.Directory.EnumerateDirectories(root, "*.appex"))
+            {
+                nint bundle = ALTRunMacDesktopNative.Arg(ALTRunMacDesktopNative.Class("NSBundle"), ALTRunMacDesktopNative.Sel("bundleWithPath:"), ALTRunMacDesktopNative.Text(path));
+                string id = ALTRunMacDesktopNative.String(ALTRunMacDesktopNative.Send(bundle, ALTRunMacDesktopNative.Sel("bundleIdentifier")));
+                if (id.Length > 0) ALTRunMacSettingsPanes.Add(id);
+            }
+        }
+    }
+    return ALTRunMacSettingsPanes.Contains(Identifier);
+}
+[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+private struct ALTRunMediaPoint { internal double X, Y; }
+private static class ALTRunMediaNative
+{
+    [System.Runtime.InteropServices.DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+    internal static extern nint Event(nint cls, nint selector, ulong type, ALTRunMediaPoint point, ulong modifiers, double time, long window, nint context, short subtype, long first, long second);
+    [System.Runtime.InteropServices.DllImport("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")]
+    internal static extern void CGEventPost(uint tap, nint value);
+}
+public static bool ALTRunMacMediaKey(long Key)
+{
+    if (!System.OperatingSystem.IsMacOS() || Key is not (16 or 17 or 18)) return false;
+    foreach (long state in new[] { 0xAL, 0xBL })
+    {
+        var value = ALTRunMediaNative.Event(ALTRunMacDesktopNative.Class("NSEvent"),
+            ALTRunMacDesktopNative.Sel("otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"),
+            14, new ALTRunMediaPoint(), 0, 0, 0, 0, 8, (Key << 16) | (state << 8), -1);
+        nint native = ALTRunMacDesktopNative.Send(value, ALTRunMacDesktopNative.Sel("CGEvent"));
+        if (native == 0) return false;
+        ALTRunMediaNative.CGEventPost(0, native);
+    }
+    return true;
+}
+#EndCSharp
+#endif

@@ -31,7 +31,7 @@
 
 class AppSettings {
     static CurrentVersion := 6
-    static Portable := Path.IsWritable(A_ScriptDir)                          ; the program folder is writable: data goes in the program folder (portable)
+    static Portable := Platform.AppBundle = "" && Path.IsWritable(A_ScriptDir)
     static UserDir := Platform.Join(Platform.UserDataDir, "ALTRun")           ; used when the program folder isn't writable
     static DataDir := AppSettings.ResolveDataDir()
     static File := Platform.Join(AppSettings.DataDir, "ALTRun.json")
@@ -373,6 +373,7 @@ class AppSettings {
                 "HideOnDeactivate"    , 1,
                 "SwitchToEnglishInput", 0,                                 ; switch to English when shown: 1 = English (US) keyboard, 2 = English mode of the current input method
                 "RestoreInput"        , 1,                                 ; with SwitchToEnglishInput: switch back to the previous input language after the window hides
+                "MacInputSource"      , "",
                 "SpaceToRun"          , 0,                                  ; Space runs the selected result (Shift+Space types a space)
                 "TabKey"              , "Complete",                         ; Tab: "Complete" = complete the name / browse into a folder; "Next" = next result (Shift+Tab previous, Ctrl+Tab completes)
                 "KeepLastQuery"       , 0,                                  ; restore the last search when shown (text selected)
@@ -381,6 +382,7 @@ class AppSettings {
                 "SendToMenu"          , 1,
                 "StartMenuShortcut"   , 1,
                 "CheckForUpdates"     , 1,
+                "UpdateRepository"    , Platform.IsMac ? "Descolada/ALTRun" : "zhugecaomao/ALTRun",
                 "SaveLog"             , 0,
                 "HistorySize"         , 30
             ),
@@ -466,6 +468,8 @@ class AppSettings {
                     "DefaultResultsLimit", 6,
                     "MinQueryLength"     , 2,
                     "UseEverything"      , 1,                               ; while Everything runs, query the whole disk over IPC
+                    "Spotlight"          , 1,
+                    "SpotlightContent"   , 0,
                     "EverythingFilter"   , "!C:\Windows\ !\AppData\ !\$Recycle.Bin\",
                     "EverythingPath"     , "",                              ; where Everything.exe is; empty = find it (only used for "Search in Everything")
                     "ScopeFolders"       , ["A_Desktop", "A_MyDocuments", "%UserProfile%\Downloads"],   ; what the built-in index covers when there is no Everything
@@ -484,8 +488,11 @@ class AppSettings {
                 "Bookmarks", Map(
                     "Enabled"         , 1,
                     "Keyword"         , "bm",                               ; "bm word" searches bookmarks only
-                    "InDefaultResults", 1                                   ; also show matching bookmarks when typing a name (after applications and commands)
+                    "InDefaultResults", 1,                                  ; also show matching bookmarks when typing a name (after applications and commands)
+                    "Safari", 1,
+                    "Imports", []
                 ),
+                "Shortcuts", Map("Enabled", Platform.IsMac ? 1 : 0, "Keyword", "shortcut"),
                 "Scripts", Map(
                     "Enabled"    , 1,                                       ; scripts in the Scripts\ folder become commands
                     "Keyword"    , "script"                                 ; "script backup" searches scripts only, "script " lists them all
@@ -549,7 +556,7 @@ class AppSettings {
         for name in ["SwitchToEnglishInput", "RestoreInput", "SendToMenu", "StartMenuShortcut"]
             general[name] := 0
         if Platform.IsMac
-            general["LaunchAtLogin"] := 0
+            general["LaunchAtLogin"] := 0, general["RestoreInput"] := 1
         general["CapsLock"] := ""
         general["FileManager"] := ""
         applications := features["Applications"]
@@ -563,6 +570,8 @@ class AppSettings {
         features["FileSearch"]["TypeFilters"][6] := Platform.IsMac ? "exe = app sh command" : "exe = desktop sh AppImage"
         features["Terminal"]["Shell"] := Platform.IsMac ? "zsh" : "bash"
         features["System"]["SettingsPages"] := 0
+        if Platform.IsMac
+            features["System"]["SettingsPages"] := 1
         features["Clipboard"]["IgnoreApps"] := ["keepass", "keepassxc", "1password", "bitwarden"]
         features["Snippets"]["ExpandExclude"] := ["ahk_exe keepass", "ahk_exe keepassxc", "ahk_exe 1password", "ahk_exe bitwarden"]
         defaults["Extensions"]["QuickSwitch"]["Enabled"] := 0
@@ -578,6 +587,8 @@ class AppSettings {
         defaults := AppSettings.Defaults()
         applications := data["Features"]["Applications"]
         if AppSettings._SameTokens(applications["Folders"], ["A_Programs", "A_ProgramsCommon", "A_Desktop", "A_DesktopCommon"])
+            AppSettings._SetEffective(data, ["Features", "Applications", "Folders"], defaults["Features"]["Applications"]["Folders"])
+        else if Platform.IsMac && AppSettings._SameTokens(applications["Folders"], ["/Applications", "/System/Applications", Platform.Join(Platform.Home, "Applications")])
             AppSettings._SetEffective(data, ["Features", "Applications", "Folders"], defaults["Features"]["Applications"]["Folders"])
         if AppSettings._SameTokens(applications["FileTypes"], ["*.lnk", "*.exe", "*.url", "*.appref-ms"])
             AppSettings._SetEffective(data, ["Features", "Applications", "FileTypes"], defaults["Features"]["Applications"]["FileTypes"])
@@ -644,7 +655,7 @@ class AppSettings {
 
     static _ApplicationFolders() {
         if Platform.IsMac
-            return ["/Applications", "/System/Applications", Platform.Join(Platform.Home, "Applications")]
+            return ["/Applications", "/System/Applications", "/System/Library/CoreServices/Applications", Platform.Join(Platform.Home, "Applications")]
         folders := [Platform.Join(Platform.UserDataDir, "applications")]
         roots := EnvGet("XDG_DATA_DIRS")
         if (roots = "")

@@ -56,6 +56,16 @@ class UpdateChecker {
     static Pending     := ""                                                ; a new version found in the background (the result of ParseRelease + Mode)
     static _timer      := "", _checking := false
 
+    static Configure() {
+        repository := AppSettings.General.Has("UpdateRepository") ? AppSettings.General["UpdateRepository"] : "zhugecaomao/ALTRun"
+        if !RegExMatch(repository, "^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$") || InStr(repository, "..")
+            repository := Platform.IsMac ? "Descolada/ALTRun" : "zhugecaomao/ALTRun"
+        AppSettings.General["UpdateRepository"] := repository
+        UpdateChecker.RepoUrl := "https://github.com/" repository "/"
+        UpdateChecker.ReleasePage := UpdateChecker.RepoUrl "releases"
+        UpdateChecker.ApiUrl := "https://api.github.com/repos/" repository "/releases/latest"
+    }
+
     ; Downloads the release info in the background (ALTRun doesn't hang) and reports when done; clicking again during a check doesn't start another
     static Check(install := false) {
         if UpdateChecker._checking
@@ -170,7 +180,8 @@ class UpdateChecker {
     ; Notes the new version and decides how to update (Mode): "scoop" / "winget" / "source" (running the source) / "install" (one-click update) / "page" (open the download page)
     static SetPending(release) {
         manager := UpdateChecker.InstalledBy(A_ScriptDir)
-        release.Mode := (manager != "") ? manager : !A_IsCompiled ? "source" : UpdateChecker.CanInstall(release) ? "install" : "page"
+        release.Mode := Platform.IsMac && Platform.AppBundle != "" ? (UpdateChecker.CanInstall(release) ? "install" : "page")
+            : (manager != "") ? manager : !A_IsCompiled ? "source" : UpdateChecker.CanInstall(release) ? "install" : "page"
         UpdateChecker.Pending := release
     }
 
@@ -254,7 +265,8 @@ class UpdateChecker {
             release.Page := data["html_url"]
         if data.Has("assets") && data["assets"] is Array {
             for asset in data["assets"] {
-                if !(asset is Map) || !asset.Has("name") || !RegExMatch(asset["name"], "i)^ALTRun_v?[\d.]+\.zip$")
+                pattern := Platform.IsMac ? "i)^ALTRun_v?[\d.]+_macos-" ALTRunMacArchitecture() "\.zip$" : "i)^ALTRun_v?[\d.]+\.zip$"
+                if !(asset is Map) || !asset.Has("name") || !RegExMatch(asset["name"], pattern)
                     continue
                 release.ZipUrl := (asset.Has("browser_download_url") && UpdateChecker.InRepo(asset["browser_download_url"], "releases/download/"))
                     ? asset["browser_download_url"] : ""
@@ -273,6 +285,8 @@ class UpdateChecker {
 
     ; Whether it can update itself: a compiled exe, a Release with zip and SHA256, and a writable program folder
     static CanInstall(release) {
+        if Platform.IsMac
+            return MacUpdate.CanInstall(release)
 #if KEYSHARP
         ; Upstream packages contain an AutoHotkey executable, not a Keysharp runtime.
         return false
@@ -298,6 +312,8 @@ class UpdateChecker {
 
     ; Download -> verify SHA256 -> extract -> replace -> start the new version; on errors offer to open the download page
     static Install(release) {
+        if Platform.IsMac
+            return MacUpdate.Install(release)
         if !UpdateChecker.CanInstall(release)
             return Platform.Open(release.Page)
         progress := UpdateChecker._Progress(I18n.T("Update.Downloading", release.Version))

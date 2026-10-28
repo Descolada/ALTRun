@@ -47,6 +47,8 @@ class ActionCatalog {
 
     ; Copy / move into a folder (Windows' own copy, with progress and name-conflict prompts); not into itself or its own subfolders
     static CopyMany(paths, destination, move := false) {
+        if Platform.IsMac
+            return MacDesktop.CopyMove(paths, destination, move)
         if !Platform.IsWindows
             return false
         folder := ComObject("Shell.Application").NameSpace(RTrim(destination, "\") (RegExMatch(destination, "^[A-Za-z]:\\?$") ? "\" : ""))
@@ -111,6 +113,10 @@ class ActionCatalog {
             ; Surface missing local folders before a detached desktop opener can discard the error.
             if !RegExMatch(resolved, "i)^[a-z][a-z0-9+.\-]*:") && !DirExist(resolved)
                 throw Error(I18n.T("Files.FolderNotFound") ": " resolved)
+            if Platform.IsMac && RegExMatch(resolved, "i)\.app/?$")
+                return Platform.Open(resolved)
+            if Platform.IsMac && ActionCatalog._MacFileManager(resolved)
+                return true
             return Platform.Open(resolved)
         }
         fileManager := AppSettings.General["FileManager"]
@@ -121,6 +127,8 @@ class ActionCatalog {
 
     static Reveal(target) {
         resolved := Path.Resolve(target)
+        if Platform.IsMac && ActionCatalog._MacFileManager(ActionCatalog.ParentDir(resolved))
+            return true
         if !Platform.IsWindows
             return Platform.Reveal(resolved)
         fileManager := AppSettings.General["FileManager"]
@@ -139,6 +147,8 @@ class ActionCatalog {
 
     ; Like "right-click -> Properties" in Explorer. Run's properties verb fails for folders on network drives etc., so SHObjectProperties is used
     static ShowProperties(target) {
+        if Platform.IsMac
+            return MacDesktop.GetInfo(Path.Resolve(target))
         if !Platform.IsWindows
             return false
         target := Path.Resolve(target)
@@ -210,6 +220,8 @@ class ActionCatalog {
 
     ; The "Edit" program Windows has registered for this file type ("Edit" in the context menu) -> {Name, Icon}; "" if none
     static EditorFor(target) {
+        if Platform.IsMac && FileExist(target) && !DirExist(target) && RegExMatch(target, "i)\.(txt|md|rst|rtf|csv|tsv|log|ini|conf|cfg|json|ya?ml|toml|xml|html?|css|[cm]?js|[cm]?ts|jsx|tsx|ahk|ks|sh|command|py|ps1|rb|lua|swift|cs|[ch]|cpp|hpp|java|sql|tex)$")
+            return {Name: I18n.T("Mac.TextEditor"), Icon: "/System/Applications/TextEdit.app"}
         if !Platform.IsWindows
             return ""
         static ASSOCSTR_COMMAND := 1, ASSOCSTR_EXECUTABLE := 2, ASSOCSTR_FRIENDLYAPPNAME := 4
@@ -249,6 +261,8 @@ class ActionCatalog {
     }
 
     static OpenWith(target) {
+        if Platform.IsMac
+            return MacDesktop.OpenWith(Path.Resolve(target))
         if !Platform.IsWindows
             return false
         Run("rundll32.exe shell32.dll,OpenAs_RunDLL " Path.Resolve(target))    ; the path isn't quoted (OpenAs_RunDLL takes the whole rest of the command line)
@@ -256,6 +270,8 @@ class ActionCatalog {
 
     ; Windows' own copy / move (progress window, asks on name conflicts, can be undone), in the background so ALTRun doesn't hang
     static CopyTo(target, destination, move := false) {
+        if Platform.IsMac
+            return MacDesktop.CopyMove([Path.Resolve(target)], destination, move)
         if !Platform.IsWindows
             return false
         folder := ComObject("Shell.Application").NameSpace(RTrim(destination, "\") (RegExMatch(destination, "^[A-Za-z]:\\?$") ? "\" : ""))
@@ -303,6 +319,18 @@ class ActionCatalog {
     static ParentDir(target) {
         SplitPath(target, , &dir)
         return dir
+    }
+
+    ; Alternative macOS file managers receive the containing folder through LaunchServices.
+    static _MacFileManager(folder) {
+        manager := Platform.ExpandEnvironment(Trim(AppSettings.General["FileManager"]))
+        if (manager = "" || manager = "Finder" || manager = "com.apple.finder" || RegExMatch(manager, "i)/Finder\.app/?$"))
+            return false
+        if (RegExMatch(manager, "i)\.app/?$") || Platform.FindExecutable(manager) = "")
+            ProcessRunner.StartApplication("/usr/bin/open", ["-a", manager, folder])
+        else
+            ProcessRunner.StartApplication(Platform.FindExecutable(manager), [folder])
+        return true
     }
 
     static _Preview(text) {

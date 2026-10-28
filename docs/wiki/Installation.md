@@ -43,11 +43,13 @@ hl.window_rule({
 })
 ```
 
-Everything, Microsoft Store indexing, Explorer/Total Commander Quick Switch, Windows input-language/CapsLock handling, shell properties/elevation and Windows Startup/Start menu/Send To integration are Windows-only. Other platforms use the local file index, and these Windows integrations are disabled. Writable source folders keep `Data/` beside the program; otherwise user data uses the platform's application-data location (`$XDG_DATA_HOME/ALTRun` or `~/.local/share/ALTRun` on Linux, `~/Library/Application Support/ALTRun` on macOS).
+Everything, Microsoft Store indexing, Explorer/Total Commander interfaces, Windows IME modes/elevated CapsLock helpers and Windows shell elevation/shortcuts are Windows-specific. macOS supplies Finder Quick Switch, native file actions, input-source control and Spotlight alongside the local index; Linux uses its local index. Writable source folders keep `Data/` beside the program; otherwise user data uses the platform's application-data location (`$XDG_DATA_HOME/ALTRun` or `~/.local/share/ALTRun` on Linux, `~/Library/Application Support/ALTRun` on macOS). A packaged macOS app always keeps data outside its signed bundle.
 
 The existing downloadable executables, Scoop/winget packages and release workflow are AutoHotkey Windows builds, and do not package this Keysharp port. Keysharp update checks open the release page or suggest a source update; they never replace a Keysharp executable with an AutoHotkey package. Update this checkout from source. A Keysharp release needs a separate platform-specific packaging workflow.
 
 ### macOS setup and verification
+
+The [macOS guide](macOS.md) covers Finder actions, Quick Switch, Spotlight filters, Shortcuts, Safari imports, OCR, restored Preferences, permissions and update behavior. The [app builder](../../packaging/macos/README.md) produces a self-contained `ALTRun.app`, ZIP and DMG with a private .NET runtime and Keysharp compiler. Developer ID signing and notarization require supplied credentials; development packages are ad-hoc signed.
 
 From this checkout, double-click `ALTRun.command` in Finder or run:
 

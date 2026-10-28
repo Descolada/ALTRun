@@ -25,6 +25,21 @@ class LauncherCanvas {
         }
     }
 
+    static AccessibleResults(control, rows) {
+#if OSX
+        data := []
+        for row in rows {
+            item := row.Item
+            identity := item.Identity()
+            data.Push(Map("Index", row.Index, "Identity", identity, "Label", row.Title
+                . (row.Subtitle != "" ? ". " row.Subtitle : "") ". " row.Shortcut
+                , "X", row.X, "Y", row.Y, "W", row.Width, "H", row.Height, "Selected", row.Selected))
+        }
+        ALTRunMacAccessibleResults(control.ToClr(), JSON.Stringify(data)
+            , (index, identity) => SearchWindow.AccessibleActivate(index, identity))
+#endif
+    }
+
     static Metrics(canvas, options, family) => LauncherCanvas.Measure(canvas, "Ag", options, family)
 
     static Measure(canvas, text, options, family) {
@@ -229,6 +244,8 @@ public static void ALTRunMacRoundWindow(Keysharp.Builtins.Ks.Clr.ManagedInstance
     if (native?.GetType().GetProperty("Handle")?.GetValue(native) is not System.IntPtr window)
         throw new System.InvalidOperationException("The macOS launcher window is unavailable.");
     var view = ALTRunMacObjC.Send(window, ALTRunMacObjC.Selector("contentView"));
+    // Auxiliary launcher windows follow the active Space and can appear above full-screen apps.
+    ALTRunMacObjC.SetLong(window, ALTRunMacObjC.Selector("setCollectionBehavior:"), 1 | 8 | 64 | 256);
     ALTRunMacObjC.SetBool(window, ALTRunMacObjC.Selector("setOpaque:"), 0);
     ALTRunMacObjC.SendArgument(window, ALTRunMacObjC.Selector("setBackgroundColor:"),
         ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSColor"), ALTRunMacObjC.Selector("clearColor")));
@@ -241,10 +258,243 @@ public static void ALTRunMacRoundWindow(Keysharp.Builtins.Ks.Clr.ManagedInstance
     ALTRunMacObjC.SetBool(layer, ALTRunMacObjC.Selector("setMasksToBounds:"), 1);
     ALTRunMacObjC.Send(window, ALTRunMacObjC.Selector("invalidateShadow"));
     form.SizeChanged += (_, _) => ALTRunMacObjC.Send(window, ALTRunMacObjC.Selector("invalidateShadow"));
+    form.Closed += (_, _) => ALTRunMacFade.Stop();
+    form.Closing += (_, _) => ALTRunMacAccessibility.Clear();
+}
+
+public static void ALTRunMacAccessibleResults(Keysharp.Builtins.Ks.Clr.ManagedInstance wrapper, string rows,
+    Keysharp.Builtins.KeysharpFunc activate) => ALTRunMacAccessibility.Update((Eto.Forms.Control)wrapper.Native, rows, activate);
+public static void ALTRunMacResetWindowIntegration() { ALTRunMacFade.Stop(); ALTRunMacAccessibility.Clear(); }
+
+private static class ALTRunMacAccessibility
+{
+    [System.Runtime.InteropServices.UnmanagedFunctionPointer(System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private delegate byte PressAction(System.IntPtr self, System.IntPtr selector);
+    private static readonly PressAction pressAction = Press;
+    private static readonly System.IntPtr elementClass = CreateClass();
+    private static readonly System.Collections.Generic.Dictionary<System.IntPtr, Entry> entries = new();
+    private static System.IntPtr host;
+    private static Eto.Forms.Control hostControl;
+    private static string order = "", announced = "";
+    private sealed class Entry
+    {
+        internal System.IntPtr Element;
+        internal long Index;
+        internal string Identity;
+        internal Keysharp.Builtins.KeysharpFunc Activate;
+    }
+
+    [System.Runtime.InteropServices.DllImport("/usr/lib/libobjc.A.dylib")]
+    private static extern System.IntPtr objc_allocateClassPair(System.IntPtr superclass, string name, long extraBytes);
+    [System.Runtime.InteropServices.DllImport("/usr/lib/libobjc.A.dylib")]
+    private static extern byte class_addMethod(System.IntPtr cls, System.IntPtr name, System.IntPtr implementation, string types);
+    [System.Runtime.InteropServices.DllImport("/usr/lib/libobjc.A.dylib")]
+    private static extern void objc_registerClassPair(System.IntPtr cls);
+    [System.Runtime.InteropServices.DllImport("/System/Library/Frameworks/AppKit.framework/AppKit")]
+    private static extern void NSAccessibilityPostNotificationWithUserInfo(System.IntPtr element, System.IntPtr notification, System.IntPtr userInfo);
+
+    private static System.IntPtr CreateClass()
+    {
+        var cls = ALTRunMacObjC.Class("ALTRunAccessibleResult");
+        if (cls != System.IntPtr.Zero) return cls;
+        cls = objc_allocateClassPair(ALTRunMacObjC.Class("NSAccessibilityElement"), "ALTRunAccessibleResult", 0);
+        if (cls == System.IntPtr.Zero) throw new System.InvalidOperationException("Could not create accessible launcher results.");
+        class_addMethod(cls, ALTRunMacObjC.Selector("accessibilityPerformPress"), System.Runtime.InteropServices.Marshal.GetFunctionPointerForDelegate(pressAction), "c@:");
+        objc_registerClassPair(cls);
+        return cls;
+    }
+
+    private static byte Press(System.IntPtr self, System.IntPtr selector)
+    {
+        try
+        {
+            if (!entries.TryGetValue(self, out var entry)) return 0;
+            var callback = entry.Activate; long index = entry.Index; string identity = entry.Identity;
+            Eto.Forms.Application.Instance.AsyncInvoke(() => callback.Call(index, identity));
+            return 1;
+        }
+        catch { return 0; }
+    }
+
+    internal static void Clear()
+    {
+        if (host != System.IntPtr.Zero && hostControl?.IsDisposed == false)
+            ALTRunMacObjC.SendArgument(host, ALTRunMacObjC.Selector("setAccessibilityChildren:"),
+                ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSArray"), ALTRunMacObjC.Selector("array")));
+        foreach (var entry in entries.Values)
+            ALTRunMacObjC.Send(entry.Element, ALTRunMacObjC.Selector("release"));
+        entries.Clear(); host = System.IntPtr.Zero; hostControl = null; order = ""; announced = "";
+    }
+
+    internal static void Update(Eto.Forms.Control control, string json, Keysharp.Builtins.KeysharpFunc activate)
+    {
+        if (control.ControlObject?.GetType().GetProperty("Handle")?.GetValue(control.ControlObject) is not System.IntPtr view) return;
+        if (host != System.IntPtr.Zero && host != view) Clear();
+        hostControl = control;
+        host = view;
+        ALTRunMacObjC.SetBool(view, ALTRunMacObjC.Selector("setAccessibilityElement:"), 1);
+        ALTRunMacObjC.SendArgument(view, ALTRunMacObjC.Selector("setAccessibilityRole:"), ALTRunMacObjC.String("AXList"));
+        ALTRunMacObjC.SendArgument(view, ALTRunMacObjC.Selector("setAccessibilityLabel:"), ALTRunMacObjC.String("ALTRun results"));
+        var children = ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSMutableArray"), ALTRunMacObjC.Selector("array"));
+        var remaining = new System.Collections.Generic.HashSet<System.IntPtr>(entries.Keys);
+        var handles = new System.Collections.Generic.List<string>();
+        var bounds = ALTRunMacObjC.GetRect(view, ALTRunMacObjC.Selector("bounds"));
+        var window = ALTRunMacObjC.Send(view, ALTRunMacObjC.Selector("window"));
+        bool flipped = ALTRunMacObjC.GetBool(view, ALTRunMacObjC.Selector("isFlipped")) != 0;
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        string selection = "", announcement = "";
+        foreach (var row in doc.RootElement.EnumerateArray())
+        {
+            string identity = row.GetProperty("Identity").GetString();
+            Entry entry = null;
+            foreach (var candidate in entries.Values)
+                if (remaining.Contains(candidate.Element) && candidate.Identity == identity) { entry = candidate; break; }
+            if (entry == null)
+            {
+                var element = ALTRunMacObjC.Send(ALTRunMacObjC.Send(elementClass, ALTRunMacObjC.Selector("alloc")), ALTRunMacObjC.Selector("init"));
+                entry = new Entry { Element = element, Identity = identity };
+                entries.Add(element, entry);
+                ALTRunMacObjC.SetBool(element, ALTRunMacObjC.Selector("setAccessibilityElement:"), 1);
+                ALTRunMacObjC.SendArgument(element, ALTRunMacObjC.Selector("setAccessibilityRole:"), ALTRunMacObjC.String("AXButton"));
+                ALTRunMacObjC.SendArgument(element, ALTRunMacObjC.Selector("setAccessibilityParent:"), view);
+            }
+            remaining.Remove(entry.Element);
+            entry.Index = row.GetProperty("Index").GetInt64(); entry.Activate = activate;
+            bool selected = row.GetProperty("Selected").ValueKind == System.Text.Json.JsonValueKind.True
+                || row.GetProperty("Selected").ToString() == "1";
+            string label = row.GetProperty("Label").GetString();
+            ALTRunMacObjC.SendArgument(entry.Element, ALTRunMacObjC.Selector("setAccessibilityLabel:"), ALTRunMacObjC.String((selected ? "Selected. " : "") + label));
+            var rect = new ALTRunMacObjC.Rect { X = row.GetProperty("X").GetDouble(), Y = row.GetProperty("Y").GetDouble(), W = row.GetProperty("W").GetDouble(), H = row.GetProperty("H").GetDouble() };
+            if (!flipped) rect.Y = bounds.H - rect.Y - rect.H;
+            rect = ALTRunMacObjC.ConvertToWindow(view, rect);
+            rect = ALTRunMacObjC.ConvertToScreen(window, rect);
+            ALTRunMacObjC.SetRect(entry.Element, ALTRunMacObjC.Selector("setAccessibilityFrame:"), rect);
+            ALTRunMacObjC.SendArgument(children, ALTRunMacObjC.Selector("addObject:"), entry.Element);
+            handles.Add(entry.Element.ToString());
+            if (selected) { selection = identity; announcement = label; }
+        }
+        string nextOrder = string.Join(",", handles);
+        if (nextOrder != order)
+        {
+            ALTRunMacObjC.SendArgument(view, ALTRunMacObjC.Selector("setAccessibilityChildren:"), children);
+            order = nextOrder;
+        }
+        foreach (var handle in remaining)
+        {
+            entries.Remove(handle);
+            ALTRunMacObjC.Send(handle, ALTRunMacObjC.Selector("release"));
+        }
+        if (control.ParentWindow?.Visible == true && selection.Length > 0 && selection != announced)
+        {
+            var info = ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSMutableDictionary"), ALTRunMacObjC.Selector("dictionary"));
+            ALTRunMacObjC.SetObject(info, ALTRunMacObjC.String(announcement), ALTRunMacObjC.Constant("NSAccessibilityAnnouncementKey"));
+            var priority = ALTRunMacObjC.SendLong(ALTRunMacObjC.Class("NSNumber"), ALTRunMacObjC.Selector("numberWithInteger:"), 10);
+            ALTRunMacObjC.SetObject(info, priority, ALTRunMacObjC.Constant("NSAccessibilityPriorityKey"));
+            NSAccessibilityPostNotificationWithUserInfo(view, ALTRunMacObjC.Constant("NSAccessibilityAnnouncementRequestedNotification"), info);
+            announced = selection;
+        }
+    }
+}
+
+public static void ALTRunMacFadeWindow(Keysharp.Builtins.Ks.Clr.ManagedInstance wrapper, bool showing, bool fade, long opacity)
+    => ALTRunMacFade.Apply((Eto.Forms.Form)wrapper.Native, showing, fade, opacity / 255.0);
+
+private static class ALTRunMacFade
+{
+    private static Eto.Forms.UITimer timer;
+    private static System.IntPtr ghost;
+    private static System.IntPtr realWindow;
+    private static double targetAlpha = 1;
+
+    internal static void Stop()
+    {
+        timer?.Stop(); timer?.Dispose(); timer = null;
+        if (realWindow != System.IntPtr.Zero)
+            ALTRunMacObjC.SetDouble(realWindow, ALTRunMacObjC.Selector("setAlphaValue:"), targetAlpha);
+        realWindow = System.IntPtr.Zero;
+        if (ghost != System.IntPtr.Zero)
+        {
+            ALTRunMacObjC.SendArgument(ghost, ALTRunMacObjC.Selector("orderOut:"), System.IntPtr.Zero);
+            ALTRunMacObjC.Send(ghost, ALTRunMacObjC.Selector("release"));
+            ghost = System.IntPtr.Zero;
+        }
+    }
+
+    internal static void Apply(Eto.Forms.Form form, bool showing, bool fade, double alpha)
+    {
+        Stop();
+        if (form.ControlObject?.GetType().GetProperty("Handle")?.GetValue(form.ControlObject) is not System.IntPtr window) return;
+        var workspace = ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSWorkspace"), ALTRunMacObjC.Selector("sharedWorkspace"));
+        bool reducedMotion = ALTRunMacObjC.GetBool(workspace, ALTRunMacObjC.Selector("accessibilityDisplayShouldReduceMotion")) != 0;
+        bool reducedTransparency = ALTRunMacObjC.GetBool(workspace, ALTRunMacObjC.Selector("accessibilityDisplayShouldReduceTransparency")) != 0;
+        targetAlpha = reducedTransparency ? 1 : System.Math.Clamp(alpha, 0, 1);
+        ALTRunMacObjC.SetDouble(window, ALTRunMacObjC.Selector("setAlphaValue:"), targetAlpha);
+        if (!fade || reducedMotion) return;
+        System.IntPtr animated;
+        double from, to;
+        if (showing)
+        {
+            if (form.Visible) return;
+            realWindow = window; animated = window; from = 0; to = targetAlpha;
+            ALTRunMacObjC.SetDouble(window, ALTRunMacObjC.Selector("setAlphaValue:"), 0);
+        }
+        else
+        {
+            ghost = Snapshot(window);
+            if (ghost == System.IntPtr.Zero) return;
+            animated = ghost; from = targetAlpha; to = 0;
+        }
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        double duration = showing ? 120 : 100;
+        timer = new Eto.Forms.UITimer { Interval = 0.01 };
+        timer.Elapsed += (_, _) =>
+        {
+            double elapsed = System.Math.Clamp(clock.Elapsed.TotalMilliseconds / duration, 0, 1);
+            ALTRunMacObjC.SetDouble(animated, ALTRunMacObjC.Selector("setAlphaValue:"), from + (to - from) * (1 - System.Math.Pow(1 - elapsed, 3)));
+            if (elapsed >= 1) Stop();
+        };
+        timer.Start();
+    }
+
+    private static System.IntPtr Snapshot(System.IntPtr window)
+    {
+        var view = ALTRunMacObjC.Send(window, ALTRunMacObjC.Selector("contentView"));
+        var bounds = ALTRunMacObjC.GetRect(view, ALTRunMacObjC.Selector("bounds"));
+        var frame = ALTRunMacObjC.GetRect(window, ALTRunMacObjC.Selector("frame"));
+        var bitmap = ALTRunMacObjC.SendRect(view, ALTRunMacObjC.Selector("bitmapImageRepForCachingDisplayInRect:"), bounds);
+        if (bitmap == System.IntPtr.Zero) return System.IntPtr.Zero;
+        ALTRunMacObjC.CacheDisplay(view, ALTRunMacObjC.Selector("cacheDisplayInRect:toBitmapImageRep:"), bounds, bitmap);
+        var image = ALTRunMacObjC.SendSize(ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSImage"), ALTRunMacObjC.Selector("alloc")),
+            ALTRunMacObjC.Selector("initWithSize:"), new ALTRunMacObjC.Size { W = bounds.W, H = bounds.H });
+        ALTRunMacObjC.SendArgument(image, ALTRunMacObjC.Selector("addRepresentation:"), bitmap);
+        var imageView = ALTRunMacObjC.SendRect(ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSImageView"), ALTRunMacObjC.Selector("alloc")),
+            ALTRunMacObjC.Selector("initWithFrame:"), bounds);
+        ALTRunMacObjC.SendArgument(imageView, ALTRunMacObjC.Selector("setImage:"), image);
+        var overlay = ALTRunMacObjC.NewPanel(ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSPanel"), ALTRunMacObjC.Selector("alloc")),
+            ALTRunMacObjC.Selector("initWithContentRect:styleMask:backing:defer:"), frame, 128, 2, 0);
+        ALTRunMacObjC.SetBool(overlay, ALTRunMacObjC.Selector("setReleasedWhenClosed:"), 0);
+        ALTRunMacObjC.SetBool(overlay, ALTRunMacObjC.Selector("setOpaque:"), 0);
+        ALTRunMacObjC.SetBool(overlay, ALTRunMacObjC.Selector("setIgnoresMouseEvents:"), 1);
+        ALTRunMacObjC.SendArgument(overlay, ALTRunMacObjC.Selector("setBackgroundColor:"),
+            ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSColor"), ALTRunMacObjC.Selector("clearColor")));
+        ALTRunMacObjC.SetLong(overlay, ALTRunMacObjC.Selector("setCollectionBehavior:"), 1 | 8 | 64 | 256);
+        ALTRunMacObjC.SetLong(overlay, ALTRunMacObjC.Selector("setLevel:"), 3);
+        ALTRunMacObjC.SendArgument(overlay, ALTRunMacObjC.Selector("setContentView:"), imageView);
+        ALTRunMacObjC.Send(overlay, ALTRunMacObjC.Selector("orderFrontRegardless"));
+        ALTRunMacObjC.Send(imageView, ALTRunMacObjC.Selector("release"));
+        ALTRunMacObjC.Send(image, ALTRunMacObjC.Selector("release"));
+        return overlay;
+    }
 }
 
 private static class ALTRunMacObjC
 {
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    internal struct Rect { public double X, Y, W, H; }
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    internal struct Size { public double W, H; }
+    private static readonly System.IntPtr appKit = System.Runtime.InteropServices.NativeLibrary.Load("/System/Library/Frameworks/AppKit.framework/AppKit");
+    internal static System.IntPtr Constant(string name) => System.Runtime.InteropServices.Marshal.ReadIntPtr(System.Runtime.InteropServices.NativeLibrary.GetExport(appKit, name));
     private const string Library = "/usr/lib/libobjc.A.dylib";
     [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_getClass")]
     internal static extern System.IntPtr Class(string name);
@@ -260,6 +510,58 @@ private static class ALTRunMacObjC
     internal static extern void SetBool(System.IntPtr target, System.IntPtr selector, byte value);
     [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
     internal static extern void SetDouble(System.IntPtr target, System.IntPtr selector, double value);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    internal static extern void SetLong(System.IntPtr target, System.IntPtr selector, long value);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    internal static extern System.IntPtr SendLong(System.IntPtr target, System.IntPtr selector, long value);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    private static extern void SendTwo(System.IntPtr target, System.IntPtr selector, System.IntPtr value, System.IntPtr key);
+    internal static void SetObject(System.IntPtr dictionary, System.IntPtr value, System.IntPtr key) => SendTwo(dictionary, Selector("setObject:forKey:"), value, key);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    internal static extern byte GetBool(System.IntPtr target, System.IntPtr selector);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    private static extern Rect GetRectArm(System.IntPtr target, System.IntPtr selector);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend_stret")]
+    private static extern void GetRectIntel(out Rect value, System.IntPtr target, System.IntPtr selector);
+    internal static Rect GetRect(System.IntPtr target, System.IntPtr selector)
+    {
+        if (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture != System.Runtime.InteropServices.Architecture.X64)
+            return GetRectArm(target, selector);
+        GetRectIntel(out var value, target, selector);
+        return value;
+    }
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    private static extern Rect ConvertRectArm(System.IntPtr target, System.IntPtr selector, Rect rect);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend_stret")]
+    private static extern void ConvertRectIntel(out Rect value, System.IntPtr target, System.IntPtr selector, Rect rect);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    private static extern Rect ConvertViewRectArm(System.IntPtr target, System.IntPtr selector, Rect rect, System.IntPtr view);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend_stret")]
+    private static extern void ConvertViewRectIntel(out Rect value, System.IntPtr target, System.IntPtr selector, Rect rect, System.IntPtr view);
+    internal static Rect ConvertToWindow(System.IntPtr view, Rect rect)
+    {
+        if (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture != System.Runtime.InteropServices.Architecture.X64)
+            return ConvertViewRectArm(view, Selector("convertRect:toView:"), rect, System.IntPtr.Zero);
+        ConvertViewRectIntel(out var value, view, Selector("convertRect:toView:"), rect, System.IntPtr.Zero);
+        return value;
+    }
+    internal static Rect ConvertToScreen(System.IntPtr window, Rect rect)
+    {
+        if (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture != System.Runtime.InteropServices.Architecture.X64)
+            return ConvertRectArm(window, Selector("convertRectToScreen:"), rect);
+        ConvertRectIntel(out var value, window, Selector("convertRectToScreen:"), rect);
+        return value;
+    }
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    internal static extern void SetRect(System.IntPtr target, System.IntPtr selector, Rect rect);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    internal static extern System.IntPtr SendRect(System.IntPtr target, System.IntPtr selector, Rect rect);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    internal static extern System.IntPtr SendSize(System.IntPtr target, System.IntPtr selector, Size size);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    internal static extern void CacheDisplay(System.IntPtr target, System.IntPtr selector, Rect rect, System.IntPtr bitmap);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    internal static extern System.IntPtr NewPanel(System.IntPtr target, System.IntPtr selector, Rect rect, long style, long backing, byte deferred);
     [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
     private static extern System.IntPtr SendString(System.IntPtr target, System.IntPtr selector,
         [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string text);

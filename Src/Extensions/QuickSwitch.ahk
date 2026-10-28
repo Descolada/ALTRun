@@ -31,6 +31,8 @@ class QuickSwitch {
         QuickSwitch.Options := options
         if !options["Enabled"]
             return
+        if Platform.IsMac
+            return MacQuickSwitch.Init(options)
         if options["StandardDialogs"]
             GroupAdd("ALTRunDialogs", "ahk_class #32770")
         for window in options["DialogWindows"]
@@ -91,6 +93,8 @@ class QuickSwitch {
 
     ; Hotkey (MenuHotkey, default Ctrl+Shift+G): the caret jumps to the panel's search box to choose with the keyboard; shows the panel for the moment when automatic showing is off
     static FocusPanel() {
+        if Platform.IsMac
+            return MacQuickSwitch.FocusPanel()
         dialog := WinExist("A")
         if (!IsObject(QuickSwitch._panel) || QuickSwitch._panelFor != dialog) {
             QuickSwitch._BuildPanel(dialog)
@@ -126,6 +130,8 @@ class QuickSwitch {
     static PanelActive(*) => IsObject(QuickSwitch._panel) && WinActive("ahk_id " QuickSwitch._panel.Hwnd)
 
     static HidePanel() {
+        if Platform.IsMac
+            return MacQuickSwitch.HidePanel()
         if IsObject(QuickSwitch._panel)
             try QuickSwitch._panel.Destroy()
         QuickSwitch._panel := "", QuickSwitch._panelFor := 0, QuickSwitch._panelPos := ""
@@ -441,6 +447,8 @@ class QuickSwitch {
 
     ; Only real open / save file dialogs count (a file name box + a file list + buttons or an address bar)
     static IsFileDialog(*) {
+        if Platform.IsMac
+            return MacQuickSwitch.IsDialog()
         browse := QuickSwitch.Options.Has("BrowseDialogs") && QuickSwitch.Options["BrowseDialogs"]
         listed := WinActive("ahk_group ALTRunDialogs")
         if !(listed || browse && WinActive("ahk_class #32770"))
@@ -532,6 +540,8 @@ class QuickSwitch {
 
     ; The jump hotkey: the folder of the file manager used last (TC, Opus or Explorer, see FileManagerFolder)
     static SyncFileManagerPath(silent := false) {
+        if Platform.IsMac
+            return MacQuickSwitch.JumpCurrent(silent)
         manager := QuickSwitch.FileManagerFolder()
         if !(IsObject(manager) && manager.Path != "")
             return silent ? "" : MsgBox(I18n.T("QuickSwitch.NoFileManager"), App.Name, 48)
@@ -585,6 +595,8 @@ class QuickSwitch {
     ; recent folders (RecentFolders of them), without duplicates
     ; opus = false: without Directory Opus (the panel adds those a moment later, see _AddDOpusFolders)
     static MenuFolders(opus := true) {
+        if Platform.IsMac
+            return MacDesktop.Folders()
         list := [], seen := Map()
         add(folder, group, tag) {
             if (folder = "" || seen.Has(StrLower(RTrim(folder, "\"))))
@@ -654,6 +666,10 @@ class QuickSwitch {
     ; Windows are listed front to back, so with a dialog in front this is the file manager used last
     ; (the jump hotkey, auto jump, "Copy to ..." in the actions)
     static FileManagerFolder() {
+        if Platform.IsMac {
+            folder := MacDesktop.CurrentFolder(false)
+            return folder != "" ? {Path: folder, Tag: "Finder", Hwnd: 0} : ""
+        }
         for hwnd in WinGetList() {
             className := ""
             try className := WinGetClass("ahk_id " hwnd)
@@ -667,12 +683,18 @@ class QuickSwitch {
     }
 
     static IsFileManager(hwnd) {
+        if Platform.IsMac {
+            try return WinGetProcessName("ahk_id " hwnd) = "Finder"
+            return false
+        }
         className := ""
         try className := WinGetClass("ahk_id " hwnd)
         return className = "TTOTAL_CMD" || className = "dopus.lister" || className = "CabinetWClass"
     }
 
     static FolderOfWindow(hwnd) {
+        if Platform.IsMac
+            return MacDesktop.CurrentFolder()
         if (!hwnd || !WinExist("ahk_id " hwnd))
             return ""
         switch WinGetClass("ahk_id " hwnd) {
@@ -809,3 +831,202 @@ class QuickSwitch {
         return (className = "#32770") ? "address" : "type"
     }
 }
+
+; Cocoa open/save panels use their own Go to Folder sheet, leaving the filename field untouched.
+class MacQuickSwitch {
+    static Options := Map(), Dialog := Map("Valid", false), Panel := "", Rows := [], Timer := ""
+    static Input := "", List := "", FilterTimer := "", _lastFinder := false, _automaticFor := 0
+
+    static Init(options) {
+        MacQuickSwitch.Options := options
+        HotIf((*) => MacQuickSwitch.IsDialog())
+        try {
+            if options["Hotkey"] != ""
+                Hotkey(options["Hotkey"], (*) => MacQuickSwitch.JumpCurrent())
+            if options["MenuHotkey"] != ""
+                Hotkey(options["MenuHotkey"], (*) => MacQuickSwitch.FocusPanel())
+        } catch as e {
+            Logger.Error("QuickSwitch: " e.Message)
+        }
+        HotIf()
+        MacQuickSwitch.Timer := (*) => MacQuickSwitch.Watch()
+        SetTimer(MacQuickSwitch.Timer, 600)
+    }
+
+    static Stop() {
+        if IsObject(MacQuickSwitch.Timer)
+            SetTimer(MacQuickSwitch.Timer, 0)
+        MacQuickSwitch.HidePanel()
+    }
+
+    static IsDialog() {
+#if OSX
+        return MacQuickSwitch.Dialog["Valid"] && ALTRunMacFrontPid() = MacQuickSwitch.Dialog["Pid"] && !MacQuickSwitch.Excluded("ExcludeWindows")
+#else
+        return false
+#endif
+    }
+
+    static Excluded(key) {
+        if MacQuickSwitch.Options.Has(key)
+            for condition in MacQuickSwitch.Options[key]
+                if condition != "" && WinActive(condition)
+                    return true
+        return false
+    }
+
+    static Watch() {
+#if OSX
+        if (IsObject(MacQuickSwitch.Panel) && MacQuickSwitch.Panel.ToClr().HasFocus)
+            return
+        if (SearchWindow.IsVisible() || A_TimeIdlePhysical < 250)
+            return
+        finder := ALTRunMacFinderActive()
+        dialog := finder || MacQuickSwitch.Excluded("ExcludeWindows") ? Map("Valid", false) : MacDesktop.FileDialog()
+        if dialog["Valid"] {
+            dialog["Hwnd"] := WinExist("A")
+            previous := MacQuickSwitch.Dialog["Valid"] ? MacQuickSwitch.Dialog["Token"] : 0
+            MacQuickSwitch.Dialog := dialog
+            if (MacQuickSwitch.Options["AutoSwitch"] && MacQuickSwitch._lastFinder && !MacQuickSwitch.Excluded("AutoSwitchExclude") && MacQuickSwitch._automaticFor != dialog["Token"]) {
+                MacQuickSwitch._automaticFor := dialog["Token"]
+                MacQuickSwitch.JumpCurrent(true)
+            }
+            if MacQuickSwitch.Options["ShowPanel"] {
+                if (!IsObject(MacQuickSwitch.Panel) || previous != dialog["Token"])
+                    MacQuickSwitch.BuildPanel()
+                MacQuickSwitch.PlacePanel()
+            }
+        } else {
+            MacQuickSwitch.Dialog := dialog
+            MacQuickSwitch.HidePanel()
+        }
+        if finder && !MacQuickSwitch._lastFinder
+            MacDesktop.Refresh()
+        MacQuickSwitch._lastFinder := finder
+#endif
+    }
+
+    static JumpCurrent(silent := false) {
+        folder := MacDesktop.CurrentFolder()
+        if (folder = "")
+            return silent ? false : App.Notify(I18n.T("Mac.NoFinderFolder"))
+        return MacDesktop.JumpFolder(folder, MacQuickSwitch.Dialog)
+    }
+
+    static FocusPanel() {
+        if !MacQuickSwitch.IsDialog()
+            return
+        if !IsObject(MacQuickSwitch.Panel)
+            MacQuickSwitch.BuildPanel()
+        MacQuickSwitch.PlacePanel(true)
+        MacQuickSwitch.Input.Focus()
+    }
+
+    static BuildPanel() {
+        MacQuickSwitch.HidePanel()
+        colors := QuickSwitch.PanelColors()
+        panel := Gui("-MinimizeBox -MaximizeBox +ToolWindow +AlwaysOnTop", I18n.T("Mac.FolderPanel"))
+        panel.BackColor := colors.Background
+        panel.SetFont("s11 c" colors.Text)
+        input := panel.AddEdit("xm w540 r1 Background" colors.Background)
+        input.ToClr().PlaceholderText := I18n.T("QuickSwitch.SearchCueFolders")
+        list := panel.AddListView("xm y+6 w540 r7 -Multi -Hdr Background" colors.Background, ["Folder", "From"])
+        list.ModifyCol(1, 440), list.ModifyCol(2, 100)
+        MacQuickSwitch.Panel := panel, MacQuickSwitch.Input := input, MacQuickSwitch.List := list
+        MacQuickSwitch.FilterTimer := (*) => MacQuickSwitch.Filter()
+        input.OnEvent("Change", (*) => SetTimer(MacQuickSwitch.FilterTimer, -150))
+        list.OnEvent("Click", (ctrl, row) => MacQuickSwitch.Pick(row))
+        panel.OnEvent("Escape", (*) => MacQuickSwitch.ReturnToDialog())
+        panel.OnEvent("Close", (*) => MacQuickSwitch.HidePanel())
+#if OSX
+        ALTRunMacFolderPanelKeys(input.ToClr(), list.ToClr(), (key) => MacQuickSwitch.Key(key))
+#endif
+        MacQuickSwitch.Filter()
+    }
+
+    static Filter() {
+        if !IsObject(MacQuickSwitch.Panel)
+            return
+        needle := Trim(MacQuickSwitch.Input.Value), rows := [], seen := Map()
+        for entry in MacDesktop.Folders() {
+            if (needle = "" || FuzzyMatcher.Best(needle, [entry.Path, Path.Leaf(RTrim(entry.Path, "/"))]) > 0) {
+                rows.Push(entry), seen[entry.Path] := true
+            }
+        }
+        if (needle != "") {
+            for item in FileIndex.Search(StrLower(needle), 20, !QuickSwitch._SearchesFiles()) {
+                folder := item.IsFolder ? item.Path : ActionCatalog.ParentDir(item.Path)
+                if (!seen.Has(folder) && DirExist(folder)) {
+                    rows.Push({Path: folder, Tag: I18n.T("Prefs.Feature.FileSearch")}), seen[folder] := true
+                }
+            }
+        }
+        MacQuickSwitch.Rows := rows
+        MacQuickSwitch.List.Delete()
+        for entry in rows
+            MacQuickSwitch.List.Add("", entry.Path, entry.Tag)
+        if rows.Length
+            MacQuickSwitch.List.Modify(1, "Select Focus")
+    }
+
+    static Key(key) {
+        selected := MacQuickSwitch.List.GetNext(0)
+        switch key {
+            case "Enter": MacQuickSwitch.Pick(selected ? selected : 1)
+            case "Escape": MacQuickSwitch.ReturnToDialog()
+            case "Up", "Down":
+                row := Max(1, Min(MacQuickSwitch.Rows.Length, selected + (key = "Up" ? -1 : 1)))
+                MacQuickSwitch.List.Modify(row, "Select Focus Vis")
+        }
+    }
+
+    static Pick(row) {
+        if (row < 1 || row > MacQuickSwitch.Rows.Length)
+            return
+        folder := MacQuickSwitch.Rows[row].Path, dialog := MacQuickSwitch.Dialog
+        MacQuickSwitch.HidePanel()
+        try WinActivate("ahk_id " dialog["Hwnd"])
+        Sleep(100)
+        return MacDesktop.JumpFolder(folder, dialog)
+    }
+
+    static ReturnToDialog() {
+        dialog := MacQuickSwitch.Dialog
+        MacQuickSwitch.HidePanel()
+        if dialog.Has("Hwnd")
+            try WinActivate("ahk_id " dialog["Hwnd"])
+    }
+
+    static PlacePanel(focus := false) {
+        if !IsObject(MacQuickSwitch.Panel) || !MacQuickSwitch.Dialog.Has("Hwnd")
+            return
+        try {
+            WinGetPos(&x, &y, &width, &height, "ahk_id " MacQuickSwitch.Dialog["Hwnd"])
+            area := SearchWindow._ScreenArea("Mouse")
+            point := QuickSwitch.PanelPosition(x, y, width, height, 570, 245, area)
+            MacQuickSwitch.Panel.Show((focus ? "" : "NA ") "x" point.X " y" point.Y " w570 h245")
+        }
+    }
+
+    static HidePanel() {
+        if IsObject(MacQuickSwitch.FilterTimer)
+            SetTimer(MacQuickSwitch.FilterTimer, 0)
+        if IsObject(MacQuickSwitch.Panel)
+            try MacQuickSwitch.Panel.Destroy()
+        MacQuickSwitch.Panel := "", MacQuickSwitch.Input := "", MacQuickSwitch.List := ""
+    }
+}
+
+#if OSX
+#CSharp
+public static void ALTRunMacFolderPanelKeys(Keysharp.Builtins.Ks.Clr.ManagedInstance input,Keysharp.Builtins.Ks.Clr.ManagedInstance list,Keysharp.Builtins.KeysharpFunc callback)
+{
+    foreach(var wrapper in new[] { input,list }) ((Eto.Forms.Control)wrapper.Native).KeyDown += (_,e) => {
+        var key=e.Key & Eto.Forms.Keys.KeyMask;
+        if(key is not (Eto.Forms.Keys.Enter or Eto.Forms.Keys.Escape or Eto.Forms.Keys.Up or Eto.Forms.Keys.Down))return;
+        if(e.Modifiers!=Eto.Forms.Keys.None)return;
+        callback.Call(key.ToString()); e.Handled=true;
+    };
+}
+#EndCSharp
+#endif

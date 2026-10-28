@@ -83,7 +83,7 @@ public static long ALTRunProcessStartCommand(string Command, string WorkingDirec
 }
 
 public static bool ALTRunProcessIsFinished(long Job)
-    => !ALTRunProcessJobs.TryGetValue(Job, out var job) || job.Process.HasExited;
+    => !ALTRunProcessJobs.TryGetValue(Job, out var job) || (job.Process.HasExited && job.Output.IsCompleted && job.Error.IsCompleted);
 
 public static string ALTRunProcessFinish(long Job, bool Terminate)
 {
@@ -100,6 +100,18 @@ public static string ALTRunProcessFinish(long Job, bool Terminate)
         var output = job.Output.GetAwaiter().GetResult();
         var error = job.Error.GetAwaiter().GetResult();
         return output + (output.Length > 0 && error.Length > 0 ? Environment.NewLine : "") + error;
+    }
+}
+
+public static string ALTRunProcessResult(long Job, bool Terminate)
+{
+    if (!ALTRunProcessJobs.TryRemove(Job, out var job)) return "{}";
+    using (job)
+    {
+        if (Terminate && !job.Process.HasExited) job.Process.Kill(entireProcessTree: true);
+        if (!job.Process.WaitForExit(3000) || !Task.WaitAll([job.Output, job.Error], TimeSpan.FromSeconds(3)))
+            throw new TimeoutException("The program did not close its output streams.");
+        return JsonSerializer.Serialize(new { Output = job.Output.Result, Error = job.Error.Result, ExitCode = job.Process.ExitCode });
     }
 }
 
@@ -381,6 +393,7 @@ class ProcessRunner {
 
     static IsFinished(job) => ALTRunProcessIsFinished(job)
     static Finish(job, terminate := false) => ALTRunProcessFinish(job, terminate)
+    static Result(job, terminate := false) => JSON.Parse(ALTRunProcessResult(job, terminate))
     static CancelAll() => ALTRunProcessCancelAll()
     static QuoteShell(value) => ALTRunPosixQuote(value)
     static QuoteAppleScript(value) => ALTRunAppleScriptQuote(value)
@@ -404,6 +417,12 @@ class ProcessRunner {
 
     static ScriptHost(scriptPath, arguments := []) {
         spec := JSON.Parse(ALTRunScriptHost(scriptPath, JSON.Stringify(arguments), A_IsCompiled))
+        if Platform.IsMac && Platform.AppBundle != "" {
+            packagedArguments := ["--keysharp"]
+            for value in spec["Arguments"]
+                packagedArguments.Push(value)
+            return {Executable: Platform.Join(Platform.AppBundle, "Contents", "MacOS", "ALTRun"), Arguments: packagedArguments}
+        }
         return {Executable: spec["Executable"], Arguments: spec["Arguments"]}
     }
 }

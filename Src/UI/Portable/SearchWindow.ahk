@@ -28,6 +28,9 @@ class SearchWindow {
     static LastInputAt := 0
 
     static Create() {
+#if OSX
+        ALTRunMacResetWindowIntegration()
+#endif
         SearchWindow._lastSearchState := ""
         if IsObject(SearchWindow._searchTimer)
             SetTimer(SearchWindow._searchTimer, 0)
@@ -143,18 +146,18 @@ class SearchWindow {
         SearchWindow._showing := true
         if (SearchWindow._prepareTimer != "")
             SetTimer(SearchWindow._prepareTimer, 0)
-#if WINDOWS
+#if WINDOWS || OSX
         if catchTyping
             TypeAhead.Start()
 #endif
         try SearchWindow._Show(text)
         finally {
             SearchWindow._showing := false
-#if WINDOWS
+#if WINDOWS || OSX
             typed := TypeAhead.Take()
 #endif
         }
-#if WINDOWS
+#if WINDOWS || OSX
         if (typed.Text = "" && typed.Key = "")
             return
         if Logger.Enabled
@@ -183,6 +186,9 @@ class SearchWindow {
     }
 
     static _Show(text) {
+#if OSX
+        MacInputIntegration.CaptureBeforeShow(SearchWindow.IsVisible())
+#endif
         if (text = "" && SearchWindow.IsVisible()) {
             selection := Platform.EditSelection(SearchWindow.Input)
             Usage.Count("Show")
@@ -191,6 +197,9 @@ class SearchWindow {
             Platform.SelectEdit(SearchWindow.Input, selection.Start, selection.End)
 #if WINDOWS
             SearchInputLanguage.SwitchOnShow(true)
+#endif
+#if OSX
+            MacInputIntegration.OnShow(true)
 #endif
             return
         }
@@ -227,6 +236,9 @@ class SearchWindow {
             SearchWindow._ResizeAfterShow()
 #if WINDOWS
         SearchInputLanguage.SwitchOnShow(wasVisible)
+#endif
+#if OSX
+        MacInputIntegration.OnShow(wasVisible)
 #endif
         if AppSettings.General["HideOnDeactivate"]
             SetTimer(SearchWindow._hideTimer, 200)
@@ -331,6 +343,9 @@ class SearchWindow {
 #if WINDOWS
             SearchInputLanguage.Restore()
 #endif
+#if OSX
+            MacInputIntegration.OnHide()
+#endif
             SearchWindow._ApplyFade(false)
             SearchWindow._visible := false
             SearchWindow.Gui.Hide()
@@ -340,6 +355,11 @@ class SearchWindow {
     }
 
     static _ApplyFade(showing) {
+#if OSX
+        opacity := ThemeManager.Get("Opacity")
+        opacity := IsNumber(opacity) && opacity >= 1 && opacity < 255 ? Round(opacity) : 255
+        ALTRunMacFadeWindow(SearchWindow.Gui.ToClr(), showing, AppSettings.Appearance["Fade"], opacity)
+#endif
 #if WINDOWS
         if showing {
             WindowFade.Stop()
@@ -361,7 +381,15 @@ class SearchWindow {
                              , FileMode: SearchWindow.FileMode, Selected: actions ? 1 : Max(1, SearchWindow.Selected)}
     }
 
-    static _AllowsBackgroundWork() => !SearchWindow._showing && !SearchWindow.IsVisible()
+    static _AllowsBackgroundWork() {
+        if (SearchWindow._showing || SearchWindow.IsVisible())
+            return false
+#if OSX
+        if (IsObject(MacQuickSwitch.Panel) && MacQuickSwitch.Panel.ToClr().HasFocus)
+            return false
+#endif
+        return true
+    }
 
     static _PrepareLater() {
         if AppSettings.General["KeepLastQuery"]
@@ -440,8 +468,28 @@ class SearchWindow {
             SearchWindow._RunSearch()
     }
 
+    ; Providers call this after asynchronous data arrives. Keep the input/selection stable and wait until typing is quiet.
+    static _refreshTimer := ""
+    static RefreshResults() {
+        if (!SearchWindow.IsVisible() || SearchWindow.Mode != "results")
+            return
+        if (SearchWindow._refreshTimer = "")
+            SearchWindow._refreshTimer := () => SearchWindow._RefreshResultsWhenIdle()
+        SetTimer(SearchWindow._refreshTimer, -100)
+    }
+
+    static _RefreshResultsWhenIdle() {
+        if (!SearchWindow.IsVisible() || SearchWindow.Mode != "results")
+            return
+        if (SearchWindow._showing || SearchWindow._painting || A_TickCount - SearchWindow.LastInputAt < 150) {
+            SetTimer(SearchWindow._refreshTimer, -100)
+            return
+        }
+        SearchWindow._RunSearch(SearchWindow._SearchIsCurrent())
+    }
+
     static _searchGen := 0
-    static _RunSearch() {
+    static _RunSearch(preserveSelection := false) {
         started := Logger.Enabled ? Logger.Ms() : 0
         if IsObject(SearchWindow._searchTimer)
             SetTimer(SearchWindow._searchTimer, 0)
@@ -464,15 +512,32 @@ class SearchWindow {
             SearchWindow.HighlightText := highlightText
         SearchWindow._lastSearchState := {Text: text, Mode: mode, FileMode: fileMode}
         searched := Logger.Enabled ? Logger.Ms() - started : 0
-        SearchWindow.SetResults(results)
+        if preserveSelection
+            SearchWindow.SetResults(results, true)
+        else
+            SearchWindow.SetResults(results)
         if (Logger.Enabled && (elapsed := Logger.Ms() - started) >= ProviderRegistry.SlowSearchMs)
             Logger.Debug("Perf: query-to-frame (" StrLen(text) " chars) " Round(elapsed) " ms, providers=" Round(searched)
                 . " render=" Round(elapsed - searched))
     }
 
-    static SetResults(results) {
+    static SetResults(results, preserveSelection := false) {
+        previous := preserveSelection && SearchWindow.Selected > 0 && SearchWindow.Selected <= SearchWindow.Results.Length
+            ? SearchWindow.Results[SearchWindow.Selected] : ""
         SearchWindow.Results := results
-        SearchWindow.Selected := results.Length ? 1 : 0, SearchWindow.Offset := 0
+        SearchWindow.Selected := results.Length ? 1 : 0
+        if IsObject(previous) {
+            for index, item in results
+                if (item.Identity() == previous.Identity()) {
+                    SearchWindow.Selected := index
+                    break
+                }
+        }
+        SearchWindow.Offset := IsObject(previous) ? Min(SearchWindow.Offset, Max(0, results.Length - SearchWindow.VisibleRows)) : 0
+        if (SearchWindow.Selected > SearchWindow.Offset + SearchWindow.VisibleRows)
+            SearchWindow.Offset := SearchWindow.Selected - SearchWindow.VisibleRows
+        else if (SearchWindow.Selected > 0 && SearchWindow.Selected <= SearchWindow.Offset)
+            SearchWindow.Offset := SearchWindow.Selected - 1
         SearchWindow._Layout()
     }
 
@@ -532,6 +597,7 @@ class SearchWindow {
             for row in rows
                 labels.Push(row.Title (row.Subtitle != "" ? ": " row.Subtitle : ""))
             LauncherCanvas.AccessibleLabel(SearchWindow.Canvas, TextTools.JoinList(labels, "; "))
+            LauncherCanvas.AccessibleResults(SearchWindow.Canvas, rows)
             if IsObject(previousFrame)
                 previousFrame.Dispose()
         } finally {
@@ -701,6 +767,17 @@ class SearchWindow {
         if (SearchWindow.Selected < 1 || SearchWindow.Selected > SearchWindow.Results.Length)
             return ""
         return SearchWindow.Results[SearchWindow.Selected]
+    }
+
+    static AccessibleActivate(index, identity) {
+        if (!SearchWindow.IsVisible() || index < 1 || index > SearchWindow.Results.Length)
+            return
+        item := SearchWindow.Results[index]
+        current := item.Identity()
+        if !(current == identity)
+            return
+        SearchWindow.MoveSelection(index - SearchWindow.Selected)
+        SearchWindow._Execute()
     }
 
     static MoveSelection(step, wrap := false) {

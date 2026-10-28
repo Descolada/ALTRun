@@ -1,11 +1,10 @@
 ; PreferencesWindow.ahk - Themed portable settings with native fields and a painted window frame.
+#Import Ks { RequestCapabilities }
 
 class PreferencesWindow {
     static Gui := "", Working := "", Pages := [], Binds := [], PageList := ""
     static _lists := Map()                                                  ; 列表页的设置路径 (例如 "CustomCommands") -> 加入 / 编辑项目的方法
-    static PageKeys := ["Prefs.Page.General", "Prefs.Page.Window", "Prefs.Page.Appearance", "Prefs.Page.Features", "Prefs.Page.Applications"
-        , "Prefs.Page.FileSearch", "Prefs.Page.Commands", "Prefs.Page.Snippets", "Prefs.Page.Clipboard", "Prefs.Page.WebSearch", "Prefs.Page.Calculator"
-        , "Prefs.Page.Scripts", "Prefs.Page.Hotkeys", "Prefs.Page.Advanced"]
+    static PageKeys := PreferencesWindow._PageKeys()
     static _page := 0, _y := 0
     static _dirty := false, _ready := false, ApplyButton := ""
     static ContentX := 190, ContentW := 560, LabelW := 190
@@ -18,6 +17,17 @@ class PreferencesWindow {
     static WindowW := 980, WindowH := 700, _viewHeight := 700
     static SidebarW := 224, HeaderH := 92, RowGap := 10
     static Footer := []
+
+    static _PageKeys() {
+        keys := ["Prefs.Page.General", "Prefs.Page.Window", "Prefs.Page.Keyboard", "Prefs.Page.Appearance", "Prefs.Page.Features", "Prefs.Page.Applications"
+            , "Prefs.Page.FileSearch", "Prefs.Page.FileIndex", "Prefs.Page.Commands", "Prefs.Page.Snippets", "Prefs.Page.Clipboard", "Prefs.Page.WebSearch", "Prefs.Page.Calculator"
+            , "Prefs.Page.Scripts", "Prefs.Page.Hotkeys", "Prefs.Page.QuickSwitch", "Prefs.Page.QSPanel", "Prefs.Page.DateStamp", "Prefs.Page.Usage", "Prefs.Page.Advanced"]
+        if Platform.IsLinux {
+            Loop 3
+                keys.RemoveAt(16)
+        }
+        return keys
+    }
 
     static Show(pageIndex := 1, x := "", y := "") {
         if IsObject(PreferencesWindow.Gui) {
@@ -302,10 +312,12 @@ class PreferencesWindow {
     static _BuildPages() {
         PreferencesWindow._BuildGeneral()
         PreferencesWindow._BuildWindow()
+        PreferencesWindow._BuildKeyboard()
         PreferencesWindow._BuildAppearance()
         PreferencesWindow._BuildFeatures()
         PreferencesWindow._BuildApplications()
         PreferencesWindow._BuildFileSearch()
+        PreferencesWindow._BuildFileIndex()
         PreferencesWindow._BuildCommands()
         PreferencesWindow._BuildSnippets()
         PreferencesWindow._BuildClipboard()
@@ -313,6 +325,12 @@ class PreferencesWindow {
         PreferencesWindow._BuildCalculator()
         PreferencesWindow._BuildScripts()
         PreferencesWindow._BuildHotkeys()
+        if (Platform.IsWindows || Platform.IsMac) {
+            PreferencesWindow._BuildQuickSwitch()
+            PreferencesWindow._BuildQuickSwitchPanel()
+            PreferencesWindow._BuildDateStamp()
+        }
+        PreferencesWindow._BuildUsage()
         PreferencesWindow._BuildAdvanced()
     }
 
@@ -320,10 +338,15 @@ class PreferencesWindow {
         PreferencesWindow._BeginPage("Prefs.Page.General", 140)
         PreferencesWindow._Field("General.Hotkey", "Prefs.Hotkey", "M", "hotkey")
         PreferencesWindow._Field("General.SecondaryHotkey", "Prefs.SecondaryHotkey", "M", "hotkey")
+        PreferencesWindow._Field("General.SelectionHotkey", "Prefs.SelectionHotkey", "M", "hotkey")
+        PreferencesWindow._Choice("General.DoubleTap", "Prefs.DoubleTap", ["", "Ctrl", "Shift"], [I18n.T("Prefs.DoubleTap.None"), I18n.T("Prefs.DoubleTap.Ctrl"), I18n.T("Prefs.DoubleTap.Shift")])
         PreferencesWindow._Choice("General.Language", "Prefs.Language", PreferencesWindow._LanguageValues(), PreferencesWindow._LanguageLabels())
         if (Platform.IsWindows || Platform.IsLinux || Platform.IsMac)
             PreferencesWindow._Check("General.LaunchAtLogin", "Prefs.LaunchAtLogin")
         PreferencesWindow._Check("General.ShowTrayIcon", "Prefs.ShowTrayIcon")
+        PreferencesWindow._Check("General.CheckForUpdates", "Prefs.CheckUpdates")
+        if Platform.IsMac
+            PreferencesWindow._Field("General.UpdateRepository", "Mac.UpdateRepository", "M")
         PreferencesWindow._Check("General.SaveLog", "Prefs.SaveLog")
         PreferencesWindow._Field("General.FileManager", "Prefs.FileManager", "L")
     }
@@ -332,10 +355,38 @@ class PreferencesWindow {
         PreferencesWindow._BeginPage("Prefs.Page.Window", 140)
         PreferencesWindow._Check("General.HideOnDeactivate", "Prefs.HideOnDeactivate")
         PreferencesWindow._Check("General.KeepLastQuery", "Prefs.KeepLastQuery")
-        PreferencesWindow._Check("General.SpaceToRun", "Prefs.SpaceToRun")
-        PreferencesWindow._Choice("General.TabKey", "Prefs.TabKey", ["Complete", "Next"], [I18n.T("Prefs.TabKey.Complete"), I18n.T("Prefs.TabKey.Next")])
+        PreferencesWindow._Check("Appearance.StatusBar", "Prefs.StatusBar")
         PreferencesWindow._Check("General.ShowTips", "Prefs.ShowTips")
         PreferencesWindow._Field("Features.Recent.RecentCount", "Prefs.RecentCount", "S", "number")
+    }
+
+    static _BuildKeyboard() {
+        PreferencesWindow._BeginPage("Prefs.Page.Keyboard", 170)
+        if (Platform.IsMac || Platform.IsWindows) {
+            PreferencesWindow._Choice("General.SwitchToEnglishInput", "Prefs.EnglishInput", Platform.IsMac ? [0, 1] : [0, 1, 2]
+                , Platform.IsMac ? [I18n.T("Prefs.EnglishInput.Off"), I18n.T("Prefs.EnglishInput.Keyboard")] : [I18n.T("Prefs.EnglishInput.Off"), I18n.T("Prefs.EnglishInput.Keyboard"), I18n.T("Prefs.EnglishInput.Mode")])
+            PreferencesWindow._Check("General.RestoreInput", "Prefs.RestoreInput")
+            if Platform.IsMac {
+                values := [""], labels := [I18n.T("Prefs.Language.auto")]
+                try {
+                    for source in MacInputIntegration.Sources() {
+                        values.Push(source.Id)
+                        labels.Push(source.Label)
+                    }
+                }
+                configured := PreferencesWindow.GetPath(PreferencesWindow.Working, "General.MacInputSource")
+                if (configured != "" && !PreferencesWindow._HasValue(values, configured)) {
+                    values.Push(configured)
+                    labels.Push(configured)
+                }
+                PreferencesWindow._Choice("General.MacInputSource", "Mac.InputSource", values, labels)
+            }
+            PreferencesWindow._Choice("General.CapsLock", "Prefs.CapsLock", Platform.IsMac ? ["", "Layout"] : ["", "Layout", "Mode"]
+                , Platform.IsMac ? [I18n.T("Prefs.CapsLock.Off"), I18n.T("Prefs.CapsLock.Layout")] : [I18n.T("Prefs.CapsLock.Off"), I18n.T("Prefs.CapsLock.Layout"), I18n.T("Prefs.CapsLock.Mode")])
+            PreferencesWindow._Check("General.CapsLockNotify", "Prefs.CapsLockNotify")
+        }
+        PreferencesWindow._Check("General.SpaceToRun", "Prefs.SpaceToRun")
+        PreferencesWindow._Choice("General.TabKey", "Prefs.TabKey", ["Complete", "Next"], [I18n.T("Prefs.TabKey.Complete"), I18n.T("Prefs.TabKey.Next")])
         PreferencesWindow._Field("General.HistorySize", "Prefs.HistorySize", "S", "number")
     }
 
@@ -347,6 +398,8 @@ class PreferencesWindow {
         PreferencesWindow._Choice("Appearance.Theme", "Prefs.Section.Theme", themes, labels)
         PreferencesWindow._Choice("Appearance.Density", "Prefs.Density", ThemeManager.Densities
             , [I18n.T("Prefs.Density.Comfortable"), I18n.T("Prefs.Density.Normal"), I18n.T("Prefs.Density.Compact")])
+        if (Platform.IsMac || Platform.IsWindows)
+            PreferencesWindow._Check("Appearance.Fade", "Prefs.Fade")
         PreferencesWindow._Field("Appearance.Placeholder", "Prefs.Placeholder", "M")
         PreferencesWindow._Field("Appearance.Width", "Prefs.Width", "S", "number")
         PreferencesWindow._Field("Appearance.VisibleRows", "Prefs.VisibleRows", "S", "number")
@@ -395,6 +448,20 @@ class PreferencesWindow {
         PreferencesWindow._Field("Features.Bookmarks.Keyword", "Prefs.Feature.Bookmarks", "M")
         PreferencesWindow._Field("Features.Terminal.Prefix", "Prefs.TerminalPrefix", "S")
         PreferencesWindow._Field("Features.Terminal.Shell", "Prefs.TerminalShell", "M")
+        if Platform.IsMac
+            PreferencesWindow._Choice("Features.Terminal.Terminal", "Mac.Terminal", ["Terminal", "iTerm"], ["Terminal", "iTerm"])
+        PreferencesWindow._Lines("Features.System.Hidden", "Prefs.SysHidden", 3)
+        PreferencesWindow._Check("Features.System.ConfirmActions", "Prefs.ConfirmActions")
+        if Platform.IsWindows || Platform.IsMac
+            PreferencesWindow._Check("Features.System.SettingsPages", Platform.IsMac ? "Mac.Settings.Enabled" : "Prefs.SettingsPages")
+        if (Platform.IsMac && PreferencesWindow.GetPath(PreferencesWindow.Working, "Features.Shortcuts") is Map) {
+            PreferencesWindow._Check("Features.Shortcuts.Enabled", "Mac.Shortcuts.Enabled")
+            PreferencesWindow._Field("Features.Shortcuts.Keyword", "Mac.Shortcuts.Keyword", "M")
+        }
+        if Platform.IsMac {
+            PreferencesWindow._Check("Features.Bookmarks.Safari", "Mac.Safari.Enabled")
+            PreferencesWindow._Lines("Features.Bookmarks.Imports", "Mac.Bookmarks.Imports", 3)
+        }
     }
 
     static _FeatureCheck(feature, x, y) {
@@ -412,16 +479,40 @@ class PreferencesWindow {
         PreferencesWindow._Field("Features.Applications.Exclude", "Prefs.AppExclude", "L")
         PreferencesWindow._Field("Features.Applications.Depth", "Prefs.AppDepth", "S", "number")
         PreferencesWindow._Check("Features.Applications.MatchPinyin", "Prefs.MatchPinyin")
+        PreferencesWindow._Lines("Features.Applications.Hidden", "Prefs.AppHidden", 3)
         PreferencesWindow._Button("Prefs.RebuildIndex", (*) => App.RebuildIndex())
     }
 
     static _BuildFileSearch() {
         PreferencesWindow._BeginPage("Prefs.Page.FileSearch", 140)
-        PreferencesWindow._Lines("Features.FileSearch.ScopeFolders", "Prefs.ScopeFolders", 4)
         PreferencesWindow._Csv("Features.FileSearch.Keywords", "Prefs.FileKeywords", "M")
-        PreferencesWindow._Field("Features.FileSearch.ScopeDepth", "Prefs.ScopeDepth", "S", "number")
+        PreferencesWindow._Csv("Features.FileSearch.FolderKeywords", "Prefs.FolderKeywords", "M")
+        PreferencesWindow._Csv("Features.FileSearch.RecentKeywords", "Prefs.RecentKeywords", "M")
+        PreferencesWindow._Lines("Features.FileSearch.TypeFilters", "Prefs.TypeFilters", 4)
         PreferencesWindow._Field("Features.FileSearch.MaxResults", "Prefs.FileMaxResults", "S", "number")
         PreferencesWindow._Check("Features.FileSearch.SpacePrefix", "Prefs.SpacePrefix")
+        PreferencesWindow._Check("Features.FileSearch.QuotePrefix", "Prefs.QuotePrefix")
+        PreferencesWindow._Check("Features.FileSearch.InDefaultResults", "Prefs.FileInDefault")
+        PreferencesWindow._Field("Features.FileSearch.DefaultResultsLimit", "Prefs.FileDefaultLimit", "S", "number")
+        PreferencesWindow._Field("Features.FileSearch.MinQueryLength", "Prefs.FileMinLength", "S", "number")
+    }
+
+    static _BuildFileIndex() {
+        PreferencesWindow._BeginPage("Prefs.Page.FileIndex", 160)
+        if Platform.IsWindows {
+            PreferencesWindow._Check("Features.FileSearch.UseEverything", "Prefs.UseEverything")
+            PreferencesWindow._Field("Features.FileSearch.EverythingFilter", "Prefs.EverythingFilter", "L")
+            PreferencesWindow._Field("Features.FileSearch.EverythingPath", "Prefs.EverythingPath", "L", "folder")
+        }
+        if (Platform.IsMac && PreferencesWindow.Working["Features"]["FileSearch"].Has("Spotlight")) {
+            PreferencesWindow._Check("Features.FileSearch.Spotlight", "Mac.Spotlight.Enabled")
+            PreferencesWindow._Check("Features.FileSearch.SpotlightContent", "Mac.Spotlight.Content")
+        }
+        PreferencesWindow._Lines("Features.FileSearch.ScopeFolders", "Prefs.ScopeFolders", 4)
+        PreferencesWindow._Field("Features.FileSearch.ScopeDepth", "Prefs.ScopeDepth", "S", "number")
+        PreferencesWindow._Field("Features.FileSearch.ScopeExclude", "Prefs.ScopeExclude", "L")
+        PreferencesWindow._Field("Features.FileSearch.MaxEntries", "Prefs.MaxEntries", "S", "number")
+        PreferencesWindow._Field("Features.FileSearch.RefreshMinutes", "Prefs.RefreshMinutes", "S", "number")
         PreferencesWindow._Button("Prefs.RebuildIndex", (*) => App.RebuildIndex())
     }
 
@@ -439,6 +530,8 @@ class PreferencesWindow {
         PreferencesWindow._List("Snippets", 220
             , [["Prefs.Col.Name", "Name", 150], ["Prefs.Col.Keyword", "Keyword", 90], ["Prefs.Col.Text", "Text", 300]]
             , SnippetProvider.EditorFields(), () => SnippetProvider.NewSnippet())
+        PreferencesWindow._Button("Snippet.Import", (*) => PreferencesWindow._ImportSnippets())
+        PreferencesWindow._Button("Snippet.Export", (*) => PreferencesWindow._ExportSnippets())
         PreferencesWindow._Section("Prefs.Section.Options")
         PreferencesWindow._Check("Features.Snippets.SearchText", "Prefs.SnippetSearchText", , , "Prefs.Group.Search")
         PreferencesWindow._Field("Features.Snippets.Keyword", "Prefs.SnippetKeyword", "M")
@@ -460,6 +553,7 @@ class PreferencesWindow {
             , [I18n.T("Prefs.ClipStorage.Data"), I18n.T("Prefs.ClipStorage.Files"), I18n.T("Prefs.ClipStorage.All")], "L")
         PreferencesWindow._Check("Features.Clipboard.MergeDoubleCopy", "Prefs.ClipMerge")
         PreferencesWindow._Lines("Features.Clipboard.IgnoreApps", "Prefs.ClipIgnoreApps", 2)
+        PreferencesWindow._Button("Prefs.ClipClear", (*) => ClipboardProvider.Clear())
     }
 
     static _BuildWebSearch() {
@@ -535,13 +629,292 @@ class PreferencesWindow {
         PreferencesWindow._Button("Prefs.EditJson", (*) => Platform.Edit(AppSettings.File))
         PreferencesWindow._Button("Prefs.OpenDataFolder", (*) => Platform.Open(AppSettings.DataDir))
         PreferencesWindow._Button("Prefs.OpenThemes", (*) => Platform.Open(ThemeManager.UserDir))
+        PreferencesWindow._Button("Prefs.ChangeDataFolder", (*) => PreferencesWindow._ChangeDataFolder())
+        PreferencesWindow._Button("Prefs.OpenLog", (*) => App.OpenLog())
+        PreferencesWindow._Button("Prefs.CopySystemInfo", (*) => PreferencesWindow._CopyDiagnostics())
+        PreferencesWindow._Button("Tray.CheckUpdate", (*) => UpdateChecker.Check())
         PreferencesWindow._Button("Prefs.ResetLearning", (*) => PreferencesWindow._ResetLearning())
+        PreferencesWindow._Button("Prefs.RestoreDefaults", (*) => PreferencesWindow._RestoreDefaults())
+        if Platform.IsMac
+            PreferencesWindow._Button("Mac.Permissions.Status", (*) => PreferencesWindow._ShowPermissions())
     }
 
     static _ResetLearning() {
         Knowledge.Picks := Knowledge._UidMap(), Knowledge.QueryPicks := Map(), Knowledge.History := [], Knowledge.Recent := []
         Knowledge.Save()
         MsgBox(I18n.T("Prefs.ResetDone"), App.Name, 64)
+    }
+
+    static _BuildQuickSwitch() {
+        base := "Extensions.QuickSwitch."
+        PreferencesWindow._BeginPage("Prefs.Page.QuickSwitch", 160)
+        PreferencesWindow._Check(base "Enabled", "Prefs.EnableExtension")
+        PreferencesWindow._Field(base "Hotkey", "Prefs.QSHotkey", "K", "hotkey")
+        PreferencesWindow._Check(base "AutoSwitch", "Prefs.QSAuto")
+        if Platform.IsWindows {
+            PreferencesWindow._Check(base "StandardDialogs", "Prefs.QSStandard")
+            PreferencesWindow._Check(base "BrowseDialogs", "Prefs.QSBrowse")
+            PreferencesWindow._Lines(base "DialogWindows", "Prefs.QSOtherDialogs", 3)
+        }
+        PreferencesWindow._Lines(base "ExcludeWindows", "Prefs.QSExclude", 3)
+        PreferencesWindow._Lines(base "AutoSwitchExclude", "Prefs.QSAutoExclude", 3)
+    }
+
+    static _BuildQuickSwitchPanel() {
+        base := "Extensions.QuickSwitch."
+        PreferencesWindow._BeginPage("Prefs.Page.QSPanel", 160)
+        PreferencesWindow._Check(base "ShowPanel", "Prefs.QSPanel")
+        PreferencesWindow._Choice(base "PanelSearch", "Prefs.QSPanelSearch", ["folders", "all"], [I18n.T("Prefs.QSPanelSearch.Folders"), I18n.T("Prefs.QSPanelSearch.All")])
+        PreferencesWindow._Field(base "RecentFolders", "Prefs.QSRecent", "S", "number")
+        PreferencesWindow._Field(base "MenuHotkey", "Prefs.QSMenu", "K", "hotkey")
+    }
+
+    static _BuildDateStamp() {
+        base := "Extensions.AutoDate."
+        PreferencesWindow._BeginPage("Prefs.Page.DateStamp", 160)
+        PreferencesWindow._Check(base "Enabled", "Prefs.EnableExtension")
+        PreferencesWindow._Field(base "Hotkey", "Prefs.RenameHotkey", "K", "hotkey")
+        PreferencesWindow._Field(base "DateFormat", "Prefs.DateFormat", "M")
+        if !Platform.IsMac {
+            PreferencesWindow._Lines(base "RenameWindows", "Prefs.RenameWindows", 3)
+            PreferencesWindow._Lines(base "AppendWindows", "Prefs.AppendWindows", 3)
+        }
+    }
+
+    static DraftValue(path) {
+        for bind in PreferencesWindow.Binds
+            if (bind.Path = path)
+                return bind.Read.Call()
+        return PreferencesWindow.GetPath(PreferencesWindow.Working, path)
+    }
+
+    static ImportSnippetText(text) {
+        list := PreferencesWindow._lists["Snippets"]
+        result := SnippetProvider.ImportRows(DelimitedText.Parse(text), list.Items, PreferencesWindow.DraftValue("Features.Snippets.ExpandPrefix"))
+        if (result.Added || result.Updated) {
+            PreferencesWindow.MarkDirty(true)
+            list.Reload.Call()
+        }
+        return result
+    }
+
+    static ExportSnippetText() => DelimitedText.ToCsv(SnippetProvider.ExportRows(PreferencesWindow._lists["Snippets"].Items))
+
+    static _ImportSnippets() {
+        owner := PreferencesWindow.Gui, title := I18n.T("Snippet.Import.Title")
+        colors := PreferencesWindow.Palette
+        g := Gui("+Owner" owner.Hwnd " -MinimizeBox +Resize +MinSize480x340", title)
+        g.BackColor := colors["Background"]
+        g.SetFont("s10 c" colors["Text"], ThemeManager.FontName())
+        g.AddText("xm w560", I18n.T("Snippet.Import.Help"))
+        g.AddText("xm y+6 w560", I18n.T("Snippet.Import.Columns"))
+        box := g.AddEdit("xm y+8 w560 r12 +Multi +WantTab Background" colors["Surface"] " c" colors["InputText"])
+        g.AddButton("xm y+12 w110", I18n.T("Snippet.Import.File")).OnEvent("Click", ChooseFile)
+        g.AddButton("x+12 yp w110 Default", I18n.T("Snippet.Import.Ok")).OnEvent("Click", DoImport)
+        g.AddButton("x+12 yp w110", I18n.T("Prefs.Cancel")).OnEvent("Click", (*) => g.Destroy())
+        g.OnEvent("Escape", (*) => g.Destroy())
+        g.OnEvent("Close", (*) => g.Destroy())
+        owner.Opt("+Disabled")
+        try {
+            g.Show()
+            WinWaitClose(g.Hwnd)
+        } finally {
+            owner.Opt("-Disabled")
+            try owner.Show()
+        }
+
+        ChooseFile(*) {
+            g.Opt("+OwnDialogs")
+            selected := FileSelect(1, , title, I18n.T("Snippet.Import.Filter"))
+            if (selected = "")
+                return
+            try box.Value := DelimitedText.ReadFile(selected)
+            catch as e
+                MsgBox(e.Message, title, "Icon! Owner" g.Hwnd)
+        }
+        DoImport(*) {
+            result := PreferencesWindow.ImportSnippetText(box.Value)
+            if !(result.Added || result.Updated)
+                return MsgBox(I18n.T("Snippet.Import.None"), title, "Icon! Owner" g.Hwnd)
+            MsgBox(I18n.T("Snippet.Import.Done", result.Added, result.Updated)
+                . (result.Skipped ? "`n" I18n.T("Snippet.Import.Skipped", result.Skipped) : ""), title, "Iconi Owner" g.Hwnd)
+            g.Destroy()
+        }
+    }
+
+    static _ExportSnippets() {
+        owner := PreferencesWindow.Gui, title := I18n.T("Snippet.Export")
+        owner.Opt("+OwnDialogs")
+        target := FileSelect("S16", "Snippets.csv", title, I18n.T("Snippet.Export.Filter"))
+        if (target = "")
+            return
+        if !RegExMatch(target, "i)\.(csv|txt)$")
+            target .= ".csv"
+        try {
+            output := FileOpen(target, "w", "UTF-8")
+            try output.Write(PreferencesWindow.ExportSnippetText())
+            finally output.Close()
+        } catch as e {
+            return MsgBox(e.Message, title, "Icon! Owner" owner.Hwnd)
+        }
+        MsgBox(I18n.T("Snippet.Export.Done", PreferencesWindow._lists["Snippets"].Items.Length, target), title, "Iconi Owner" owner.Hwnd)
+    }
+
+    static _usage := ""
+    static _BuildUsage() {
+        PreferencesWindow._BeginPage("Prefs.Page.Usage", 140)
+        totals := PreferencesWindow._Add("Text", "w" PreferencesWindow.ContentW " r2")
+        PreferencesWindow._Below(8, totals)
+        since := PreferencesWindow._Add("Text", "w" PreferencesWindow.ContentW)
+        PreferencesWindow._Below(12, since)
+        chart := PreferencesWindow._Add("Picture", "w" PreferencesWindow.ContentW " h100")
+        PreferencesWindow._Below(4, chart)
+        chartLabel := PreferencesWindow._Add("Text", "w" PreferencesWindow.ContentW " cGray")
+        PreferencesWindow._Below(12, chartLabel)
+        headers := []
+        for key in ["Feature", "Today", "Week", "Month", "All", "Share"]
+            headers.Push(I18n.T("Usage.Col." key))
+        list := PreferencesWindow._Add("ListView", "w" PreferencesWindow.ContentW " h280 -Multi NoSort", headers)
+        for index, width in [180, 65, 65, 65, 70, 70]
+            list.ModifyCol(index, width)
+        PreferencesWindow._Below(12, list)
+        PreferencesWindow._Button("Usage.Clear", (*) => PreferencesWindow._ClearUsage())
+        PreferencesWindow._usage := {Totals: totals, Since: since, Chart: chart, ChartLabel: chartLabel, List: list}
+        PreferencesWindow._RefreshUsage()
+    }
+
+    static UsageRows() {
+        periods := [Usage.Summary(1), Usage.Summary(7), Usage.Summary(30), Usage.Summary(0)], rows := []
+        total := Usage.Total(periods[4])
+        for feature in Usage.Features {
+            counts := []
+            for period in periods
+                counts.Push(period.Has(feature) ? period[feature] : 0)
+            rows.Push({Id: feature, Counts: counts, Share: total ? Format("{:.1f}%", counts[4] * 100 / total) : "0%"})
+        }
+        Loop rows.Length - 1 {
+            i := A_Index + 1, entry := rows[i], j := i - 1
+            while (j >= 1 && rows[j].Counts[4] < entry.Counts[4])
+                rows[j + 1] := rows[j], j -= 1
+            rows[j + 1] := entry
+        }
+        counts := []
+        for period in periods
+            counts.Push(period.Has("Show") ? period["Show"] : 0)
+        rows.Push({Id: "Show", Counts: counts, Share: "-"})
+        return rows
+    }
+
+    static _RefreshUsage() {
+        ui := PreferencesWindow._usage
+        ui.Totals.Value := I18n.T("Usage.Totals", Usage.Total(Usage.Summary(1)), Usage.Total(Usage.Summary(7)), Usage.Total(Usage.Summary(30)), Usage.Total(Usage.Summary(0)))
+        all := Usage.Summary()
+        ui.Since.Value := I18n.T("Usage.Since", Usage.Since != "" ? Usage.Since : FormatTime(, "yyyy-MM-dd"), all.Has("Show") ? all["Show"] : 0)
+        ui.List.Delete()
+        for row in PreferencesWindow.UsageRows() {
+            cells := [I18n.T("Usage.F." row.Id)]
+            for count in row.Counts
+                cells.Push(count)
+            cells.Push(row.Share)
+            ui.List.Add("", cells*)
+        }
+        daily := Usage.Daily(30), most := 1, width := PreferencesWindow.ContentW
+        for day in daily
+            most := Max(most, day[2])
+        ui.ChartLabel.Value := SubStr(daily[1][1], 6) " — " I18n.T("Usage.Today") "   " I18n.T("Usage.Chart", most)
+        descriptions := []
+        for day in daily
+            descriptions.Push(day[1] ": " day[2])
+        LauncherCanvas.AccessibleLabel(ui.Chart, TextTools.JoinList(descriptions, "; "))
+        canvas := Image.Create(width, 100, , PreferencesWindow.Gui.PixelScale)
+        canvas.FillRect(0, 0, width, 100, PreferencesWindow.Palette["Surface"])
+        for index, day in daily {
+            barHeight := Round(day[2] * 82 / most)
+            if barHeight
+                canvas.FillRect((index - 1) * width / 30 + 2, 88 - barHeight, width / 30 - 4, barHeight, PreferencesWindow.Palette["Accent"])
+        }
+        ui.Chart.Value := "HBITMAP:" canvas.ToBitmap()
+        canvas.Dispose()
+    }
+
+    static _ClearUsage() {
+        if (MsgBox(I18n.T("Usage.ClearConfirm"), App.Name, "YesNo Icon? Default2 Owner" PreferencesWindow.Gui.Hwnd) != "Yes")
+            return
+        Usage.Clear()
+        PreferencesWindow._RefreshUsage()
+    }
+
+    static DataFoldersOverlap(first, second) {
+        first := Platform.Identity(Path.Full(first)), second := Platform.Identity(Path.Full(second))
+        if Platform.IsWindows
+            first := StrReplace(first, "\", "/"), second := StrReplace(second, "\", "/")
+        first := RTrim(first, "/") "/", second := RTrim(second, "/") "/"
+        return SubStr(first, 1, StrLen(second)) == second || SubStr(second, 1, StrLen(first)) == first
+    }
+
+    static _HasValue(values, expected) {
+        for value in values
+            if (value == expected)
+                return true
+        return false
+    }
+
+    static _ChangeDataFolder() {
+        current := AppSettings.DataDir
+        folder := DirSelect(current, 3, I18n.T("Prefs.DataFolderPrompt"))
+        if (folder = "" || AppSettings._SameLocation(folder, current))
+            return
+        if PreferencesWindow.DataFoldersOverlap(current, folder)
+            return MsgBox(I18n.T("Prefs.DataFolderNested"), App.Name, "Icon! Owner" PreferencesWindow.Gui.Hwnd)
+        useExisting := false
+        if FileExist(Platform.Join(folder, "ALTRun.json")) {
+            answer := MsgBox(I18n.T("Prefs.DataFolderExisting", folder), App.Name, "YesNoCancel Icon? Owner" PreferencesWindow.Gui.Hwnd)
+            if (answer = "Cancel")
+                return
+            useExisting := answer = "Yes"
+        } else if (MsgBox(I18n.T("Prefs.DataFolderCopy", folder), App.Name, "OKCancel Icon? Owner" PreferencesWindow.Gui.Hwnd) != "OK")
+            return
+        if PreferencesWindow.Cancel()
+            return
+        try {
+            if !useExisting {
+                AppSettings.Save(), Knowledge.Save(), Usage.Save(), ClipboardProvider.Save()
+                DirCopy(current, folder, true)
+            }
+            AppSettings.SetDataLocation(folder)
+        } catch as e {
+            return MsgBox(I18n.T("Prefs.DataFolderFailed", folder, e.Message), App.Name, "Icon!")
+        }
+        App.Reload()
+    }
+
+    static _RestoreDefaults() {
+        if (MsgBox(I18n.T("Prefs.RestoreDefaultsConfirm"), App.Name, "YesNo Icon! Default2 Owner" PreferencesWindow.Gui.Hwnd) != "Yes")
+            return
+        try {
+            if FileExist(AppSettings.File)
+                FileCopy(AppSettings.File, AppSettings.File ".bak", true)
+        } catch as e {
+            return MsgBox(I18n.T("Settings.SaveError", e.Message), App.Name, "Icon! Owner" PreferencesWindow.Gui.Hwnd)
+        }
+        AppSettings.Data := AppSettings.ResetData(AppSettings.Data)
+        if AppSettings.Save()
+            App.Reload()
+    }
+
+    static PermissionReport() {
+        capabilities := RequestCapabilities()                              ; No arguments queries status without prompting.
+        text := ""
+        for name in ["InputMonitoring", "InputControl", "WindowMonitoring", "WindowControl", "ScreenCapture", "ClipboardMonitoring"]
+            text .= (text = "" ? "" : "`n") name ": " capabilities.%name%
+        return text
+    }
+
+    static _ShowPermissions() => MsgBox(PreferencesWindow.PermissionReport(), I18n.T("Mac.Permissions.Status"), "Iconi Owner" PreferencesWindow.Gui.Hwnd)
+
+    static _CopyDiagnostics() {
+        A_Clipboard := App.SystemInfo() (Platform.IsMac ? "`n`n" PreferencesWindow.PermissionReport() : "")
+        App.Notify(I18n.T("Prefs.SystemInfoCopied"))
     }
 
     static _BeginPage(nameKey, labelW := 190) {
@@ -609,6 +982,8 @@ class PreferencesWindow {
         if !Platform.IsWindows {
             if (labelKey = "Prefs.FileManager")
                 return labelKey (Platform.IsMac ? ".Mac.Desc" : ".Linux.Desc")
+            if (Platform.IsMac && (labelKey = "Prefs.Hotkey" || labelKey = "Prefs.SecondaryHotkey"))
+                return labelKey ".Desc"
             if I18n.Strings.Has(labelKey ".Portable.Desc")
                 return labelKey ".Portable.Desc"
         }
@@ -621,6 +996,8 @@ class PreferencesWindow {
                 return
             key := PreferencesWindow._DescriptionKey(labelKey)
             text := key = "Prefs.SaveLog.Portable.Desc" ? I18n.T(key, Logger.File) : I18n.T(key)
+            if (key = "Prefs.SelectionHotkey.Desc")
+                text := RegExReplace(text, "i)\s*<a\b[^>]*>.*?</a>", "")
         }
         PreferencesWindow.Gui.SetFont("s" PreferencesWindow.HintFont)
         ctrl := PreferencesWindow._Add("Text", "x" x " w" (PreferencesWindow.ContentX + PreferencesWindow.ContentW - x) " c" PreferencesWindow.Palette["Muted"], text)
@@ -960,7 +1337,7 @@ class PreferencesWindow {
 
         listView.OnEvent("DoubleClick", EditItem)
         Refresh()
-        PreferencesWindow._lists[path] := {Items: items, Insert: Insert, Append: Append, Edit: EditExisting}   ; 外面加进来的项目 (AddCommands)
+        PreferencesWindow._lists[path] := {Items: items, Insert: Insert, Append: Append, Edit: EditExisting, Reload: Refresh}   ; Draft lists are independent of saved settings.
         PreferencesWindow._y += height - 34
         PreferencesWindow._Add("Button", "w80", I18n.T("Prefs.Add")).OnEvent("Click", AddItem)
         PreferencesWindow._Add("Button", "x+8 yp w80", I18n.T("Prefs.Edit")).OnEvent("Click", EditItem)

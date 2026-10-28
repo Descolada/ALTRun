@@ -10,6 +10,7 @@
 ;   Arg          what the action works on: file path / URL / text
 ;   Arguments    command-line arguments when running a program (optional, file type)
 ;   Uid          a stable unique Id to learn "what was typed -> what was chosen"; empty = not learned
+;   DedupeKey    optional identity for distinct results sharing one learned Uid (e.g. windows of the same app)
 ;   OnRun        the function fn(item) for the default action (Enter); empty = the default action for Kind
 ;   RunTitle     OnRun's name in the actions panel (e.g. "Paste image"); when set it is the first row of the panel
 ;   Actions      extra actions [{Title, Subtitle, Icon, Run: fn(item)}], shown in the actions panel
@@ -42,6 +43,7 @@ class ResultItem {
         this.Arg          := ""
         this.Arguments    := ""
         this.Uid          := ""
+        this.DedupeKey    := ""                                             ; distinct windows can share the app's learned ranking
         this.OnRun        := ""
         this.RunTitle     := ""
         this.Actions      := []
@@ -65,6 +67,8 @@ class ResultItem {
             return (this.Arg != "") ? this.Arg : this.Title
         return this.Title
     }
+
+    Identity() => this.DedupeKey != "" ? this.DedupeKey : this.Uid != "" ? this.Uid : this.Kind "|" this.Arg "|" this.Title
 
     ; the text for Ctrl+L Large Type
     DisplayText() {

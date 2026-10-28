@@ -331,7 +331,18 @@ class FileSearchProvider {
             return FileSearchProvider._Best(found, limit)
         }
 #endif
-        found := FileIndex.Search(needle, preferPrefix ? limit * 4 : limit, foldersOnly, IsObject(filter) ? filter.Extensions : "")
+        metadataOnly := Platform.IsMac && MacSpotlight.Enabled() && MacSpotlight.Expression(term, scope)["Metadata"]
+        found := metadataOnly ? [] : FileIndex.Search(needle, preferPrefix ? limit * 4 : limit, foldersOnly, IsObject(filter) ? filter.Extensions : "")
+        if Platform.IsMac {
+            seen := Map()
+            for item in found
+                seen[item.Path] := true
+            for item in MacSpotlight.Query(term, scope)
+                if !seen.Has(item.Path) {
+                    found.Push(item)
+                    seen[item.Path] := true
+                }
+        }
         if preferPrefix {
             kept := []
             for item in found
@@ -405,6 +416,8 @@ class FileSearchProvider {
             Icon: "res:imageres.dll,-8", OnRun: (*) => Run("search-ms:query=" Url.Encode(search))
         })
 #else
+        if Platform.IsMac
+            return ResultItem(I18n.T("Mac.OpenFinderSearch", term), "Finder", {Icon: "folder:", OnRun: (*) => MacDesktop.Search(term, "", scope)})
         scopes := AppSettings.Feature("FileSearch")["ScopeFolders"]
         folder := scopes.Length ? Path.Resolve(scopes[1]) : Platform.Home
         return ResultItem(I18n.T("Files.OpenSearchFolder", term), folder, {

@@ -74,7 +74,7 @@ class StartupSmoke {
         App.Start()
         OnExit(StartupSmoke.ExitHandler, 0)
         OnExit(StartupSmoke.ExitHandler)
-        StartupSmoke.Assert(ProviderRegistry.Providers.Length = 14, "App.Start did not register every provider.")
+        StartupSmoke.Assert(ProviderRegistry.Providers.Length = 15 && ProviderRegistry.ById("Shortcuts") = ShortcutsProvider, "App.Start did not register every provider.")
         StartupSmoke.Assert(StartupSmoke.ShellCalls = 1, "App.Start did not reach shell integration setup.")
         StartupSmoke.Assert(A_IconHidden, "The startup configuration did not suppress the tray icon.")
         StartupSmoke.Assert(SearchWindow.IsVisible(), "App.Start did not show its search window.")
@@ -165,7 +165,7 @@ class StartupSmoke {
         data["Appearance"]["Theme"] := "Light"
         data["Appearance"]["ShowOn"] := "Primary"
         data["Appearance"]["RememberPosition"] := 0
-        for name in ["Clipboard", "Bookmarks", "Windows"]
+        for name in ["Clipboard", "Bookmarks", "Windows", "Shortcuts"]
             data["Features"][name]["Enabled"] := 0
         clipboardOptions := data["Features"]["Clipboard"]
         for key in ["Persist", "Images", "LocalFiles", "MergeDoubleCopy"]

@@ -18,7 +18,7 @@
 
 class ScriptProvider {
     static Id := "Scripts"
-    static Extensions := Map("ahk", 1, "ks", 1, "ps1", 1, "bat", 1, "cmd", 1, "py", 1, "sh", 1)
+    static Extensions := Map("ahk", 1, "ks", 1, "ps1", 1, "bat", 1, "cmd", 1, "py", 1, "sh", 1, "command", 1, "applescript", 1, "scpt", 1, "jxa", 1)
     static Scripts := []
     static _lastStamp := "", _checked := 0, _refreshTimer := ""
     static TimeoutMs := 120000                                              ; how long to wait for a background script at most
@@ -121,7 +121,7 @@ class ScriptProvider {
         arguments := argument != "" ? [argument] : []
         if script.Ext = "ahk" || script.Ext = "ks"
             return ProcessRunner.ScriptHost(script.Path, arguments)
-        if !Platform.IsWindows && (script.Ext = "sh" || script.Ext = "py") {
+        if !Platform.IsWindows && (script.Ext = "sh" || script.Ext = "command" || script.Ext = "py") {
             if IsObject(spec := ProcessRunner.ScriptInterpreter(script.Path)) {
                 if Platform.FindExecutable(spec.Executable) = ""
                     throw Error("The script's interpreter is not installed: " spec.Executable)
@@ -140,11 +140,16 @@ class ScriptProvider {
                 if executable = ""
                     executable := Platform.FindExecutable("python")
                 prefix := []
-            case "sh":
+            case "sh", "command":
                 executable := Platform.FindExecutable("bash")
                 if executable = ""
                     executable := Platform.FindExecutable("sh")
                 prefix := []
+            case "applescript", "scpt", "jxa":
+                if !Platform.IsMac
+                    throw Error("AppleScript and JXA scripts require macOS.")
+                executable := "/usr/bin/osascript"
+                prefix := script.Ext = "jxa" ? ["-l", "JavaScript"] : []
             default:
                 throw Error("This script type is unavailable on this platform: " script.Ext)
         }
@@ -234,6 +239,8 @@ class ScriptProvider {
                     continue
                 if !Platform.IsWindows && (ext = "bat" || ext = "cmd")
                     continue
+                if !Platform.IsMac && (ext = "applescript" || ext = "scpt" || ext = "jxa")
+                    continue
                 if IsObject(script := ScriptProvider.ReadScript(A_LoopFileFullPath))
                     scripts.Push(script)
             }
@@ -248,11 +255,13 @@ class ScriptProvider {
         SplitPath(path, &name, , &ext, &baseName)
         meta := Map("title", baseName, "keyword", "", "argument", "", "mode", "window")
         try {
-            Loop Read, path {
-                if (A_Index > 30)
-                    break
-                if RegExMatch(A_LoopReadLine, "i)^\s*(?:;|#|//|::|rem\b)\s*@altrun\.(\w+)\s+(.*?)\s*$", &m)
-                    meta[StrLower(m[1])] := m[2]
+            if (StrLower(ext) != "scpt") {
+                Loop Read, path {
+                    if (A_Index > 30)
+                        break
+                    if RegExMatch(A_LoopReadLine, "i)^\s*(?:;|#|//|--|::|rem\b)\s*@altrun\.(\w+)\s+(.*?)\s*$", &m)
+                        meta[StrLower(m[1])] := m[2]
+                }
             }
         } catch
             return ""

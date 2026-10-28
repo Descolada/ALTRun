@@ -77,7 +77,9 @@ Wayland 上的窗口置顶需要 Keysharp 桌面代理与合成器集成正常�
 
 macOS 可在 Finder 中双击 `ALTRun.command`，或运行 `./ALTRun.command`；它会查找相邻的 Keysharp 构建或已安装的 `Keysharp.app`，也可用 `KEYSHARP_BIN` 指定宿主。默认快捷键为 **Option+Space**；结果支持 **Command+1–9**、**Command+Enter** 和 **Command+,**，并保留原生文本编辑快捷键。支持本机应用名称与图标、Terminal/iTerm、Finder 定位、废纸篓、音量和系统工具。可选登录自启只管理自己的 LaunchAgent；最近文档使用主目录内近 90 天的 Spotlight 使用记录，在后台刷新。权限要求与验证步骤见 [macOS 安装说明](docs/wiki/Installation.md#macos-setup-and-verification)。
 
-Everything、Microsoft Store 索引、资源管理器/Total Commander 对话框快速跳转、Windows 输入法/CapsLock 集成、外壳属性/提权、Windows 开机启动和“发送到”快捷方式仍是 Windows 集成，在其它系统上会禁用。Linux/macOS 使用本地文件索引。脚本支持 `.ahk`/`.ks`、`.sh`、`.py`、`.ps1`，需要对应解释器；`.bat`/`.cmd` 仅限 Windows。通过脚本扩展启动源码脚本时，Keysharp 的编译器组件也必须保留。
+macOS 还支持异步 Spotlight 文件、内容及标签搜索、访达文件夹感知的终端和 Quick Switch、原生文件操作与共享、快速查看、Safari 书签导入、Apple 快捷指令、本地图像文字识别、输入源恢复、可访问结果列表及窗口布局操作。完整的 20 个偏好设置页面已恢复，包括片段导入导出、使用统计和数据迁移。详情见 [macOS 指南](docs/wiki/macOS.md) 和[独立应用与 DMG 构建工具](packaging/macos/README.md)。
+
+Everything、Microsoft Store 索引、资源管理器/Total Commander 接口、Windows IME 模式与提权 CapsLock 助手、Windows 外壳提权和启动快捷方式仍是各平台专用集成。Linux 使用本地文件索引，macOS 将其与 Spotlight 合并。脚本支持 `.ahk`/`.ks`、`.sh`、`.py`、`.ps1`；macOS 还支持 `.command`、AppleScript 和 JXA；`.bat`/`.cmd` 仅限 Windows。独立 macOS 应用包含 Keysharp 运行时及编译器组件。
 
 当前源码不能由 AutoHotkey v2/Ahk2Exe 运行或编译。现有 Windows 发布工作流和可下载的 AutoHotkey 可执行文件不包含这个 Keysharp 移植版。用 Keysharp 运行时只检查更新，不会用这些二进制文件替换自身；请从源码更新。数据位置和平台限制见[安装与升级](docs/wiki/Installation.md)。
 

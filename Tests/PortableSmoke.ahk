@@ -362,8 +362,9 @@ class PortableSmoke {
             titles[action.Title] := true
         PortableSmoke.Assert(titles.Has(I18n.T("Action.CopyFile")), "The file actions cannot copy portable files.")
         if !Platform.IsWindows {
-            for key in ["Action.CutFile", "Action.OpenWith", "Action.Properties", "Action.RunAsAdmin"]
+            for key in ["Action.CutFile", "Action.Properties", "Action.RunAsAdmin"]
                 PortableSmoke.Assert(!titles.Has(I18n.T(key)), "A Windows action was offered on a portable platform: " key)
+            PortableSmoke.Assert(titles.Has(I18n.T("Action.OpenWith")) = Platform.IsMac, "Open With availability did not follow native platform support.")
         }
         PortableSmoke.Assert(titles.Has(I18n.T("Action.Recycle")) = ActionCatalog.CanRecyclePath(PortableSmoke.File), "The trash action did not follow platform support.")
         AppSettings.Feature("LargeType")["Enabled"] := 0

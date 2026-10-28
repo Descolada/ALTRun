@@ -59,7 +59,7 @@ class WindowProvider {
         hwnd := window.Hwnd
         return ResultItem(window.Title, I18n.T("Win.Subtitle", window.Process), {
             Icon: (window.Path != "") ? window.Path : "res:imageres.dll,-102", Score: score, Exclusive: exclusive,
-            Uid: "window:" StrLower(window.Process), Arg: window.Title,
+            Uid: "window:" StrLower(window.Process), DedupeKey: "window:" hwnd, Arg: window.Title, TargetWindow: hwnd,
             OnRun: (*) => WindowProvider.Activate(hwnd),
             Actions: [ResultItem(I18n.T("Action.CloseWindow"), window.Title, {Icon: "res:imageres.dll,-98", OnRun: (*) => WindowProvider.Close(hwnd)})]
         })
@@ -131,13 +131,23 @@ class WindowProvider {
     }
 
     static Activate(hwnd) {
-        if !WinExist("ahk_id " hwnd)
-            return App.Notify(I18n.T("Win.Gone"))
+        hidden := A_DetectHiddenWindows
+        if Platform.IsMac
+            DetectHiddenWindows(true)
         try {
-            if (WinGetMinMax("ahk_id " hwnd) = -1)
-                WinRestore("ahk_id " hwnd)
+            if !WinExist("ahk_id " hwnd)
+                return App.Notify(I18n.T("Win.Gone"))
+            if Platform.IsMac
+                MacDesktop.Unhide(WinGetPID("ahk_id " hwnd))
+            try {
+                if (WinGetMinMax("ahk_id " hwnd) = -1)
+                    WinRestore("ahk_id " hwnd)
+            }
+            WinActivate("ahk_id " hwnd)
+        } finally {
+            if Platform.IsMac
+                DetectHiddenWindows(hidden)
         }
-        WinActivate("ahk_id " hwnd)
     }
 
     static Close(hwnd) {

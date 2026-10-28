@@ -436,9 +436,15 @@ class ClipboardProvider {
             return
         processName := ""
         try processName := WinGetProcessName("A")                          ; the foreground program at the time of copying
+        bundle := ""
+#if OSX
+        bundle := MacInputIntegration.FrontmostBundleId()
+        if (processName = "")
+            processName := MacInputIntegration.FrontmostProcessName()
+#endif
         if IsObject(ClipboardProvider._pending)
             ClipboardProvider._ReadPending()
-        ClipboardProvider._pending := {Type: dataType, App: processName}
+        ClipboardProvider._pending := {Type: dataType, App: processName, Bundle: bundle}
         if !IsObject(ClipboardProvider._readTimer)
             ClipboardProvider._readTimer := ObjBindMethod(ClipboardProvider, "_ReadPending")
         SetTimer(ClipboardProvider._readTimer, -ClipboardProvider.ReadDelay)
@@ -450,17 +456,18 @@ class ClipboardProvider {
         if IsObject(ClipboardProvider._readTimer)
             SetTimer(ClipboardProvider._readTimer, 0)
         if (IsObject(pending) && !ClipboardData.Borrowed())                 ; ALTRun borrowed the clipboard meanwhile: it now holds temporary content, not recorded
-            ClipboardProvider._Record(pending.Type, pending.App)
+            ClipboardProvider._Record(pending.Type, pending.App, pending.Bundle)
     }
 
-    static _Record(dataType, processName) {
+    static _Record(dataType, processName, bundle := "") {
         if ClipboardProvider.IsPrivate()
             return
         options := AppSettings.Feature("Clipboard")
         if (!Platform.IsWindows && processName = "" && options["IgnoreApps"].Length)
             return
         for ignored in options["IgnoreApps"]
-            if (processName = ignored || (!Platform.IsWindows && processName = RegExReplace(ignored, "i)\.exe$")))
+            if (processName = ignored || (!Platform.IsWindows && processName = RegExReplace(ignored, "i)\.exe$"))
+                || (bundle != "" && bundle = RegExReplace(Trim(ignored), "i)^bundle(?:id)?:\s*")))
                 return
         if (dataType = 1) {                                                 ; 1 = text (copied files too; the content is their paths)
             if ClipboardData.HasFiles()

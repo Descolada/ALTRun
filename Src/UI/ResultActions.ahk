@@ -20,9 +20,13 @@
 class ResultActions {
     ; The actions panel: the default action first, then the general actions for this kind of result, then the result's own actions
     static ListFor(item) {
+        if (item.Kind = "actions")
+            return item.Actions
         list := []
         add(titleKey, icon, fn, hint := "") => list.Push(ResultItem(I18n.T(titleKey), hint, {Icon: icon, OnRun: fn}))
         target := item.Arg
+        if Platform.IsMac && (item.Kind = "file" || item.Kind = "folder")
+            target := Path.Resolve(target)
         enter := "Enter"
         if (item.RunTitle != "" && IsObject(item.OnRun)) {                   ; the result's own default action (e.g. images in the clipboard history: paste)
             list.Push(ResultItem(item.RunTitle, "Enter", {Icon: item.Icon, OnRun: (*) => item.OnRun.Call(item)}))
@@ -37,7 +41,7 @@ class ResultActions {
                 if IsObject(editor := ActionCatalog.EditorFor(target))      ; the file type has an "Edit" verb (e.g. .ahk opens in an editor)
                     list.Push(ResultItem(I18n.T("Action.EditFile"), editor.Name (editor.Name != "" ? "  " : "") "Ctrl+E"
                         , {Icon: editor.Icon, OnRun: (*) => ActionCatalog.EditFile(target)}))
-                if (Platform.IsWindows && FileExist(target))
+                if ((Platform.IsWindows || Platform.IsMac) && FileExist(target))
                     add("Action.OpenWith", "res:shell32.dll,-3", (*) => ActionCatalog.OpenWith(target))   ; the generic program icon
                 add("Action.Reveal", "folder:", (*) => ActionCatalog.Reveal(target), "Ctrl+Enter")
                 add("Action.CopyPath", "res:imageres.dll,-5314", (*) => ActionCatalog.CopyText(target), "Alt+Enter")
@@ -46,6 +50,8 @@ class ResultActions {
                 add("Action.OpenTerminal", "res:imageres.dll,-5323", (*) => TerminalProvider.OpenAt(ActionCatalog.ParentDir(target)))
                 if (Platform.IsWindows && !ActionCatalog.IsShellItem(target))
                     add("Action.Properties", "res:imageres.dll,-81", (*) => ActionCatalog.ShowProperties(target))
+                if Platform.IsMac
+                    ResultActions._MacFileActions(list, target)
                 if ActionCatalog.CanRecyclePath(target)
                     add("Action.Recycle", "res:shell32.dll,-32", (*) => ActionCatalog.Recycle(target))
             case "folder":
@@ -56,14 +62,20 @@ class ResultActions {
                 ResultActions._FileActions(list, target)
                 if Platform.IsWindows
                     add("Action.Properties", "res:imageres.dll,-81", (*) => ActionCatalog.ShowProperties(target))
+                if Platform.IsMac
+                    ResultActions._MacFileActions(list, target)
                 if ActionCatalog.CanRecyclePath(target)
                     add("Action.Recycle", "res:shell32.dll,-32", (*) => ActionCatalog.Recycle(target))
             case "url":
                 add("Action.Open", "url:", (*) => ActionCatalog.OpenUrl(target), enter)
                 add("Action.CopyUrl", "res:imageres.dll,-5314", (*) => ActionCatalog.CopyText(target), "Alt+Enter")
+                if Platform.IsMac
+                    add("Action.Share", "url:", (*) => MacDesktop.Share([target]))
             case "text":
                 add("Action.Copy", "res:imageres.dll,-5314", (*) => ActionCatalog.CopyText(target), enter)
                 add("Action.Paste", "res:imageres.dll,-5314", (*) => ActionCatalog.PasteText(target), "Ctrl+Enter")
+                if Platform.IsMac
+                    add("Action.Share", "res:imageres.dll,-5314", (*) => MacDesktop.Share([target]))
             default:
                 add("Action.Run", item.Icon, (*) => ActionCatalog.RunDefault(item), enter)
         }
@@ -87,6 +99,15 @@ class ResultActions {
             add("Action.Pin", IconCache.Own("Pinned", "res:imageres.dll,-5303"), (*) => RecentProvider.Pin(item))
         if LargeType.Enabled()
             add("Action.LargeType", "res:imageres.dll,-183", (*) => LargeType.Show(item.DisplayText()), "Ctrl+L")
+        if Platform.IsMac {
+            if item.HasOwnProp("TargetWindow")
+                for action in MacDesktop.WindowActions(item.TargetWindow)
+                    list.Push(action)
+            if (item.Kind = "file" && RegExMatch(target, "i)\.(png|jpe?g|tiff?|bmp|gif|heic|webp)$"))
+                add("Mac.ExtractText", target, (*) => MacOcr.ExtractFile(target))
+            if (item.Kind ~= "^(file|folder|text|url)$" && ProviderRegistry.IsEnabled(ShortcutsProvider) && ShortcutsProvider.Items.Length)
+                add("Mac.RunShortcut", App.IconFile, (*) => ShortcutsProvider.ChooseFor(item))
+        }
         return list
     }
 
@@ -101,11 +122,17 @@ class ResultActions {
             add(I18n.T("Action.CutFiles", count), "res:imageres.dll,-5314", (*) => ActionCatalog.CopyFiles(paths, true), I18n.T("Action.CopyFile.Hint"))
         joined := TextTools.Join(paths)
         add(I18n.T("Action.CopyPaths", count), "res:imageres.dll,-5314", (*) => ActionCatalog.CopyText(joined))
-        manager := Platform.IsWindows ? QuickSwitch.FileManagerFolder() : ""
+        manager := (Platform.IsWindows || Platform.IsMac) ? QuickSwitch.FileManagerFolder() : ""
         destination := IsObject(manager) ? manager.Path : ""
         if (destination != "" && DirExist(destination)) {
             add(I18n.T("Action.CopyTo", manager.Tag), "folder:", (*) => ActionCatalog.CopyMany(paths, destination), destination)
             add(I18n.T("Action.MoveTo", manager.Tag), "folder:", (*) => ActionCatalog.CopyMany(paths, destination, true), destination)
+        }
+        if Platform.IsMac {
+            add(I18n.T("Action.CopyToFolder"), "folder:", (*) => MacDesktop.CopyMove(paths))
+            add(I18n.T("Action.MoveToFolder"), "folder:", (*) => MacDesktop.CopyMove(paths, "", true))
+            add(I18n.T("Action.QuickLook"), "file:", (*) => MacDesktop.QuickLook(paths))
+            add(I18n.T("Action.Share"), "file:", (*) => MacDesktop.Share(paths))
         }
         add(I18n.T("Action.AddAllCommands"), "res:imageres.dll,-2", (*) => CustomCommandProvider.AddFromPaths(paths))
         recycle := ActionCatalog.CanRecycle
@@ -193,5 +220,21 @@ class ResultActions {
             return
         list.Push(ResultItem(I18n.T("Action.CopyTo", manager.Tag), destination, {Icon: "folder:", OnRun: (*) => ActionCatalog.CopyTo(target, destination)}))
         list.Push(ResultItem(I18n.T("Action.MoveTo", manager.Tag), destination, {Icon: "folder:", OnRun: (*) => ActionCatalog.CopyTo(target, destination, true)}))
+    }
+
+    static _MacFileActions(list, target) {
+        if !FileExist(target)
+            return
+        add(key, callback, subtitle := "") => list.Push(ResultItem(I18n.T(key), subtitle, {Icon: "folder:", OnRun: callback}))
+        add("Action.GetInfo", (*) => MacDesktop.GetInfo(target))
+        add("Action.QuickLook", (*) => MacDesktop.QuickLook([target]))
+        add("Action.Share", (*) => MacDesktop.Share([target]))
+        add("Action.CopyToFolder", (*) => MacDesktop.CopyMove([target]))
+        add("Action.MoveToFolder", (*) => MacDesktop.CopyMove([target], "", true))
+        destination := MacDesktop.CurrentFolder(false)
+        if (destination != "" && DirExist(destination) && Platform.Identity(destination) != Platform.Identity(ActionCatalog.ParentDir(target))) {
+            add("Action.CopyToFinder", (*) => MacDesktop.CopyMove([target], destination), destination)
+            add("Action.MoveToFinder", (*) => MacDesktop.CopyMove([target], destination, true), destination)
+        }
     }
 }

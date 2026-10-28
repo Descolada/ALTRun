@@ -186,6 +186,12 @@ class TerminalProvider {
             return MsgBox(I18n.T("Sys.NoFolder"), App.Name, 48)
         TerminalProvider.OpenAt(folder)
 #else
+        if Platform.IsMac {
+            folder := MacDesktop.CurrentFolder()
+            if (folder = "")
+                return App.Notify(I18n.T("Mac.NoFinderFolder"))
+            return TerminalProvider.OpenAt(folder)
+        }
         return TerminalProvider.OpenAt(Platform.Home)
 #endif
     }

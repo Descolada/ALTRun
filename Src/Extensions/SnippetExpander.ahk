@@ -67,6 +67,10 @@ class SnippetExpander {
     static ShouldExpand() {
         if (IsObject(SearchWindow.Gui) && WinActive("ahk_id " SearchWindow.Gui.Hwnd))
             return false
+#if OSX
+        if (MacInputIntegration.IsSecureField() || MacInputIntegration.IsExcluded(SnippetExpander._exclude))
+            return false
+#endif
         for window in SnippetExpander._exclude
             try if WinActive(window)
                 return false

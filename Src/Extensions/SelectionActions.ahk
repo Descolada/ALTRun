@@ -29,6 +29,10 @@ class SelectionActions {
 
     ; The selection in the foreground window: {Files: [paths...]} / {Text: "..."}; "" when nothing is selected
     static Capture() {
+#if OSX
+        if MacInputIntegration.IsSecureField()
+            return ""
+#endif
         className := ""
         try className := WinGetClass("A")
         if (Platform.IsLinux && className = "")
@@ -95,7 +99,10 @@ class SelectionActions {
         for filePath in files
             joined .= (joined = "" ? "" : "`r`n") filePath
         actions := [ResultItem(I18n.T("Action.AddAllCommands"), "", {Icon: "res:imageres.dll,-2", OnRun: (*) => CustomCommandProvider.AddFromPaths(files)})]
-        return ResultItem(I18n.T("Selection.Files", files.Length), names, {Kind: "text", Arg: joined, Icon: "folder:", Provider: "Selection", Actions: actions})
+        if Platform.IsMac
+            actions := ResultActions.ListForMany(files)
+        return ResultItem(I18n.T("Selection.Files", files.Length), names, {Kind: Platform.IsMac ? "actions" : "text"
+            , Arg: joined, Icon: "folder:", Provider: "Selection", Actions: actions})
     }
 
     static _TextItem(text) {

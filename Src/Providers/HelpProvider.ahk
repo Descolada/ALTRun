@@ -18,11 +18,17 @@ class HelpProvider {
 
     ; Wiki page URL: the Chinese UI opens the Chinese page (Usage-zh), other languages the English page (Usage)
     static WikiPage(page, lang := I18n.Lang) {
+        if Platform.IsMac {
+            guide := Platform.Join(A_ScriptDir, "docs", "wiki", "macOS.md")
+            if FileExist(guide)
+                return ALTRunFileAddress(guide)
+            return "https://github.com/Descolada/ALTRun/blob/main/docs/wiki/macOS.md"
+        }
         return HelpProvider.WikiUrl page (SubStr(lang, 1, 2) = "zh" ? "-zh" : "")
     }
 
     static Entries() {
-        return [
+        entries := [
             ["Files"      , "FileSearch"    , "File-Search"],
             ["Folders"    , "FileSearch"    , "File-Search"],
             ["Recent"     , "FileSearch"    , "File-Search"],
@@ -61,6 +67,12 @@ class HelpProvider {
             ["CheckPaths" , "CustomCommands", "Custom-Commands"],
             ["Help"       , ""              , "Usage"]
         ]
+        if Platform.IsMac {
+            entries.Push(["Shortcuts", "Shortcuts", "macOS"])
+            entries.Push(["Spotlight", "FileSearch", "macOS"])
+            entries.Push(["QuickLook", "FileSearch", "macOS"])
+        }
+        return entries
     }
 
     ; Entries to show with the current settings: [{Id, Key, Text, Url}...]
@@ -82,6 +94,20 @@ class HelpProvider {
             textId := (entry[1] = "Tab" && AppSettings.General["TabKey"] = "Next") ? "TabNext" : entry[1]   ; the Tab tip follows the Tab key setting
             items.Push({Id: entry[1], Key: I18n.T("Help." textId ".Key", HelpProvider._Args(entry[1])*)
                       , Text: I18n.T("Help." textId ".Text"), Url: HelpProvider.WikiPage(entry[3])})
+            if Platform.IsMac {
+                item := items[items.Length]
+                switch entry[1] {
+                    case "Reveal": item.Key := Win.HotkeyLabel("#Enter")
+                    case "Prefs": item.Key := "F2 / " Win.HotkeyLabel("#,")
+                    case "Number": item.Key := Win.HotkeyLabel("#1") "–" Win.HotkeyLabel("#9")
+                    case "LargeType": item.Key := Win.HotkeyLabel("#l")
+                    case "EditFile": item.Key := Win.HotkeyLabel("#e")
+                    case "Copy": item.Key := Win.HotkeyLabel("!Enter")
+                    case "Browse": item.Key := "/Users/ / ~/ / /Volumes/"
+                    case "Scripts": item.Key := "Scripts/", item.Text := I18n.T("Help.MacScripts.Text")
+                    case "QuickSwitch": item.Text := I18n.T("Help.MacQuickSwitch.Text")
+                }
+            }
         }
         return items
     }
@@ -146,6 +172,7 @@ class HelpProvider {
             case "Terminal":    return [AppSettings.Feature("Terminal")["Prefix"]]
             case "Bookmarks":   return [AppSettings.Feature("Bookmarks")["Keyword"]]
             case "Windows":     return [AppSettings.Feature("Windows")["Keyword"]]
+            case "Shortcuts":   return [AppSettings.Feature("Shortcuts")["Keyword"]]
             case "Selection":   return [Win.HotkeyLabel(AppSettings.General["SelectionHotkey"])]
             case "WebSearch":
                 engines := AppSettings.Feature("WebSearch")["Engines"]

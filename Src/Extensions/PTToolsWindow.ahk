@@ -128,15 +128,15 @@ Class PTToolsWindow {
     ; PT Tools window - Rebar Area / Rebar Qty Required / BRC Area / Expression
     ; ===================================================================
     static Show() {
-        if WinExist("PT Tools") {
-            WinActivate("PT Tools")
+        if IsObject(PTToolsWindow.G) {
+            PTToolsWindow.G.Show()
             return
         }
 
         S := PTToolsWindow.Settings
         g := Gui("+AlwaysOnTop", "PT Tools")
         PTToolsWindow.G := g
-        g.SetFont("s10", "Segoe UI")                                        ; the Windows UI font: clearer English and digits
+        g.SetFont("s10" (Platform.IsWindows ? "" : " c" ThemeManager.Get("Title")), Platform.IsWindows ? "Segoe UI" : ThemeManager.FontName())
         g.OnEvent("Close", (p*) => PTToolsWindow.OnClose(p*))
 
         rebarRight    := PTToolsWindow.BuildRebarAreaGroup(g, S, 20)
@@ -150,11 +150,14 @@ Class PTToolsWindow {
         ; (see the note on ComboFields at the top of the class).
         g["RebarBarDiameter"].Text := S["RebarBarDiameter"]
         g["RequiredBarDiameter"].Text := S["RequiredBarDiameter"]
+#if WINDOWS
         for name in ["RebarBarDiameter", "RequiredBarDiameter"]             ; the edit box inside the combo box is right-aligned too (ES_RIGHT), like the other numbers
             try ControlSetStyle("+0x2", DllCall("FindWindowEx", "Ptr", g[name].Hwnd, "Ptr", 0, "Str", "Edit", "Ptr", 0, "Ptr"))
+#endif
 
         PTToolsWindow.SetupHotkeys()
         PTToolsWindow.SetupInputs(g)
+        PTToolsWindow.StylePortable(g)
 
         g.Show("x" S["WinLeft"] " y" S["WinTop"] " AutoSize")
 
@@ -168,16 +171,17 @@ Class PTToolsWindow {
         if PTToolsWindow.HotkeysReady
             return
         PTToolsWindow.HotkeysReady := true
-        HotIfWinActive("PT Tools")                                        ; Enter / numpad Enter = move to next field, same as the old tool
+        HotIf((*) => PTToolsWindow.IsActive(PTToolsWindow.G))
         Hotkey("Enter", (*) => SendInput("{Tab}"))
         Hotkey("NumpadEnter", (*) => SendInput("{Tab}"))
-        HotIfWinActive()
+        HotIf()
     }
 
     ; Input and result boxes: a little margin on both sides, so a right-aligned caret doesn't touch the digits;
     ; clicking into an input box selects all (tabbing / Enter in already selects all in Windows), so a new number can just be typed.
     ; Select all with PostMessage: after the mouse-down handling (placing the caret at the click) is done
     static SetupInputs(g) {
+#if WINDOWS
         margin := Round(4 * A_ScreenDPI / 96), margins := (margin << 16) | margin
         for ctrl in g {
             if (ctrl.Type != "Edit" && ctrl.Type != "ComboBox")
@@ -190,7 +194,28 @@ Class PTToolsWindow {
             else if !(ControlGetStyle(ctrl) & 0x800)                        ; ES_READONLY result boxes don't need select-all
                 ctrl.OnEvent("Focus", (c, *) => PostMessage(0xB1, 0, -1, c))   ; EM_SETSEL 0, -1
         }
+#else
+        for ctrl in g
+            if (ctrl.Type = "Edit" || ctrl.Type = "ComboBox")
+                ctrl.OnEvent("Focus", (c, *) => Platform.SelectEdit(c, 0, -1))
+#endif
     }
+
+    static StylePortable(g) {
+        if Platform.IsWindows
+            return
+        palette := PreferencesWindow.Colors()
+        g.BackColor := palette["Background"]
+        for ctrl in g {
+            if (ctrl.Type = "Edit" || ctrl.Type = "ComboBox" || ctrl.Type = "DropDownList")
+                ctrl.Opt("Background" palette["Surface"] " c" palette["InputText"])
+            else
+                ctrl.Opt("c" palette["Text"])
+            PreferencesWindow.StyleNative(ctrl, ctrl.Type, palette)
+        }
+    }
+
+    static IsActive(g) => IsObject(g) && (Platform.IsWindows ? WinActive("ahk_id " g.Hwnd) : g.ToClr().HasFocus)
 
     static OnClose(GuiObj) {
         PTToolsWindow.Save()
@@ -232,7 +257,7 @@ Class PTToolsWindow {
         if InStr(opts, "ReadOnly")                                          ; Result boxes: Tab / Enter skip them; they can still be selected with the mouse to copy
             opts .= " -Tabstop"
         g.AddText("x" x " y" (y + 3), label)
-        return g.AddEdit("x" editX " y" y " w" w " r1 " opts " v" name, value)
+        return g.AddEdit("x" editX " y" y " w" w " r1 " opts " v" name, value "")
     }
 
     static BuildRebarAreaGroup(g, S, x0) {
@@ -275,7 +300,7 @@ Class PTToolsWindow {
         ; by default so it never silently changes a result the user didn't ask for.
         g.AddCheckBox("x" labelX " y157 w130 -Tabstop vSafetyFactorEnabled Checked" S["SafetyFactorEnabled"], "Safety Factor")
             .OnEvent("Click", (p*) => PTToolsWindow.OnSafetyFactorToggled(p*))
-        g.AddEdit("x" editX " y155 w" PTToolsWindow.RebarFieldW " r1 Right vSafetyFactor", S["SafetyFactor"])
+        g.AddEdit("x" editX " y155 w" PTToolsWindow.RebarFieldW " r1 Right vSafetyFactor", S["SafetyFactor"] "")
             .OnEvent("Change", (p*) => PTToolsWindow.OnRequiredFieldChanged(p*))
 
         PTToolsWindow.Field(g, labelX, editX, 195, PTToolsWindow.RebarFieldW, "Number of Bars", "RequiredBarCount", S["RequiredBarCount"], "ReadOnly Right")
@@ -412,21 +437,22 @@ Class PTToolsWindow {
     ; The parameters used to be typed into SPF2M.EXE in DOSBox automatically; now TendonProfile calculates directly (with results
     ; identical to SPF2M, see TendonProfile.ahk), and changing any input updates the table on the right at once.
     static ShowSpf2m() {
-        if WinExist(PTToolsWindow.Spf2mTitle " ahk_class AutoHotkeyGUI") {
-            WinActivate()
+        if IsObject(PTToolsWindow.SpfG) {
+            PTToolsWindow.SpfG.Show()
             return
         }
 
         S := PTToolsWindow.Settings
         g := Gui("+AlwaysOnTop", PTToolsWindow.Spf2mTitle)
         PTToolsWindow.SpfG := g
-        g.SetFont("s9", "Microsoft YaHei")
+        g.SetFont("s9" (Platform.IsWindows ? "" : " c" ThemeManager.Get("Title")), Platform.IsWindows ? "Microsoft YaHei" : ThemeManager.FontName())
         g.OnEvent("Close", (p*) => PTToolsWindow.OnCloseSpf2m(p*))
 
         right := PTToolsWindow.BuildProfileGroup(g, S, 20)
         PTToolsWindow.BuildResultGroup(g, right + 10)
         PTToolsWindow.SetupSpf2mHotkeys()
         PTToolsWindow.SetupInputs(g)
+        PTToolsWindow.StylePortable(g)
         PTToolsWindow.OnTendonChanged()                                    ; the hints for minimum radius / duct diameter follow the strand type
         g.Show("x" S["Spf2mWinLeft"] " y" S["Spf2mWinTop"] " AutoSize")
     }
@@ -435,10 +461,10 @@ Class PTToolsWindow {
         if PTToolsWindow.Spf2mHotkeysReady
             return
         PTToolsWindow.Spf2mHotkeysReady := true
-        HotIfWinActive(PTToolsWindow.Spf2mTitle " ahk_class AutoHotkeyGUI")                    ; Enter / numpad Enter = move to next field, same as PT Tools
+        HotIf((*) => PTToolsWindow.IsActive(PTToolsWindow.SpfG))
         Hotkey("Enter", (*) => SendInput("{Tab}"))
         Hotkey("NumpadEnter", (*) => SendInput("{Tab}"))
-        HotIfWinActive()
+        HotIf()
     }
 
     static OnCloseSpf2m(GuiObj) {
@@ -503,7 +529,7 @@ Class PTToolsWindow {
         PTToolsWindow.Field(g, labelX, editX, 235, PTToolsWindow.ProfileFieldW, "Min. Radius of Curvature (mm)", "MinRadius", S["MinRadius"]).OnEvent("Change", recalc)
         PTToolsWindow.Field(g, labelX, editX, 270, PTToolsWindow.ProfileFieldW, "Point of Contraflexure (mm)", "Contraflexure", S["Contraflexure"]).OnEvent("Change", recalc)
         PTToolsWindow.Field(g, labelX, editX, 305, fullW, "Support Intervals (mm)", "SupportIntervals", S["SupportIntervals"]).OnEvent("Change", recalc)
-        Win.SetCueBanner(g["SupportIntervals"].Hwnd, "auto: max. 1000")
+        g["SupportIntervals"].SetCue("auto: max. 1000")
         PTToolsWindow.Field(g, labelX, editX, 340, PTToolsWindow.ProfileFieldW, "Duct Dia. for At C.G. (mm)", "DuctDia", "").OnEvent("Change", recalc)
         g.SetFont("s8 cGray")
         g.AddText("x" labelX " y378 w" (w - 30) " h" (PTToolsWindow.GroupH - 370), "Empty fields use the SPF2M defaults (in gray). Intervals: e.g. 500, 1500, 800 ... must add up to the distance. Distances are from the high end.")
@@ -538,8 +564,8 @@ Class PTToolsWindow {
             S[PTToolsWindow.DuctDiaKey(lastTendon)] := g["DuctDia"].Value
         lastTendon := tendon
         g["DuctDia"].Value := S[PTToolsWindow.DuctDiaKey(tendon)]
-        Win.SetCueBanner(g["MinRadius"].Hwnd, TendonProfile.DefaultRadius(tendon))
-        Win.SetCueBanner(g["DuctDia"].Hwnd, TendonProfile.DefaultDuctDiameter(tendon))
+        g["MinRadius"].SetCue(TendonProfile.DefaultRadius(tendon))
+        g["DuctDia"].SetCue(TendonProfile.DefaultDuctDiameter(tendon))
         PTToolsWindow.Recalculate()
     }
 
@@ -582,7 +608,7 @@ Class PTToolsWindow {
         g["ResultSummary"].Visible := (result.Error = "")
         g["ResultError"].Value := result.Error
         g["ResultSummary"].Value := PTToolsWindow.ProfileSummary(result)
-        Win.SetCueBanner(g["Contraflexure"].Hwnd, (result.Error = "" && !result.RadiusChanged) ? Integer(result.Contraflexure) : "")
+        g["Contraflexure"].SetCue((result.Error = "" && !result.RadiusChanged) ? Integer(result.Contraflexure) : "")
     }
 
     static ProfileSummary(result) {
