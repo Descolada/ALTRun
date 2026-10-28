@@ -5,11 +5,10 @@ private static class ALTRunVisionNative
 {
     [System.Runtime.InteropServices.DllImport("/usr/lib/libobjc.A.dylib")] internal static extern nint objc_autoreleasePoolPush();
     [System.Runtime.InteropServices.DllImport("/usr/lib/libobjc.A.dylib")] internal static extern void objc_autoreleasePoolPop(nint pool);
-    [System.Runtime.InteropServices.DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")] internal static extern nint Two(nint target, nint selector, nint first, nint second);
     [System.Runtime.InteropServices.DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")] internal static extern byte Perform(nint target, nint selector, nint requests, out nint error);
 }
 private static System.Threading.Tasks.Task<string> ALTRunVisionTask;
-public static object ALTRunVisionStart(string Filename)
+public static void ALTRunVisionStart(string Filename)
 {
     if (ALTRunVisionTask is { IsCompleted: false }) throw new System.InvalidOperationException("Text recognition is already running.");
     ALTRunVisionTask = System.Threading.Tasks.Task.Run(() => {
@@ -24,7 +23,7 @@ public static object ALTRunVisionStart(string Filename)
             request = Send(Send(Class("VNRecognizeTextRequest"), "alloc"), "init");
             if (request == 0) throw new System.InvalidOperationException("Vision text recognition is unavailable.");
             nint url = ALTRunMacDesktopNative.Arg(Class("NSURL"), Sel("fileURLWithPath:"), ALTRunMacDesktopNative.Text(Filename));
-            handler = ALTRunVisionNative.Two(Send(Class("VNImageRequestHandler"), "alloc"), Sel("initWithURL:options:"), url, Send(Class("NSDictionary"), "dictionary"));
+            handler = ALTRunMacDesktopNative.Two(Send(Class("VNImageRequestHandler"), "alloc"), Sel("initWithURL:options:"), url, Send(Class("NSDictionary"), "dictionary"));
             nint requests = ALTRunMacDesktopNative.Array(Class("NSArray"), Sel("arrayWithObjects:count:"), new[] { request }, 1);
             nint error = 0;
             if (handler == 0 || ALTRunVisionNative.Perform(handler, Sel("performRequests:error:"), requests, out error) == 0)
@@ -51,7 +50,6 @@ public static object ALTRunVisionStart(string Filename)
             if (pool != 0) ALTRunVisionNative.objc_autoreleasePoolPop(pool);
         }
     });
-    return null;
 }
 public static string ALTRunVisionPoll() => ALTRunVisionTask is { IsCompletedSuccessfully: true } task ? task.Result : "";
 public static string ALTRunOcrTemporaryFile()
@@ -63,15 +61,14 @@ public static string ALTRunOcrTemporaryFile()
         UnixCreateMode = System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserWrite });
     return file;
 }
-public static object ALTRunOcrDeleteTemporary(string Filename)
+public static void ALTRunOcrDeleteTemporary(string Filename)
 {
-    if (string.IsNullOrEmpty(Filename)) return null;
+    if (string.IsNullOrEmpty(Filename)) return;
     if (System.IO.File.Exists(Filename)) System.IO.File.Delete(Filename);
     string directory = System.IO.Path.GetDirectoryName(Filename);
     if (System.IO.Path.GetFileName(directory).StartsWith("ALTRun-ocr-", System.StringComparison.Ordinal)
         && System.IO.Path.GetDirectoryName(directory) == System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetTempPath()))
         try { System.IO.Directory.Delete(directory); } catch (System.IO.IOException) { }
-    return null;
 }
 #EndCSharp
 
@@ -100,13 +97,12 @@ class MacOcr {
             return App.Notify("Copy an image first.")
         file := ALTRunOcrTemporaryFile()
         try {
-            if ClipboardData.SaveImage(file)
-                return MacOcr.ExtractFile(file, true)
-            ALTRunOcrDeleteTemporary(file)
-            return App.Notify("Could not read the clipboard image.")
-        } catch {
-            ALTRunOcrDeleteTemporary(file)
-            throw
+            if !ClipboardData.SaveImage(file)
+                return App.Notify("Could not read the clipboard image.")
+            return MacOcr.ExtractFile(file, true)
+        } finally {
+            if MacOcr._temporary != file
+                ALTRunOcrDeleteTemporary(file)
         }
     }
 
@@ -114,11 +110,7 @@ class MacOcr {
         text := ALTRunVisionPoll()
         if text = ""
             return
-        SetTimer(MacOcr._timer, 0)
-        MacOcr.Busy := false
-        if MacOcr._temporary != ""
-            try ALTRunOcrDeleteTemporary(MacOcr._temporary)
-        MacOcr._temporary := ""
+        MacOcr.Stop()
         result := JSON.Parse(text)
         if result["Error"] != ""
             return App.Notify(result["Error"], 4000)

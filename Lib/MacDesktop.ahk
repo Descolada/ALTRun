@@ -6,7 +6,7 @@ class MacDesktop {
         if !Platform.IsMac
             return
         MacDesktop.Refresh()
-        MacDesktop._timer := (*) => MacDesktop._RefreshIfIdle()
+        MacDesktop._timer := (*) => BackgroundWork.CanRun() ? MacDesktop.Refresh() : ""
         SetTimer(MacDesktop._timer, 5000)
     }
 
@@ -28,56 +28,45 @@ class MacDesktop {
 #endif
     }
 
-    static _RefreshIfIdle() {
-        if BackgroundWork.CanRun()
-            MacDesktop.Refresh()
-    }
-
     static Refresh(requestPermission := false) {
 #if OSX
         ALTRunMacFinderRefresh(requestPermission)
 #endif
     }
 
-    static Snapshot() {
+    ; Only explicit commands wait for a fresh Finder read; menus use the last cached snapshot.
+    static Snapshot(refresh := false) {
 #if OSX
-        return JSON.Parse(ALTRunMacFinderSnapshot())
+        if refresh {
+            MacDesktop.Refresh(true)
+            started := A_TickCount
+            while (ALTRunMacFinderPending() && A_TickCount - started < 2000)
+                Sleep(15)
+        }
+        snapshot := JSON.Parse(ALTRunMacFinderSnapshot())
+        if refresh && (snapshot["Pending"] || snapshot["Error"] != "")
+            snapshot["Folder"] := "", snapshot["Selection"] := [], snapshot["Folders"] := []
+        return snapshot
 #else
         return Map("Folder", "", "Selection", [], "Folders", [], "Error", "", "Pending", false)
 #endif
     }
 
-    ; Explicit commands may wait briefly for a fresh Finder read; building menus never waits.
-    static _Read(refresh) {
-        if refresh {
-            MacDesktop.Refresh(true)
-            started := A_TickCount
-            while (MacDesktop.Snapshot()["Pending"] && A_TickCount - started < 2000)
-                Sleep(15)
-        }
-        snapshot := MacDesktop.Snapshot()
-        if refresh && (snapshot["Pending"] || snapshot["Error"] != "")
-            return Map("Folder", "", "Selection", [], "Folders", [], "Error", snapshot["Error"], "Pending", snapshot["Pending"])
-        return snapshot
-    }
-
-    static CurrentFolder(refresh := true) => MacDesktop._Read(refresh)["Folder"]
-    static Selection(refresh := true) => MacDesktop._Read(refresh)["Selection"]
+    static CurrentFolder(refresh := true) => MacDesktop.Snapshot(refresh)["Folder"]
+    static Selection(refresh := true) => MacDesktop.Snapshot(refresh)["Selection"]
 
     static Folders() {
         folders := [], seen := Map()
-        for folder in MacDesktop.Snapshot()["Folders"] {
+        add(folder, group, tag) {
             if (folder != "" && !seen.Has(folder) && DirExist(folder)) {
                 seen[folder] := true
-                folders.Push({Path: folder, Group: "open", Tag: "Finder"})
+                folders.Push({Path: folder, Group: group, Tag: tag})
             }
         }
-        for folder in QuickSwitch.RecentFolders(QuickSwitch.Options.Has("RecentFolders") ? QuickSwitch.Options["RecentFolders"] : 10) {
-            if (!seen.Has(folder) && DirExist(folder)) {
-                seen[folder] := true
-                folders.Push({Path: folder, Group: "recent", Tag: I18n.T("QuickSwitch.TagRecent")})
-            }
-        }
+        for folder in MacDesktop.Snapshot()["Folders"]
+            add(folder, "open", "Finder")
+        for folder in QuickSwitch.RecentFolders(QuickSwitch.Options.Has("RecentFolders") ? QuickSwitch.Options["RecentFolders"] : 10)
+            add(folder, "recent", I18n.T("QuickSwitch.TagRecent"))
         return folders
     }
 
@@ -101,10 +90,10 @@ class MacDesktop {
         index := MacDesktop._jobs.Length
         while index > 0 {
             job := MacDesktop._jobs[index]
-            if (ProcessRunner.IsFinished(job.Process) || A_TickCount - job.Started > 125000) {
+            if ((finished := ProcessRunner.IsFinished(job.Process)) || A_TickCount - job.Started > 125000) {
                 MacDesktop._jobs.RemoveAt(index)
                 try {
-                    output := ProcessRunner.Finish(job.Process, !ProcessRunner.IsFinished(job.Process))
+                    output := ProcessRunner.Finish(job.Process, !finished)
                     if (Trim(output) != "")
                         App.Notify(job.Title ": " Trim(output), 5000)
                 } catch as e {
@@ -325,18 +314,7 @@ class MacDesktop {
         }
 #endif
         WinGetPos(&x, &y, &width, &height, "ahk_id " hwnd)
-        area := ""
-        Loop MonitorGetCount() {
-            MonitorGetWorkArea(A_Index, &left, &top, &right, &bottom)
-            if (x + width / 2 >= left && x + width / 2 < right && y + height / 2 >= top && y + height / 2 < bottom) {
-                area := {Left: left, Top: top, Right: right, Bottom: bottom}
-                break
-            }
-        }
-        if !IsObject(area) {
-            MonitorGetWorkArea(MonitorGetPrimary(), &left, &top, &right, &bottom)
-            area := {Left: left, Top: top, Right: right, Bottom: bottom}
-        }
+        area := Win.WorkAreaAt(x + width / 2, y + height / 2)
         availableW := area.Right - area.Left, availableH := area.Bottom - area.Top
         switch operation {
             case "Center":
@@ -364,6 +342,7 @@ private static class ALTRunMacDesktopNative
     [System.Runtime.InteropServices.DllImport(ObjC, EntryPoint="sel_registerName")] internal static extern nint Sel(string name);
     [System.Runtime.InteropServices.DllImport(ObjC, EntryPoint="objc_msgSend")] internal static extern nint Send(nint target, nint selector);
     [System.Runtime.InteropServices.DllImport(ObjC, EntryPoint="objc_msgSend")] internal static extern nint Arg(nint target, nint selector, nint value);
+    [System.Runtime.InteropServices.DllImport(ObjC, EntryPoint="objc_msgSend")] internal static extern nint Two(nint target, nint selector, nint first, nint second);
     [System.Runtime.InteropServices.DllImport(ObjC, EntryPoint="objc_msgSend")] internal static extern nint StringArg(nint target, nint selector, [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string value);
     [System.Runtime.InteropServices.DllImport(ObjC, EntryPoint="objc_msgSend")] internal static extern void Bool(nint target, nint selector, byte value);
     [System.Runtime.InteropServices.DllImport(ObjC, EntryPoint="objc_msgSend")] internal static extern nint Array(nint target, nint selector, nint[] values, nuint count);
@@ -383,6 +362,8 @@ private static class ALTRunMacDesktopNative
     [System.Runtime.InteropServices.DllImport("/usr/lib/libSystem.B.dylib",EntryPoint="realpath")] internal static extern nint RealPath([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string path,nint resolved);
     [System.Runtime.InteropServices.DllImport("/usr/lib/libSystem.B.dylib",EntryPoint="free")] internal static extern void Free(nint value);
     internal static nint Text(string value) => StringArg(Class("NSString"),Sel("stringWithUTF8String:"),value);
+    internal static nint Send(nint target,string selector) => Send(target,Sel(selector));
+    internal static nint Arg(nint target,string selector,nint value) => Arg(target,Sel(selector),value);
     internal static string String(nint value) => value == 0 ? "" : System.Runtime.InteropServices.Marshal.PtrToStringUTF8(Send(value,Sel("UTF8String"))) ?? "";
     internal static nint Get(nint element,string name) => AXUIElementCopyAttributeValue(element,Text(name),out var value)==0 ? value : 0;
     internal static string Attribute(nint element,string name) { var value=Get(element,name); if(value==0)return ""; try{return String(value);}finally{CFRelease(value);} }
@@ -433,6 +414,7 @@ public static void ALTRunMacFinderRefresh(bool requestPermission)
     });
 }
 public static string ALTRunMacFinderSnapshot() { lock(ALTRunMacFinderLock)return System.Text.Json.JsonSerializer.Serialize(ALTRunMacFinder); }
+public static bool ALTRunMacFinderPending() { lock(ALTRunMacFinderLock)return ALTRunMacFinder.Pending; }
 public static bool ALTRunMacFinderActive() => ALTRunMacDesktopNative.FinderActive();
 public static long ALTRunMacFrontPid() => ALTRunMacDesktopNative.FrontPid();
 public static bool ALTRunMacTransferAllowed(string source,string destination)
@@ -456,16 +438,16 @@ public static bool ALTRunMacApplicationAction(long pid,string action)
 }
 private static bool ALTRunMacApplicationActionOnUi(long pid,string action)
 {
-    nint app=ALTRunMacDesktopNative.Arg(ALTRunMacDesktopNative.Class("NSRunningApplication"),ALTRunMacDesktopNative.Sel("runningApplicationWithProcessIdentifier:"),(nint)pid);
+    nint app=ALTRunMacDesktopNative.Arg(ALTRunMacDesktopNative.Class("NSRunningApplication"),"runningApplicationWithProcessIdentifier:",(nint)pid);
     if(action is not ("Hide" or "Show" or "Quit"))return false;
     string selector=action=="Hide"?"hide":action=="Show"?"unhide":"terminate";
-    if(app!=0 && ALTRunMacDesktopNative.Send(app,ALTRunMacDesktopNative.Sel(selector))!=0)return true;
+    if(app!=0 && ALTRunMacDesktopNative.Send(app,selector)!=0)return true;
     if(action=="Quit")return false;
     nint accessible=ALTRunMacDesktopNative.AXUIElementCreateApplication((int)pid);
     if(accessible==0)return false;
     try {
         ALTRunMacDesktopNative.AXUIElementSetMessagingTimeout(accessible,0.15f);
-        nint hidden=ALTRunMacDesktopNative.Arg(ALTRunMacDesktopNative.Class("NSNumber"),ALTRunMacDesktopNative.Sel("numberWithBool:"),action=="Hide"?1:0);
+        nint hidden=ALTRunMacDesktopNative.Arg(ALTRunMacDesktopNative.Class("NSNumber"),"numberWithBool:",action=="Hide"?1:0);
         return ALTRunMacDesktopNative.AXUIElementSetAttributeValue(accessible,ALTRunMacDesktopNative.Text("AXHidden"),hidden)==0;
     } finally { ALTRunMacDesktopNative.CFRelease(accessible); }
 }
@@ -477,16 +459,16 @@ public static string ALTRunMacChooseApplication()
 }
 private static string ALTRunMacChooseApplicationOnUi()
 {
-    var panel=ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Class("NSOpenPanel"),ALTRunMacDesktopNative.Sel("openPanel"));
+    var panel=ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Class("NSOpenPanel"),"openPanel");
     ALTRunMacDesktopNative.Bool(panel,ALTRunMacDesktopNative.Sel("setCanChooseFiles:"),1);
     ALTRunMacDesktopNative.Bool(panel,ALTRunMacDesktopNative.Sel("setCanChooseDirectories:"),0);
     ALTRunMacDesktopNative.Bool(panel,ALTRunMacDesktopNative.Sel("setAllowsMultipleSelection:"),0);
     var types=ALTRunMacDesktopNative.Array(ALTRunMacDesktopNative.Class("NSArray"),ALTRunMacDesktopNative.Sel("arrayWithObjects:count:"),[ALTRunMacDesktopNative.Text("app")],1);
-    ALTRunMacDesktopNative.Arg(panel,ALTRunMacDesktopNative.Sel("setAllowedFileTypes:"),types);
-    var url=ALTRunMacDesktopNative.Arg(ALTRunMacDesktopNative.Class("NSURL"),ALTRunMacDesktopNative.Sel("fileURLWithPath:"),ALTRunMacDesktopNative.Text("/Applications"));
-    ALTRunMacDesktopNative.Arg(panel,ALTRunMacDesktopNative.Sel("setDirectoryURL:"),url);
-    if(ALTRunMacDesktopNative.Send(panel,ALTRunMacDesktopNative.Sel("runModal"))!=1)return "";
-    return ALTRunMacDesktopNative.String(ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Send(panel,ALTRunMacDesktopNative.Sel("URL")),ALTRunMacDesktopNative.Sel("path")));
+    ALTRunMacDesktopNative.Arg(panel,"setAllowedFileTypes:",types);
+    var url=ALTRunMacDesktopNative.Arg(ALTRunMacDesktopNative.Class("NSURL"),"fileURLWithPath:",ALTRunMacDesktopNative.Text("/Applications"));
+    ALTRunMacDesktopNative.Arg(panel,"setDirectoryURL:",url);
+    if(ALTRunMacDesktopNative.Send(panel,"runModal")!=1)return "";
+    return ALTRunMacDesktopNative.String(ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Send(panel,"URL"),ALTRunMacDesktopNative.Sel("path")));
 }
 private static nint ALTRunMacSharePicker;
 public static void ALTRunMacShare(Keysharp.Builtins.Ks.Clr.ManagedInstance wrapper,string json)
@@ -498,21 +480,15 @@ private static void ALTRunMacShareOnUi(Keysharp.Builtins.Ks.Clr.ManagedInstance 
     var values=new System.Collections.Generic.List<nint>();
     foreach(string item in System.Text.Json.JsonSerializer.Deserialize<string[]>(json) ?? []) {
         nint value=ALTRunMacDesktopNative.Text(item);
-        if(System.IO.Path.IsPathRooted(item) && (System.IO.File.Exists(item)||System.IO.Directory.Exists(item)))value=ALTRunMacDesktopNative.Arg(ALTRunMacDesktopNative.Class("NSURL"),ALTRunMacDesktopNative.Sel("fileURLWithPath:"),value);
-        else if(System.Uri.TryCreate(item,System.UriKind.Absolute,out var uri) && uri.Scheme is "http" or "https")value=ALTRunMacDesktopNative.Arg(ALTRunMacDesktopNative.Class("NSURL"),ALTRunMacDesktopNative.Sel("URLWithString:"),value);
+        if(System.IO.Path.IsPathRooted(item) && (System.IO.File.Exists(item)||System.IO.Directory.Exists(item)))value=ALTRunMacDesktopNative.Arg(ALTRunMacDesktopNative.Class("NSURL"),"fileURLWithPath:",value);
+        else if(System.Uri.TryCreate(item,System.UriKind.Absolute,out var uri) && uri.Scheme is "http" or "https")value=ALTRunMacDesktopNative.Arg(ALTRunMacDesktopNative.Class("NSURL"),"URLWithString:",value);
         values.Add(value);
     }
     var array=ALTRunMacDesktopNative.Array(ALTRunMacDesktopNative.Class("NSArray"),ALTRunMacDesktopNative.Sel("arrayWithObjects:count:"),values.ToArray(),(nuint)values.Count);
-    if(ALTRunMacSharePicker!=0)ALTRunMacDesktopNative.Send(ALTRunMacSharePicker,ALTRunMacDesktopNative.Sel("release"));
-    ALTRunMacSharePicker=ALTRunMacDesktopNative.Arg(ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Class("NSSharingServicePicker"),ALTRunMacDesktopNative.Sel("alloc")),ALTRunMacDesktopNative.Sel("initWithItems:"),array);
-    var view=ALTRunMacDesktopNative.Send(window,ALTRunMacDesktopNative.Sel("contentView"));
+    if(ALTRunMacSharePicker!=0)ALTRunMacDesktopNative.Send(ALTRunMacSharePicker,"release");
+    ALTRunMacSharePicker=ALTRunMacDesktopNative.Arg(ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Class("NSSharingServicePicker"),"alloc"),ALTRunMacDesktopNative.Sel("initWithItems:"),array);
+    var view=ALTRunMacDesktopNative.Send(window,"contentView");
     ALTRunMacDesktopNative.Picker(ALTRunMacSharePicker,ALTRunMacDesktopNative.Sel("showRelativeToRect:ofView:preferredEdge:"),new ALTRunMacRect { X=20,Y=20,Width=180,Height=30 },view,1);
-}
-public static string ALTRunMacSavedSearch(string term,string folder)
-{
-    string escaped=term.Replace("\\","\\\\").Replace("\"","\\\"").Replace("*","\\*").Replace("?","\\?");
-    string query="(kMDItemFSName == \"*"+escaped+"*\"cd)";
-    return ALTRunMacSavedSearchQuery(query,folder);
 }
 public static string ALTRunMacSavedSearchQuery(string query,string folder)
 {
@@ -530,7 +506,7 @@ private static ALTRunMacDialogState ALTRunMacDialog;
 private static long ALTRunMacDialogToken;
 public static void ALTRunMacDesktopStop()
 {
-    if(ALTRunMacSharePicker!=0) { ALTRunMacDesktopNative.Send(ALTRunMacSharePicker,ALTRunMacDesktopNative.Sel("release")); ALTRunMacSharePicker=0; }
+    if(ALTRunMacSharePicker!=0) { ALTRunMacDesktopNative.Send(ALTRunMacSharePicker,"release"); ALTRunMacSharePicker=0; }
     if(ALTRunMacDialog is {} state) { ALTRunMacDesktopNative.CFRelease(state.Window); ALTRunMacDesktopNative.CFRelease(state.Dialog); if(state.Focus!=0)ALTRunMacDesktopNative.CFRelease(state.Focus); ALTRunMacDialog=null; }
 }
 private static System.Collections.Generic.List<nint> ALTRunMacAXNodes(nint root)
@@ -592,36 +568,34 @@ public static bool ALTRunMacDialogMatches(long token)
     try { return window!=0 && ALTRunMacDesktopNative.CFEqual(window,state.Window) && ALTRunMacIsFileDialog(state.Dialog); }
     finally { if(window!=0)ALTRunMacDesktopNative.CFRelease(window); ALTRunMacDesktopNative.CFRelease(app); }
 }
-public static bool ALTRunMacSetGoToFolder(long token,string path)
+// Both writing and confirming a path require the same token, app, native sheet and focused field.
+private static bool ALTRunMacWithGoToFocus(long token,System.Func<nint,bool> action)
 {
     if(ALTRunMacDialog is not {} state || state.Token!=token || ALTRunMacDesktopNative.FrontPid()!=state.Pid)return false;
-    nint app=ALTRunMacDesktopNative.AXUIElementCreateApplication(state.Pid),focus=ALTRunMacDesktopNative.Get(app,"AXFocusedUIElement");
+    nint app=ALTRunMacDesktopNative.AXUIElementCreateApplication(state.Pid),window=ALTRunMacDesktopNative.Get(app,"AXFocusedWindow"),focus=ALTRunMacDesktopNative.Get(app,"AXFocusedUIElement"),parent=0;
     try {
-        if(focus==0 || state.Focus!=0 && ALTRunMacDesktopNative.CFEqual(focus,state.Focus))return false;
-        string role=ALTRunMacDesktopNative.Attribute(focus,"AXRole"); if(role!="AXTextField" && role!="AXComboBox")return false;
-        nint parent=ALTRunMacDesktopNative.Get(focus,"AXParent"),sheet=0;
-        for(int i=0;parent!=0 && i<8;i++) {
-            string parentRole=ALTRunMacDesktopNative.Attribute(parent,"AXRole");
-            if(sheet==0 && (parentRole is "AXSheet" or "AXDialog" or "AXPopover") && !ALTRunMacDesktopNative.CFEqual(parent,state.Dialog))sheet=ALTRunMacDesktopNative.CFRetain(parent);
-            nint next=ALTRunMacDesktopNative.Get(parent,"AXParent"); ALTRunMacDesktopNative.CFRelease(parent); parent=next;
+        if(window==0 || focus==0 || ALTRunMacDesktopNative.CFEqual(window,state.Dialog)
+            || state.Focus!=0 && ALTRunMacDesktopNative.CFEqual(focus,state.Focus))return false;
+        if(ALTRunMacDesktopNative.Attribute(window,"AXIdentifier")!="GoToWindow"
+            || ALTRunMacDesktopNative.Attribute(focus,"AXIdentifier")!="PathTextField")return false;
+        string role=ALTRunMacDesktopNative.Attribute(focus,"AXRole");
+        if(role is not ("AXTextField" or "AXComboBox"))return false;
+        parent=ALTRunMacDesktopNative.Get(focus,"AXParent");
+        for(int depth=0;parent!=0 && depth<8;depth++) {
+            if(ALTRunMacDesktopNative.CFEqual(parent,window))return action(focus);
+            nint next=ALTRunMacDesktopNative.Get(parent,"AXParent");
+            ALTRunMacDesktopNative.CFRelease(parent); parent=next;
         }
+        return false;
+    } finally {
         if(parent!=0)ALTRunMacDesktopNative.CFRelease(parent);
-        if(sheet==0)return false;
-        try {
-            if(ALTRunMacDesktopNative.Attribute(sheet,"AXIdentifier")!="GoToWindow" || ALTRunMacDesktopNative.Attribute(focus,"AXIdentifier")!="PathTextField")return false;
-            return ALTRunMacDesktopNative.AXUIElementSetAttributeValue(focus,ALTRunMacDesktopNative.Text("AXValue"),ALTRunMacDesktopNative.Text(path))==0;
-        }
-        finally { ALTRunMacDesktopNative.CFRelease(sheet); }
-    } finally { if(focus!=0)ALTRunMacDesktopNative.CFRelease(focus); ALTRunMacDesktopNative.CFRelease(app); }
+        if(focus!=0)ALTRunMacDesktopNative.CFRelease(focus);
+        if(window!=0)ALTRunMacDesktopNative.CFRelease(window);
+        ALTRunMacDesktopNative.CFRelease(app);
+    }
 }
-public static bool ALTRunMacGoToReady(long token)
-{
-    if(ALTRunMacDialog is not {} state || state.Token!=token || ALTRunMacDesktopNative.FrontPid()!=state.Pid)return false;
-    nint app=ALTRunMacDesktopNative.AXUIElementCreateApplication(state.Pid),window=ALTRunMacDesktopNative.Get(app,"AXFocusedWindow"),focus=ALTRunMacDesktopNative.Get(app,"AXFocusedUIElement");
-    try {
-        return window!=0 && focus!=0 && ALTRunMacDesktopNative.Attribute(window,"AXIdentifier")=="GoToWindow"
-            && ALTRunMacDesktopNative.Attribute(focus,"AXIdentifier")=="PathTextField";
-    } finally { if(window!=0)ALTRunMacDesktopNative.CFRelease(window); if(focus!=0)ALTRunMacDesktopNative.CFRelease(focus); ALTRunMacDesktopNative.CFRelease(app); }
-}
+public static bool ALTRunMacSetGoToFolder(long token,string path) => ALTRunMacWithGoToFocus(token,
+    focus => ALTRunMacDesktopNative.AXUIElementSetAttributeValue(focus,ALTRunMacDesktopNative.Text("AXValue"),ALTRunMacDesktopNative.Text(path))==0);
+public static bool ALTRunMacGoToReady(long token) => ALTRunMacWithGoToFocus(token,_ => true);
 #EndCSharp
 #endif

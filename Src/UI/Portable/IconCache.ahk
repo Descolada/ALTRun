@@ -330,12 +330,12 @@ public static object ALTRunMacFileIcon(string specification, long pixels)
     bool type = kind is "folder:" or "url:" || kind.StartsWith("ext:", System.StringComparison.Ordinal);
     string value = kind == "folder:" ? "public.folder" : kind == "url:" ? "public.url"
         : type ? specification[4..].TrimStart('.') : System.IO.Path.GetFullPath(specification);
-    var workspace = ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSWorkspace"), ALTRunMacObjC.Selector("sharedWorkspace"));
-    var icon = ALTRunMacObjC.SendArgument(workspace, ALTRunMacObjC.Selector(type ? "iconForFileType:" : "iconForFile:"), ALTRunMacObjC.String(value));
+    var workspace = ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Class("NSWorkspace"), "sharedWorkspace");
+    var icon = ALTRunMacDesktopNative.Arg(workspace, type ? "iconForFileType:" : "iconForFile:", ALTRunMacDesktopNative.Text(value));
     if (icon == System.IntPtr.Zero) return "";
     // Draw the native icon directly at the requested size. TIFFRepresentation expands every
     // representation (including 1024px frames) and can stall a search for seconds.
-    var copied = ALTRunMacObjC.Send(icon, ALTRunMacObjC.Selector("copy"));
+    var copied = ALTRunMacDesktopNative.Send(icon, "copy");
     var runtime = System.Type.GetType("MonoMac.ObjCRuntime.Runtime, MonoMac", true);
     var wrap = System.Array.Find(runtime.GetMethods(), method => method.Name == "GetNSObject"
         && !method.IsGenericMethod && method.GetParameters().Length == 2);

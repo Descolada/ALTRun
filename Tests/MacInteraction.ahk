@@ -341,9 +341,9 @@ class MacInteraction {
 #CSharp
 public static long ALTRunMacFixtureFrontmostPid()
 {
-    var workspace = ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSWorkspace"), ALTRunMacObjC.Selector("sharedWorkspace"));
-    var app = ALTRunMacObjC.Send(workspace, ALTRunMacObjC.Selector("frontmostApplication"));
-    return ALTRunMacObjC.Send(app, ALTRunMacObjC.Selector("processIdentifier")).ToInt64();
+    var workspace = ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Class("NSWorkspace"), "sharedWorkspace");
+    var app = ALTRunMacDesktopNative.Send(workspace, "frontmostApplication");
+    return ALTRunMacDesktopNative.Send(app, "processIdentifier").ToInt64();
 }
 #EndCSharp
 #endif

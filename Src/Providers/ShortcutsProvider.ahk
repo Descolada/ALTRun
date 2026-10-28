@@ -12,7 +12,7 @@ public static object ALTRunShortcutInput(string Filename, string Text)
 class ShortcutsProvider {
     static Id := "Shortcuts", Items := [], _job := 0, _timer := "", _checked := 0
     static Executable := "/usr/bin/shortcuts", Runner := (exe, args, capture := false) => ProcessRunner.Start(exe, args, "", capture)
-    static _runs := Map()
+    static _runs := Map(), _runTimer := () => ShortcutsProvider._FinishRuns()
     static Icon := "/System/Applications/Shortcuts.app"
 
     static Init() {
@@ -94,7 +94,7 @@ class ShortcutsProvider {
     }
 
     static _Editor(id) => (*) => ShortcutsProvider.Runner.Call(ShortcutsProvider.Executable, ["view", id])
-    static _Runner(id, clipboard := false) => (*) => ShortcutsProvider.Run(id, clipboard ? A_Clipboard : "")
+    static _Runner(id, clipboard := false, text := "", paths := "") => (*) => ShortcutsProvider.Run(id, clipboard ? A_Clipboard : text, paths)
 
     static ChooseFor(item) {
         actions := [], text := "", paths := []
@@ -103,13 +103,11 @@ class ShortcutsProvider {
         else
             text := item.CopyText()
         for shortcut in ShortcutsProvider.Items
-            actions.Push(ResultItem(shortcut.Name, "Run with selected content", {OnRun: ShortcutsProvider._InputRunner(shortcut.Id, text, paths)}))
+            actions.Push(ResultItem(shortcut.Name, "Run with selected content", {OnRun: ShortcutsProvider._Runner(shortcut.Id, false, text, paths)}))
         if !actions.Length
             return App.Notify("No shortcuts are available. Open Shortcuts to create one.")
         return SearchWindow.ShowActions(ResultItem("Run Shortcut", item.Title, {Kind: "actions", Actions: actions}))
     }
-
-    static _InputRunner(id, text, paths) => (*) => ShortcutsProvider.Run(id, text, paths)
 
     static Run(id, text := "", paths := "") {
         if !RegExMatch(id, "i)^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$")
@@ -130,41 +128,42 @@ class ShortcutsProvider {
                 FileDelete(temporary)
             throw
         }
-        poll := "", started := A_TickCount
-        poll := () => ShortcutsProvider._FinishRun(job, temporary, started, poll)
-        ShortcutsProvider._runs[job] := {File: temporary, Poll: poll}
-        SetTimer(poll, 100)
+        ShortcutsProvider._runs[job] := {File: temporary, Started: A_TickCount}
+        SetTimer(ShortcutsProvider._runTimer, 100)
         return job
     }
 
-    static _FinishRun(job, temporary, started, poll) {
-        if !ProcessRunner.IsFinished(job) && A_TickCount - started < 300000
-            return
-        SetTimer(poll, 0)
-        try {
-            result := ProcessRunner.Result(job, !ProcessRunner.IsFinished(job))
-            if result.Has("ExitCode") && result["ExitCode"] = 0 {
-                if result["Output"] != ""
-                    ActionCatalog.CopyText(RTrim(result["Output"], "`r`n"))
-                else
-                    App.Notify("Shortcut completed.")
-            } else
-                App.Notify("Shortcut failed. " (result.Has("Error") ? SubStr(result["Error"], 1, 400) : ""), 4000)
-        } finally {
-            ShortcutsProvider._runs.Delete(job)
-            if temporary != ""
-                try FileDelete(temporary)
+    static _FinishRuns() {
+        for job, run in ShortcutsProvider._runs.Clone() {
+            if !ProcessRunner.IsFinished(job) && A_TickCount - run.Started < 300000
+                continue
+            try {
+                result := ProcessRunner.Result(job, !ProcessRunner.IsFinished(job))
+                if result.Has("ExitCode") && result["ExitCode"] = 0 {
+                    if result["Output"] != ""
+                        ActionCatalog.CopyText(RTrim(result["Output"], "`r`n"))
+                    else
+                        App.Notify("Shortcut completed.")
+                } else
+                    App.Notify("Shortcut failed. " (result.Has("Error") ? SubStr(result["Error"], 1, 400) : ""), 4000)
+            } finally {
+                ShortcutsProvider._runs.Delete(job)
+                if run.File != ""
+                    try FileDelete(run.File)
+            }
         }
+        if !ShortcutsProvider._runs.Count
+            SetTimer(ShortcutsProvider._runTimer, 0)
     }
 
     static Stop() {
         if IsObject(ShortcutsProvider._timer)
             SetTimer(ShortcutsProvider._timer, 0)
+        SetTimer(ShortcutsProvider._runTimer, 0)
         if ShortcutsProvider._job
             try ProcessRunner.Finish(ShortcutsProvider._job, true)
         ShortcutsProvider._job := 0
         for job, run in ShortcutsProvider._runs {
-            SetTimer(run.Poll, 0)
             try ProcessRunner.Finish(job, true)
             if run.File != ""
                 try FileDelete(run.File)

@@ -37,31 +37,6 @@ class MacUpdateTests {
             MacUpdateTests.Assert(ALTRunMacValidateUpdateArchive(A_Args[1]) = "ALTRun.app", "The actual native package failed archive validation.")
             FileAppend("PASS MAC_UPDATE actual packaged app archive structure and framework links`n", "*")
         }
-        for succeeds in [true, false] {
-            prefix := Platform.Join(MacUpdateTests.Folder, succeeds ? "success ' ü $ literal" : "rollback ' ü $ literal")
-            DirCreate(prefix)
-            current := Platform.Join(prefix, "ALTRun.app"), incoming := Platform.Join(prefix, "incoming.app"), backup := Platform.Join(prefix, "backup.app")
-            DirCreate(current), DirCreate(incoming)
-            FileAppend("old", Platform.Join(current, "owned-marker"), "UTF-8")
-            FileAppend("new", Platform.Join(incoming, "owned-marker"), "UTF-8")
-            helper := Platform.Join(prefix, "helper.sh")
-            FileAppend(ALTRunMacUpdateFixtureHelper(current, incoming, backup, succeeds), helper, "UTF-8-RAW")
-            MacUpdateTests.Job := ProcessRunner.Start("/bin/sh", [helper], "", true)
-            started := A_TickCount
-            while !ProcessRunner.IsFinished(MacUpdateTests.Job) {
-                MacUpdateTests.Assert(A_TickCount - started < 3000, "The owned transaction helper did not finish.")
-                Sleep(15)
-            }
-            result := ProcessRunner.Result(MacUpdateTests.Job)
-            MacUpdateTests.Job := 0
-            MacUpdateTests.Assert(result["ExitCode"] = (succeeds ? 0 : 5), "The owned transaction returned the wrong status: " result["Error"])
-            MacUpdateTests.Assert(FileRead(Platform.Join(current, "owned-marker"), "UTF-8") = (succeeds ? "new" : "old"), "The transaction lost the current fixture app.")
-            if succeeds
-                MacUpdateTests.Assert(FileRead(Platform.Join(backup, "owned-marker"), "UTF-8") = "old" && !DirExist(incoming), "The previous app was not preserved as backup.")
-            else
-                MacUpdateTests.Assert(FileRead(Platform.Join(incoming, "owned-marker"), "UTF-8") = "new" && !DirExist(backup), "The failed launch did not restore the original app.")
-        }
-        FileAppend("PASS MAC_UPDATE same-volume replacement/backup and launch-failure rollback with literal paths`n", "*")
         MacUpdateTests.Readiness()
         MacUpdateTests.Assert(MacUpdate.TrustedTeam() = "" && !MacUpdate.CanInstall({ZipUrl: "https://github.com/Descolada/ALTRun/releases/download/test/fixture.zip", Sha256: StrReplace(Format("{:64}", ""), " ", "a"), Version: "9999.1"})
             , "Source/ad-hoc runtime unexpectedly allows native self-updates.")
@@ -82,7 +57,7 @@ class MacUpdateTests {
         MacUpdateTests.Assert(!ALTRunMacUpdateSignalReady(bundle, "fixture", marker, nonce), "A readiness marker was overwritten.")
         FileAppend("PASS MAC_UPDATE private nonce/bundle/version startup readiness validation`n", "*")
         for succeeds in [true, false] {
-            parent := Platform.Join(MacUpdateTests.Folder, succeeds ? "ready-success" : "ready-crash")
+            parent := Platform.Join(MacUpdateTests.Folder, succeeds ? "ready-success ' ü $ literal" : "ready-crash ' ü $ literal")
             current := Platform.Join(parent, "current.app"), incoming := Platform.Join(parent, "incoming.app"), backup := Platform.Join(parent, "backup.app")
             staging := Platform.Join(parent, "ALTRun-update-stage")
             DirCreate(current), DirCreate(Platform.Join(incoming, "Contents", "MacOS")), DirCreate(staging)
@@ -103,6 +78,7 @@ class MacUpdateTests {
             MacUpdateTests.Assert(result["ExitCode"] = (succeeds ? 0 : 6), "The readiness helper returned the wrong status: " result["Error"])
             MacUpdateTests.Assert(FileRead(Platform.Join(current, "owned-marker"), "UTF-8") = (succeeds ? "new" : "old"), "Startup-crash rollback lost the original app.")
             if succeeds {
+                MacUpdateTests.Assert(FileRead(Platform.Join(backup, "owned-marker"), "UTF-8") = "old" && !DirExist(incoming), "The original app was not retained as backup.")
                 record := StrSplit(Trim(FileRead(pidFile, "UTF-8"), " `t`r`n"), " ")
                 MacUpdateTests.Assert(record.Length = 2 && record[1] = nonce, "The owned child PID record is invalid.")
                 MacUpdateTests.ChildPid := Integer(record[2])
@@ -110,7 +86,8 @@ class MacUpdateTests {
                     ProcessClose(MacUpdateTests.ChildPid)
                 MacUpdateTests.ChildPid := 0
                 MacUpdateTests.Assert(!DirExist(staging), "Successful readiness did not remove private download staging.")
-            }
+            } else
+                MacUpdateTests.Assert(FileRead(Platform.Join(incoming, "owned-marker"), "UTF-8") = "new" && !DirExist(backup), "Startup failure did not restore the original app.")
         }
         FileAppend("PASS MAC_UPDATE startup readiness/liveness and pre-readiness crash rollback on owned executable fixtures`n", "*")
     }
@@ -131,6 +108,14 @@ class MacUpdateTests {
 
 #if OSX
 #CSharp
+public static string ALTRunMacValidateUpdateArchive(string archive)
+{
+    try { return ALTRunMacUpdater.ValidateArchive(archive); }
+    catch (System.Exception error) { return "ERROR: " + error.Message; }
+}
+public static string ALTRunMacUpdateFixtureReadyHelper(string current, string incoming, string backup, string staging, string nonce)
+    => ALTRunMacUpdater.HelperScript(current, incoming, backup, 0, System.IO.Path.Combine(current, "Contents", "MacOS", "Fixture"), staging, nonce);
+
 public static void ALTRunMacUpdateReadinessFixture(string stage, string bundle, string nonce)
 {
     System.IO.File.SetUnixFileMode(stage, System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserWrite | System.IO.UnixFileMode.UserExecute);

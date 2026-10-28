@@ -231,33 +231,34 @@ public static string ALTRunLauncherPrefix(string text, long length)
 public static void ALTRunMacAccessibleLabel(Keysharp.Builtins.Ks.Clr.ManagedInstance wrapper, string text)
 {
     var control = (Eto.Forms.Control)wrapper.Native;
-    if (control.ControlObject?.GetType().GetProperty("Handle")?.GetValue(control.ControlObject) is not System.IntPtr handle) return;
-    var selector = ALTRunMacObjC.Selector("setAccessibilityLabel:");
-    if (ALTRunMacObjC.Responds(handle, ALTRunMacObjC.Selector("respondsToSelector:"), selector) == 0) return;
-    ALTRunMacObjC.SendArgument(handle, selector, ALTRunMacObjC.String(text));
+    var handle = ALTRunMacObjC.Handle(control);
+    if (handle == System.IntPtr.Zero) return;
+    var selector = ALTRunMacDesktopNative.Sel("setAccessibilityLabel:");
+    if (ALTRunMacObjC.Responds(handle, ALTRunMacDesktopNative.Sel("respondsToSelector:"), selector) == 0) return;
+    ALTRunMacDesktopNative.Arg(handle, selector, ALTRunMacDesktopNative.Text(text));
 }
 
 public static void ALTRunMacRoundWindow(Keysharp.Builtins.Ks.Clr.ManagedInstance wrapper, double radius)
 {
     var form = (Eto.Forms.Form)wrapper.Native;
-    var native = form.ControlObject;
-    if (native?.GetType().GetProperty("Handle")?.GetValue(native) is not System.IntPtr window)
+    var window = ALTRunMacObjC.Handle(form);
+    if (window == System.IntPtr.Zero)
         throw new System.InvalidOperationException("The macOS launcher window is unavailable.");
-    var view = ALTRunMacObjC.Send(window, ALTRunMacObjC.Selector("contentView"));
+    var view = ALTRunMacDesktopNative.Send(window, "contentView");
     // Auxiliary launcher windows follow the active Space and can appear above full-screen apps.
-    ALTRunMacObjC.SetLong(window, ALTRunMacObjC.Selector("setCollectionBehavior:"), 1 | 8 | 64 | 256);
-    ALTRunMacObjC.SetBool(window, ALTRunMacObjC.Selector("setOpaque:"), 0);
-    ALTRunMacObjC.SendArgument(window, ALTRunMacObjC.Selector("setBackgroundColor:"),
-        ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSColor"), ALTRunMacObjC.Selector("clearColor")));
-    ALTRunMacObjC.SetBool(view, ALTRunMacObjC.Selector("setWantsLayer:"), 1);
-    var layer = ALTRunMacObjC.Send(view, ALTRunMacObjC.Selector("layer"));
+    ALTRunMacDesktopNative.Arg(window, "setCollectionBehavior:", 1 | 8 | 64 | 256);
+    ALTRunMacDesktopNative.Bool(window, ALTRunMacDesktopNative.Sel("setOpaque:"), 0);
+    ALTRunMacDesktopNative.Arg(window, "setBackgroundColor:",
+        ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Class("NSColor"), "clearColor"));
+    ALTRunMacDesktopNative.Bool(view, ALTRunMacDesktopNative.Sel("setWantsLayer:"), 1);
+    var layer = ALTRunMacDesktopNative.Send(view, "layer");
     if (layer == System.IntPtr.Zero)
         throw new System.InvalidOperationException("The macOS launcher clipping layer is unavailable.");
-    ALTRunMacObjC.SetBool(layer, ALTRunMacObjC.Selector("setOpaque:"), 0);
-    ALTRunMacObjC.SetDouble(layer, ALTRunMacObjC.Selector("setCornerRadius:"), radius);
-    ALTRunMacObjC.SetBool(layer, ALTRunMacObjC.Selector("setMasksToBounds:"), 1);
-    ALTRunMacObjC.Send(window, ALTRunMacObjC.Selector("invalidateShadow"));
-    form.SizeChanged += (_, _) => ALTRunMacObjC.Send(window, ALTRunMacObjC.Selector("invalidateShadow"));
+    ALTRunMacDesktopNative.Bool(layer, ALTRunMacDesktopNative.Sel("setOpaque:"), 0);
+    ALTRunMacObjC.SetDouble(layer, ALTRunMacDesktopNative.Sel("setCornerRadius:"), radius);
+    ALTRunMacDesktopNative.Bool(layer, ALTRunMacDesktopNative.Sel("setMasksToBounds:"), 1);
+    ALTRunMacDesktopNative.Send(window, "invalidateShadow");
+    form.SizeChanged += (_, _) => ALTRunMacDesktopNative.Send(window, "invalidateShadow");
     form.Closed += (_, _) => ALTRunMacFade.Stop();
     form.Closing += (_, _) => ALTRunMacAccessibility.Clear();
 }
@@ -275,7 +276,8 @@ private static class ALTRunMacAccessibility
     private static readonly System.Collections.Generic.Dictionary<System.IntPtr, Entry> entries = new();
     private static System.IntPtr host;
     private static Eto.Forms.Control hostControl;
-    private static string order = "", announced = "";
+    private static System.Collections.Generic.List<System.IntPtr> order = new();
+    private static string announced = "";
     private sealed class Entry
     {
         internal System.IntPtr Element;
@@ -295,11 +297,11 @@ private static class ALTRunMacAccessibility
 
     private static System.IntPtr CreateClass()
     {
-        var cls = ALTRunMacObjC.Class("ALTRunAccessibleResult");
+        var cls = ALTRunMacDesktopNative.Class("ALTRunAccessibleResult");
         if (cls != System.IntPtr.Zero) return cls;
-        cls = objc_allocateClassPair(ALTRunMacObjC.Class("NSAccessibilityElement"), "ALTRunAccessibleResult", 0);
+        cls = objc_allocateClassPair(ALTRunMacDesktopNative.Class("NSAccessibilityElement"), "ALTRunAccessibleResult", 0);
         if (cls == System.IntPtr.Zero) throw new System.InvalidOperationException("Could not create accessible launcher results.");
-        class_addMethod(cls, ALTRunMacObjC.Selector("accessibilityPerformPress"), System.Runtime.InteropServices.Marshal.GetFunctionPointerForDelegate(pressAction), "c@:");
+        class_addMethod(cls, ALTRunMacDesktopNative.Sel("accessibilityPerformPress"), System.Runtime.InteropServices.Marshal.GetFunctionPointerForDelegate(pressAction), "c@:");
         objc_registerClassPair(cls);
         return cls;
     }
@@ -319,28 +321,29 @@ private static class ALTRunMacAccessibility
     internal static void Clear()
     {
         if (host != System.IntPtr.Zero && hostControl?.IsDisposed == false)
-            ALTRunMacObjC.SendArgument(host, ALTRunMacObjC.Selector("setAccessibilityChildren:"),
-                ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSArray"), ALTRunMacObjC.Selector("array")));
+            ALTRunMacDesktopNative.Arg(host, "setAccessibilityChildren:",
+                ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Class("NSArray"), "array"));
         foreach (var entry in entries.Values)
-            ALTRunMacObjC.Send(entry.Element, ALTRunMacObjC.Selector("release"));
-        entries.Clear(); host = System.IntPtr.Zero; hostControl = null; order = ""; announced = "";
+            ALTRunMacDesktopNative.Send(entry.Element, "release");
+        entries.Clear(); host = System.IntPtr.Zero; hostControl = null; order.Clear(); announced = "";
     }
 
     internal static void Update(Eto.Forms.Control control, string json, Keysharp.Builtins.KeysharpFunc activate)
     {
-        if (control.ControlObject?.GetType().GetProperty("Handle")?.GetValue(control.ControlObject) is not System.IntPtr view) return;
+        var view = ALTRunMacObjC.Handle(control);
+        if (view == System.IntPtr.Zero) return;
         if (host != System.IntPtr.Zero && host != view) Clear();
         hostControl = control;
         host = view;
-        ALTRunMacObjC.SetBool(view, ALTRunMacObjC.Selector("setAccessibilityElement:"), 1);
-        ALTRunMacObjC.SendArgument(view, ALTRunMacObjC.Selector("setAccessibilityRole:"), ALTRunMacObjC.String("AXList"));
-        ALTRunMacObjC.SendArgument(view, ALTRunMacObjC.Selector("setAccessibilityLabel:"), ALTRunMacObjC.String("ALTRun results"));
-        var children = ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSMutableArray"), ALTRunMacObjC.Selector("array"));
+        ALTRunMacDesktopNative.Bool(view, ALTRunMacDesktopNative.Sel("setAccessibilityElement:"), 1);
+        ALTRunMacDesktopNative.Arg(view, "setAccessibilityRole:", ALTRunMacDesktopNative.Text("AXList"));
+        ALTRunMacDesktopNative.Arg(view, "setAccessibilityLabel:", ALTRunMacDesktopNative.Text("ALTRun results"));
+        var children = ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Class("NSMutableArray"), "array");
         var remaining = new System.Collections.Generic.HashSet<System.IntPtr>(entries.Keys);
-        var handles = new System.Collections.Generic.List<string>();
-        var bounds = ALTRunMacObjC.GetRect(view, ALTRunMacObjC.Selector("bounds"));
-        var window = ALTRunMacObjC.Send(view, ALTRunMacObjC.Selector("window"));
-        bool flipped = ALTRunMacObjC.GetBool(view, ALTRunMacObjC.Selector("isFlipped")) != 0;
+        var handles = new System.Collections.Generic.List<System.IntPtr>();
+        var bounds = ALTRunMacObjC.GetRect(view, ALTRunMacDesktopNative.Sel("bounds"));
+        var window = ALTRunMacDesktopNative.Send(view, "window");
+        bool flipped = ALTRunMacObjC.GetBool(view, ALTRunMacDesktopNative.Sel("isFlipped")) != 0;
         using var doc = System.Text.Json.JsonDocument.Parse(json);
         string selection = "", announcement = "";
         foreach (var row in doc.RootElement.EnumerateArray())
@@ -351,45 +354,44 @@ private static class ALTRunMacAccessibility
                 if (remaining.Contains(candidate.Element) && candidate.Identity == identity) { entry = candidate; break; }
             if (entry == null)
             {
-                var element = ALTRunMacObjC.Send(ALTRunMacObjC.Send(elementClass, ALTRunMacObjC.Selector("alloc")), ALTRunMacObjC.Selector("init"));
+                var element = ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Send(elementClass, "alloc"), "init");
                 entry = new Entry { Element = element, Identity = identity };
                 entries.Add(element, entry);
-                ALTRunMacObjC.SetBool(element, ALTRunMacObjC.Selector("setAccessibilityElement:"), 1);
-                ALTRunMacObjC.SendArgument(element, ALTRunMacObjC.Selector("setAccessibilityRole:"), ALTRunMacObjC.String("AXButton"));
-                ALTRunMacObjC.SendArgument(element, ALTRunMacObjC.Selector("setAccessibilityParent:"), view);
+                ALTRunMacDesktopNative.Bool(element, ALTRunMacDesktopNative.Sel("setAccessibilityElement:"), 1);
+                ALTRunMacDesktopNative.Arg(element, "setAccessibilityRole:", ALTRunMacDesktopNative.Text("AXButton"));
+                ALTRunMacDesktopNative.Arg(element, "setAccessibilityParent:", view);
             }
             remaining.Remove(entry.Element);
             entry.Index = row.GetProperty("Index").GetInt64(); entry.Activate = activate;
             bool selected = row.GetProperty("Selected").ValueKind == System.Text.Json.JsonValueKind.True
                 || row.GetProperty("Selected").ToString() == "1";
             string label = row.GetProperty("Label").GetString();
-            ALTRunMacObjC.SendArgument(entry.Element, ALTRunMacObjC.Selector("setAccessibilityLabel:"), ALTRunMacObjC.String((selected ? "Selected. " : "") + label));
+            ALTRunMacDesktopNative.Arg(entry.Element, "setAccessibilityLabel:", ALTRunMacDesktopNative.Text((selected ? "Selected. " : "") + label));
             var rect = new ALTRunMacObjC.Rect { X = row.GetProperty("X").GetDouble(), Y = row.GetProperty("Y").GetDouble(), W = row.GetProperty("W").GetDouble(), H = row.GetProperty("H").GetDouble() };
             if (!flipped) rect.Y = bounds.H - rect.Y - rect.H;
             rect = ALTRunMacObjC.ConvertToWindow(view, rect);
             rect = ALTRunMacObjC.ConvertToScreen(window, rect);
-            ALTRunMacObjC.SetRect(entry.Element, ALTRunMacObjC.Selector("setAccessibilityFrame:"), rect);
-            ALTRunMacObjC.SendArgument(children, ALTRunMacObjC.Selector("addObject:"), entry.Element);
-            handles.Add(entry.Element.ToString());
+            ALTRunMacObjC.SetRect(entry.Element, ALTRunMacDesktopNative.Sel("setAccessibilityFrame:"), rect);
+            ALTRunMacDesktopNative.Arg(children, "addObject:", entry.Element);
+            handles.Add(entry.Element);
             if (selected) { selection = identity; announcement = label; }
         }
-        string nextOrder = string.Join(",", handles);
-        if (nextOrder != order)
+        if (!System.Linq.Enumerable.SequenceEqual(handles, order))
         {
-            ALTRunMacObjC.SendArgument(view, ALTRunMacObjC.Selector("setAccessibilityChildren:"), children);
-            order = nextOrder;
+            ALTRunMacDesktopNative.Arg(view, "setAccessibilityChildren:", children);
+            order = handles;
         }
         foreach (var handle in remaining)
         {
             entries.Remove(handle);
-            ALTRunMacObjC.Send(handle, ALTRunMacObjC.Selector("release"));
+            ALTRunMacDesktopNative.Send(handle, "release");
         }
         if (control.ParentWindow?.Visible == true && selection.Length > 0 && selection != announced)
         {
-            var info = ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSMutableDictionary"), ALTRunMacObjC.Selector("dictionary"));
-            ALTRunMacObjC.SetObject(info, ALTRunMacObjC.String(announcement), ALTRunMacObjC.Constant("NSAccessibilityAnnouncementKey"));
-            var priority = ALTRunMacObjC.SendLong(ALTRunMacObjC.Class("NSNumber"), ALTRunMacObjC.Selector("numberWithInteger:"), 10);
-            ALTRunMacObjC.SetObject(info, priority, ALTRunMacObjC.Constant("NSAccessibilityPriorityKey"));
+            var info = ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Class("NSMutableDictionary"), "dictionary");
+            ALTRunMacDesktopNative.Two(info, ALTRunMacDesktopNative.Sel("setObject:forKey:"), ALTRunMacDesktopNative.Text(announcement), ALTRunMacObjC.Constant("NSAccessibilityAnnouncementKey"));
+            var priority = ALTRunMacDesktopNative.Arg(ALTRunMacDesktopNative.Class("NSNumber"), "numberWithInteger:", 10);
+            ALTRunMacDesktopNative.Two(info, ALTRunMacDesktopNative.Sel("setObject:forKey:"), priority, ALTRunMacObjC.Constant("NSAccessibilityPriorityKey"));
             NSAccessibilityPostNotificationWithUserInfo(view, ALTRunMacObjC.Constant("NSAccessibilityAnnouncementRequestedNotification"), info);
             announced = selection;
         }
@@ -410,12 +412,12 @@ private static class ALTRunMacFade
     {
         timer?.Stop(); timer?.Dispose(); timer = null;
         if (realWindow != System.IntPtr.Zero)
-            ALTRunMacObjC.SetDouble(realWindow, ALTRunMacObjC.Selector("setAlphaValue:"), targetAlpha);
+            ALTRunMacObjC.SetDouble(realWindow, ALTRunMacDesktopNative.Sel("setAlphaValue:"), targetAlpha);
         realWindow = System.IntPtr.Zero;
         if (ghost != System.IntPtr.Zero)
         {
-            ALTRunMacObjC.SendArgument(ghost, ALTRunMacObjC.Selector("orderOut:"), System.IntPtr.Zero);
-            ALTRunMacObjC.Send(ghost, ALTRunMacObjC.Selector("release"));
+            ALTRunMacDesktopNative.Arg(ghost, "orderOut:", System.IntPtr.Zero);
+            ALTRunMacDesktopNative.Send(ghost, "release");
             ghost = System.IntPtr.Zero;
         }
     }
@@ -423,12 +425,13 @@ private static class ALTRunMacFade
     internal static void Apply(Eto.Forms.Form form, bool showing, bool fade, double alpha)
     {
         Stop();
-        if (form.ControlObject?.GetType().GetProperty("Handle")?.GetValue(form.ControlObject) is not System.IntPtr window) return;
-        var workspace = ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSWorkspace"), ALTRunMacObjC.Selector("sharedWorkspace"));
-        bool reducedMotion = ALTRunMacObjC.GetBool(workspace, ALTRunMacObjC.Selector("accessibilityDisplayShouldReduceMotion")) != 0;
-        bool reducedTransparency = ALTRunMacObjC.GetBool(workspace, ALTRunMacObjC.Selector("accessibilityDisplayShouldReduceTransparency")) != 0;
+        var window = ALTRunMacObjC.Handle(form);
+        if (window == System.IntPtr.Zero) return;
+        var workspace = ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Class("NSWorkspace"), "sharedWorkspace");
+        bool reducedMotion = ALTRunMacObjC.GetBool(workspace, ALTRunMacDesktopNative.Sel("accessibilityDisplayShouldReduceMotion")) != 0;
+        bool reducedTransparency = ALTRunMacObjC.GetBool(workspace, ALTRunMacDesktopNative.Sel("accessibilityDisplayShouldReduceTransparency")) != 0;
         targetAlpha = reducedTransparency ? 1 : System.Math.Clamp(alpha, 0, 1);
-        ALTRunMacObjC.SetDouble(window, ALTRunMacObjC.Selector("setAlphaValue:"), targetAlpha);
+        ALTRunMacObjC.SetDouble(window, ALTRunMacDesktopNative.Sel("setAlphaValue:"), targetAlpha);
         if (!fade || reducedMotion) return;
         System.IntPtr animated;
         double from, to;
@@ -436,7 +439,7 @@ private static class ALTRunMacFade
         {
             if (form.Visible) return;
             realWindow = window; animated = window; from = 0; to = targetAlpha;
-            ALTRunMacObjC.SetDouble(window, ALTRunMacObjC.Selector("setAlphaValue:"), 0);
+            ALTRunMacObjC.SetDouble(window, ALTRunMacDesktopNative.Sel("setAlphaValue:"), 0);
         }
         else
         {
@@ -450,7 +453,7 @@ private static class ALTRunMacFade
         timer.Elapsed += (_, _) =>
         {
             double elapsed = System.Math.Clamp(clock.Elapsed.TotalMilliseconds / duration, 0, 1);
-            ALTRunMacObjC.SetDouble(animated, ALTRunMacObjC.Selector("setAlphaValue:"), from + (to - from) * (1 - System.Math.Pow(1 - elapsed, 3)));
+            ALTRunMacObjC.SetDouble(animated, ALTRunMacDesktopNative.Sel("setAlphaValue:"), from + (to - from) * (1 - System.Math.Pow(1 - elapsed, 3)));
             if (elapsed >= 1) Stop();
         };
         timer.Start();
@@ -458,37 +461,39 @@ private static class ALTRunMacFade
 
     private static System.IntPtr Snapshot(System.IntPtr window)
     {
-        var view = ALTRunMacObjC.Send(window, ALTRunMacObjC.Selector("contentView"));
-        var bounds = ALTRunMacObjC.GetRect(view, ALTRunMacObjC.Selector("bounds"));
-        var frame = ALTRunMacObjC.GetRect(window, ALTRunMacObjC.Selector("frame"));
-        var bitmap = ALTRunMacObjC.SendRect(view, ALTRunMacObjC.Selector("bitmapImageRepForCachingDisplayInRect:"), bounds);
+        var view = ALTRunMacDesktopNative.Send(window, "contentView");
+        var bounds = ALTRunMacObjC.GetRect(view, ALTRunMacDesktopNative.Sel("bounds"));
+        var frame = ALTRunMacObjC.GetRect(window, ALTRunMacDesktopNative.Sel("frame"));
+        var bitmap = ALTRunMacObjC.SendRect(view, ALTRunMacDesktopNative.Sel("bitmapImageRepForCachingDisplayInRect:"), bounds);
         if (bitmap == System.IntPtr.Zero) return System.IntPtr.Zero;
-        ALTRunMacObjC.CacheDisplay(view, ALTRunMacObjC.Selector("cacheDisplayInRect:toBitmapImageRep:"), bounds, bitmap);
-        var image = ALTRunMacObjC.SendSize(ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSImage"), ALTRunMacObjC.Selector("alloc")),
-            ALTRunMacObjC.Selector("initWithSize:"), new ALTRunMacObjC.Size { W = bounds.W, H = bounds.H });
-        ALTRunMacObjC.SendArgument(image, ALTRunMacObjC.Selector("addRepresentation:"), bitmap);
-        var imageView = ALTRunMacObjC.SendRect(ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSImageView"), ALTRunMacObjC.Selector("alloc")),
-            ALTRunMacObjC.Selector("initWithFrame:"), bounds);
-        ALTRunMacObjC.SendArgument(imageView, ALTRunMacObjC.Selector("setImage:"), image);
-        var overlay = ALTRunMacObjC.NewPanel(ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSPanel"), ALTRunMacObjC.Selector("alloc")),
-            ALTRunMacObjC.Selector("initWithContentRect:styleMask:backing:defer:"), frame, 128, 2, 0);
-        ALTRunMacObjC.SetBool(overlay, ALTRunMacObjC.Selector("setReleasedWhenClosed:"), 0);
-        ALTRunMacObjC.SetBool(overlay, ALTRunMacObjC.Selector("setOpaque:"), 0);
-        ALTRunMacObjC.SetBool(overlay, ALTRunMacObjC.Selector("setIgnoresMouseEvents:"), 1);
-        ALTRunMacObjC.SendArgument(overlay, ALTRunMacObjC.Selector("setBackgroundColor:"),
-            ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSColor"), ALTRunMacObjC.Selector("clearColor")));
-        ALTRunMacObjC.SetLong(overlay, ALTRunMacObjC.Selector("setCollectionBehavior:"), 1 | 8 | 64 | 256);
-        ALTRunMacObjC.SetLong(overlay, ALTRunMacObjC.Selector("setLevel:"), 3);
-        ALTRunMacObjC.SendArgument(overlay, ALTRunMacObjC.Selector("setContentView:"), imageView);
-        ALTRunMacObjC.Send(overlay, ALTRunMacObjC.Selector("orderFrontRegardless"));
-        ALTRunMacObjC.Send(imageView, ALTRunMacObjC.Selector("release"));
-        ALTRunMacObjC.Send(image, ALTRunMacObjC.Selector("release"));
+        ALTRunMacObjC.CacheDisplay(view, ALTRunMacDesktopNative.Sel("cacheDisplayInRect:toBitmapImageRep:"), bounds, bitmap);
+        var image = ALTRunMacObjC.SendSize(ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Class("NSImage"), "alloc"),
+            ALTRunMacDesktopNative.Sel("initWithSize:"), new ALTRunMacObjC.Size { W = bounds.W, H = bounds.H });
+        ALTRunMacDesktopNative.Arg(image, "addRepresentation:", bitmap);
+        var imageView = ALTRunMacObjC.SendRect(ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Class("NSImageView"), "alloc"),
+            ALTRunMacDesktopNative.Sel("initWithFrame:"), bounds);
+        ALTRunMacDesktopNative.Arg(imageView, "setImage:", image);
+        var overlay = ALTRunMacObjC.NewPanel(ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Class("NSPanel"), "alloc"),
+            ALTRunMacDesktopNative.Sel("initWithContentRect:styleMask:backing:defer:"), frame, 128, 2, 0);
+        ALTRunMacDesktopNative.Bool(overlay, ALTRunMacDesktopNative.Sel("setReleasedWhenClosed:"), 0);
+        ALTRunMacDesktopNative.Bool(overlay, ALTRunMacDesktopNative.Sel("setOpaque:"), 0);
+        ALTRunMacDesktopNative.Bool(overlay, ALTRunMacDesktopNative.Sel("setIgnoresMouseEvents:"), 1);
+        ALTRunMacDesktopNative.Arg(overlay, "setBackgroundColor:",
+            ALTRunMacDesktopNative.Send(ALTRunMacDesktopNative.Class("NSColor"), "clearColor"));
+        ALTRunMacDesktopNative.Arg(overlay, "setCollectionBehavior:", 1 | 8 | 64 | 256);
+        ALTRunMacDesktopNative.Arg(overlay, "setLevel:", 3);
+        ALTRunMacDesktopNative.Arg(overlay, "setContentView:", imageView);
+        ALTRunMacDesktopNative.Send(overlay, "orderFrontRegardless");
+        ALTRunMacDesktopNative.Send(imageView, "release");
+        ALTRunMacDesktopNative.Send(image, "release");
         return overlay;
     }
 }
 
 private static class ALTRunMacObjC
 {
+    internal static System.IntPtr Handle(Eto.Forms.Control control) =>
+        control.ControlObject?.GetType().GetProperty("Handle")?.GetValue(control.ControlObject) is System.IntPtr handle ? handle : System.IntPtr.Zero;
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     internal struct Rect { public double X, Y, W, H; }
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
@@ -496,27 +501,10 @@ private static class ALTRunMacObjC
     private static readonly System.IntPtr appKit = System.Runtime.InteropServices.NativeLibrary.Load("/System/Library/Frameworks/AppKit.framework/AppKit");
     internal static System.IntPtr Constant(string name) => System.Runtime.InteropServices.Marshal.ReadIntPtr(System.Runtime.InteropServices.NativeLibrary.GetExport(appKit, name));
     private const string Library = "/usr/lib/libobjc.A.dylib";
-    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_getClass")]
-    internal static extern System.IntPtr Class(string name);
-    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "sel_registerName")]
-    internal static extern System.IntPtr Selector(string name);
-    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
-    internal static extern System.IntPtr Send(System.IntPtr target, System.IntPtr selector);
-    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
-    internal static extern System.IntPtr SendArgument(System.IntPtr target, System.IntPtr selector, System.IntPtr argument);
     [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
     internal static extern byte Responds(System.IntPtr target, System.IntPtr selector, System.IntPtr argument);
     [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
-    internal static extern void SetBool(System.IntPtr target, System.IntPtr selector, byte value);
-    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
     internal static extern void SetDouble(System.IntPtr target, System.IntPtr selector, double value);
-    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
-    internal static extern void SetLong(System.IntPtr target, System.IntPtr selector, long value);
-    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
-    internal static extern System.IntPtr SendLong(System.IntPtr target, System.IntPtr selector, long value);
-    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
-    private static extern void SendTwo(System.IntPtr target, System.IntPtr selector, System.IntPtr value, System.IntPtr key);
-    internal static void SetObject(System.IntPtr dictionary, System.IntPtr value, System.IntPtr key) => SendTwo(dictionary, Selector("setObject:forKey:"), value, key);
     [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
     internal static extern byte GetBool(System.IntPtr target, System.IntPtr selector);
     [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
@@ -541,15 +529,15 @@ private static class ALTRunMacObjC
     internal static Rect ConvertToWindow(System.IntPtr view, Rect rect)
     {
         if (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture != System.Runtime.InteropServices.Architecture.X64)
-            return ConvertViewRectArm(view, Selector("convertRect:toView:"), rect, System.IntPtr.Zero);
-        ConvertViewRectIntel(out var value, view, Selector("convertRect:toView:"), rect, System.IntPtr.Zero);
+            return ConvertViewRectArm(view, ALTRunMacDesktopNative.Sel("convertRect:toView:"), rect, System.IntPtr.Zero);
+        ConvertViewRectIntel(out var value, view, ALTRunMacDesktopNative.Sel("convertRect:toView:"), rect, System.IntPtr.Zero);
         return value;
     }
     internal static Rect ConvertToScreen(System.IntPtr window, Rect rect)
     {
         if (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture != System.Runtime.InteropServices.Architecture.X64)
-            return ConvertRectArm(window, Selector("convertRectToScreen:"), rect);
-        ConvertRectIntel(out var value, window, Selector("convertRectToScreen:"), rect);
+            return ConvertRectArm(window, ALTRunMacDesktopNative.Sel("convertRectToScreen:"), rect);
+        ConvertRectIntel(out var value, window, ALTRunMacDesktopNative.Sel("convertRectToScreen:"), rect);
         return value;
     }
     [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
@@ -562,10 +550,6 @@ private static class ALTRunMacObjC
     internal static extern void CacheDisplay(System.IntPtr target, System.IntPtr selector, Rect rect, System.IntPtr bitmap);
     [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
     internal static extern System.IntPtr NewPanel(System.IntPtr target, System.IntPtr selector, Rect rect, long style, long backing, byte deferred);
-    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
-    private static extern System.IntPtr SendString(System.IntPtr target, System.IntPtr selector,
-        [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string text);
-    internal static System.IntPtr String(string text) => SendString(Class("NSString"), Selector("stringWithUTF8String:"), text);
 }
 #EndCSharp
 #endif

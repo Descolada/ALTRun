@@ -85,10 +85,11 @@ public static long ALTRunProcessStartCommand(string Command, string WorkingDirec
 public static bool ALTRunProcessIsFinished(long Job)
     => !ALTRunProcessJobs.TryGetValue(Job, out var job) || (job.Process.HasExited && job.Output.IsCompleted && job.Error.IsCompleted);
 
-public static string ALTRunProcessFinish(long Job, bool Terminate)
+private sealed record ALTRunProcessOutput(string Output, string Error, int ExitCode);
+private static ALTRunProcessOutput ALTRunCompleteProcess(long Job, bool Terminate)
 {
     if (!ALTRunProcessJobs.TryRemove(Job, out var job))
-        return "";
+        return null;
     using (job)
     {
         if (Terminate && !job.Process.HasExited)
@@ -97,23 +98,18 @@ public static string ALTRunProcessFinish(long Job, bool Terminate)
             throw new TimeoutException("The script did not stop after cancellation.");
         if (!Task.WaitAll([job.Output, job.Error], TimeSpan.FromSeconds(3)))
             throw new TimeoutException("The script's output streams did not close.");
-        var output = job.Output.GetAwaiter().GetResult();
-        var error = job.Error.GetAwaiter().GetResult();
-        return output + (output.Length > 0 && error.Length > 0 ? Environment.NewLine : "") + error;
+        return new(job.Output.GetAwaiter().GetResult(), job.Error.GetAwaiter().GetResult(), job.Process.ExitCode);
     }
 }
 
-public static string ALTRunProcessResult(long Job, bool Terminate)
+public static string ALTRunProcessFinish(long Job, bool Terminate)
 {
-    if (!ALTRunProcessJobs.TryRemove(Job, out var job)) return "{}";
-    using (job)
-    {
-        if (Terminate && !job.Process.HasExited) job.Process.Kill(entireProcessTree: true);
-        if (!job.Process.WaitForExit(3000) || !Task.WaitAll([job.Output, job.Error], TimeSpan.FromSeconds(3)))
-            throw new TimeoutException("The program did not close its output streams.");
-        return JsonSerializer.Serialize(new { Output = job.Output.Result, Error = job.Error.Result, ExitCode = job.Process.ExitCode });
-    }
+    var result = ALTRunCompleteProcess(Job, Terminate);
+    return result == null ? "" : result.Output + (result.Output.Length > 0 && result.Error.Length > 0 ? Environment.NewLine : "") + result.Error;
 }
+
+public static string ALTRunProcessResult(long Job, bool Terminate)
+    => ALTRunCompleteProcess(Job, Terminate) is { } result ? JsonSerializer.Serialize(result) : "{}";
 
 public static object ALTRunProcessCancelAll()
 {

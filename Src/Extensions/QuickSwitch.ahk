@@ -32,7 +32,7 @@ class QuickSwitch {
         if !options["Enabled"]
             return
         if Platform.IsMac
-            return MacQuickSwitch.Init(options)
+            return MacQuickSwitch.Init()
         if options["StandardDialogs"]
             GroupAdd("ALTRunDialogs", "ahk_class #32770")
         for window in options["DialogWindows"]
@@ -834,11 +834,11 @@ class QuickSwitch {
 
 ; Cocoa open/save panels use their own Go to Folder sheet, leaving the filename field untouched.
 class MacQuickSwitch {
-    static Options := Map(), Dialog := Map("Valid", false), Panel := "", Rows := [], Timer := ""
+    static Dialog := Map("Valid", false), Panel := "", Rows := [], Timer := ""
     static Input := "", List := "", FilterTimer := "", _lastFinder := false, _automaticFor := 0
 
-    static Init(options) {
-        MacQuickSwitch.Options := options
+    static Init() {
+        options := QuickSwitch.Options
         HotIf((*) => MacQuickSwitch.IsDialog())
         try {
             if options["Hotkey"] != ""
@@ -868,8 +868,8 @@ class MacQuickSwitch {
     }
 
     static Excluded(key) {
-        if MacQuickSwitch.Options.Has(key)
-            for condition in MacQuickSwitch.Options[key]
+        if QuickSwitch.Options.Has(key)
+            for condition in QuickSwitch.Options[key]
                 if condition != "" && WinActive(condition)
                     return true
         return false
@@ -887,11 +887,11 @@ class MacQuickSwitch {
             dialog["Hwnd"] := WinExist("A")
             previous := MacQuickSwitch.Dialog["Valid"] ? MacQuickSwitch.Dialog["Token"] : 0
             MacQuickSwitch.Dialog := dialog
-            if (MacQuickSwitch.Options["AutoSwitch"] && MacQuickSwitch._lastFinder && !MacQuickSwitch.Excluded("AutoSwitchExclude") && MacQuickSwitch._automaticFor != dialog["Token"]) {
+            if (QuickSwitch.Options["AutoSwitch"] && MacQuickSwitch._lastFinder && !MacQuickSwitch.Excluded("AutoSwitchExclude") && MacQuickSwitch._automaticFor != dialog["Token"]) {
                 MacQuickSwitch._automaticFor := dialog["Token"]
                 MacQuickSwitch.JumpCurrent(true)
             }
-            if MacQuickSwitch.Options["ShowPanel"] {
+            if QuickSwitch.Options["ShowPanel"] {
                 if (!IsObject(MacQuickSwitch.Panel) || previous != dialog["Token"])
                     MacQuickSwitch.BuildPanel()
                 MacQuickSwitch.PlacePanel()
@@ -984,8 +984,7 @@ class MacQuickSwitch {
         if (row < 1 || row > MacQuickSwitch.Rows.Length)
             return
         folder := MacQuickSwitch.Rows[row].Path, dialog := MacQuickSwitch.Dialog
-        MacQuickSwitch.HidePanel()
-        try WinActivate("ahk_id " dialog["Hwnd"])
+        MacQuickSwitch.ReturnToDialog()
         Sleep(100)
         return MacDesktop.JumpFolder(folder, dialog)
     }

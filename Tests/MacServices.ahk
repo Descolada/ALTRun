@@ -13,7 +13,7 @@ public static string ALTRunServiceFixture(string Mode, string Value)
     try
     {
         if (Mode == "text")
-            ALTRunServicesNative.Two(board, Sel("setString:forType:"), ALTRunMacDesktopNative.Text(Value), ALTRunMacDesktopNative.Text("public.utf8-plain-text"));
+            ALTRunMacDesktopNative.Two(board, Sel("setString:forType:"), ALTRunMacDesktopNative.Text(Value), ALTRunMacDesktopNative.Text("public.utf8-plain-text"));
         else
         {
             nint url = ALTRunMacDesktopNative.Arg(ALTRunMacDesktopNative.Class("NSURL"), Sel("fileURLWithPath:"), ALTRunMacDesktopNative.Text(Value));
@@ -37,7 +37,7 @@ if !Platform.IsMac {
     FileAppend("SKIP MAC_SERVICES requires macOS`n", "*")
     ExitApp()
 }
-ALTRunMacServicesInstall()
+ALTRunMacAppStart(true)
 textRequest := JSON.Parse(ALTRunServiceFixture("text", "Selected text ' $() 漢字`nsecond line"))
 if textRequest["Add"] || textRequest["Files"].Length || textRequest["Text"] != "Selected text ' $() 漢字`nsecond line"
     throw Error("Native text Services must preserve selected content.")
@@ -48,17 +48,18 @@ if !fileRequest["Add"] || fileRequest["Files"].Length != 1 || fileRequest["Files
 actionsRequest := JSON.Parse(ALTRunServiceFixture("files", fixturePath))
 if actionsRequest["Add"] || actionsRequest["Files"][1] != fixturePath
     throw Error("File action Services must keep their action type.")
-ALTRunMacObserveDesktop()
-ALTRunMacObserveDesktop()
-if ALTRunMacDesktopChanged()
+ALTRunMacAppStart(true)
+if ALTRunMacAppEvents()
     throw Error("Registering desktop observers must not create a change event.")
-ALTRunMacStopObserving()
-ALTRunMacStopObserving()
-ALTRunMacInstallQuitBridge()
 ALTRunServiceQuitFixture()
-if !ALTRunMacQuitRequested() || ALTRunMacQuitRequested()
+if !(ALTRunMacAppEvents() & 1) || ALTRunMacAppEvents()
     throw Error("Native Quit must queue exactly one script shutdown request.")
-ALTRunMacStopQuitBridge()
+ALTRunMacAppStop()
+ALTRunMacAppStop()
+ALTRunMacAppStart(false)
+if ALTRunMacAppEvents()
+    throw Error("Restarting desktop observers must not retain old events.")
+ALTRunMacAppStop()
 if Platform.AppBundle != ""
     throw Error("An external source fixture must not inherit another app's identity.")
 FileAppend("PASS MAC_SERVICES native private pasteboards, literal file URLs, text selection and observer lifecycle`n", "*")

@@ -33,3 +33,13 @@ if (A_Args.Length >= 2 && A_Args[1] = "--child") {
 if (A_Args.Length >= 2 && A_Args[1] = "--archive")
     FileAppend("ALTRUN_ARCHIVE " ALTRunMacValidateUpdateArchive(A_Args[2]) "`n", "*")
 ExitApp(0)
+
+#if OSX
+#CSharp
+public static string ALTRunMacValidateUpdateArchive(string archive)
+{
+    try { return ALTRunMacUpdater.ValidateArchive(archive); }
+    catch (System.Exception error) { return "ERROR: " + error.Message; }
+}
+#EndCSharp
+#endif

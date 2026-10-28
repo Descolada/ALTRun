@@ -10,8 +10,9 @@ private static ALTRunSpotlightJob ALTRunSpotlightCurrent;
 
 public static string ALTRunSpotlightExpression(string Text, bool FoldersOnly, string Extensions, bool Content)
 {
-    string Quote(string value) => "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("*", "\\*").Replace("?", "\\?") + "\"";
-    string Contains(string value) => "\"*" + value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("*", "\\*").Replace("?", "\\?") + "*\"cd";
+    string Escape(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("*", "\\*").Replace("?", "\\?");
+    string Quote(string value) => "\"" + Escape(value) + "\"";
+    string Contains(string value) => "\"*" + Escape(value) + "*\"cd";
     var expressions = new System.Collections.Generic.List<string> { "kMDItemFSInvisible != 1" };
     var names = new System.Collections.Generic.List<string>();
     bool metadata = false;
@@ -47,7 +48,7 @@ public static string ALTRunSpotlightExpression(string Text, bool FoldersOnly, st
     if (FoldersOnly) expressions.Add("kMDItemContentTypeTree == \"public.folder\"");
     var types = System.Text.Json.JsonSerializer.Deserialize<string[]>(Extensions) ?? [];
     if (types.Length > 0)
-        expressions.Add("(" + string.Join(" || ", System.Array.ConvertAll(types, extension => "kMDItemFSName == \"*." + extension.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("*", "\\*").Replace("?", "\\?") + "\"c")) + ")");
+        expressions.Add("(" + string.Join(" || ", System.Array.ConvertAll(types, extension => "kMDItemFSName == \"*." + Escape(extension) + "\"c")) + ")");
     return System.Text.Json.JsonSerializer.Serialize(new { Query = string.Join(" && ", expressions), Needle = string.Join(" ", names), Metadata = metadata });
 }
 
@@ -72,6 +73,7 @@ public static object ALTRunSpotlightStart(string Query, string Scope, int Limit,
         process.StartInfo.ArgumentList.Add("-0");
         if (!string.IsNullOrEmpty(Scope)) { process.StartInfo.ArgumentList.Add("-onlyin"); process.StartInfo.ArgumentList.Add(Scope); }
         process.StartInfo.ArgumentList.Add(Query);
+        string failure = "";
         try
         {
             deadline.Token.ThrowIfCancellationRequested();
@@ -101,11 +103,11 @@ public static object ALTRunSpotlightStart(string Query, string Scope, int Limit,
             string error = await errors;
             if (!full && process.ExitCode != 0) throw new System.IO.IOException(string.IsNullOrWhiteSpace(error) ? "Spotlight search failed." : error.Trim());
             token.ThrowIfCancellationRequested();
-            return System.Text.Json.JsonSerializer.Serialize(new { Id = Request, Key = Query, Entries = entries, Error = "" });
         }
-        catch (System.OperationCanceledException) { return System.Text.Json.JsonSerializer.Serialize(new { Id = Request, Key = Query, Entries = entries, Error = token.IsCancellationRequested ? "cancelled" : "Spotlight search timed out." }); }
-        catch (System.Exception error) { return System.Text.Json.JsonSerializer.Serialize(new { Id = Request, Key = Query, Entries = entries, Error = error.Message }); }
+        catch (System.OperationCanceledException) { failure = token.IsCancellationRequested ? "cancelled" : "Spotlight search timed out."; }
+        catch (System.Exception error) { failure = error.Message; }
         finally { try { if (process.Id != 0 && !process.HasExited) process.Kill(true); } catch (System.InvalidOperationException) { } }
+        return System.Text.Json.JsonSerializer.Serialize(new { Id = Request, Entries = entries, Error = failure });
     });
     return null;
 }
@@ -114,7 +116,7 @@ public static object ALTRunSpotlightCancel() { ALTRunSpotlightCurrent?.Stop.Canc
 #EndCSharp
 
 class MacSpotlight {
-    static Cache := Map(), _key := "", _request := "", _timer := "", _pollTimer := "", _started := 0, _generation := 0
+    static Cache := Map(), _request := "", _timer := "", _generation := 0
     static Enabled() {
         options := AppSettings.Feature("FileSearch")
         return Platform.IsMac && options.Has("Spotlight") && options["Spotlight"]
@@ -136,45 +138,37 @@ class MacSpotlight {
         key := expression["Query"]
         if MacSpotlight.Cache.Has(key) && A_TickCount - MacSpotlight.Cache[key].At < 30000
             return MacSpotlight.Cache[key].Entries
-        if (MacSpotlight._key != key) {
+        if !IsObject(MacSpotlight._request) || MacSpotlight._request.Key != key {
             MacSpotlight._generation++
-            MacSpotlight._key := key, MacSpotlight._request := {Id: MacSpotlight._generation, Key: key, Expression: expression}
+            MacSpotlight._request := {Id: MacSpotlight._generation, Key: key, Expression: expression, Due: A_TickCount + 150, Started: false}
             ALTRunSpotlightCancel()
             if !IsObject(MacSpotlight._timer)
-                MacSpotlight._timer := () => MacSpotlight._Start()
-            SetTimer(MacSpotlight._timer, -150)
+                MacSpotlight._timer := () => MacSpotlight._Poll()
+            SetTimer(MacSpotlight._timer, 50)
         }
         return MacSpotlight.Cache.Has(key) ? MacSpotlight.Cache[key].Entries : []
     }
 
-    static _Start() {
+    static _Poll() {
         if !SearchWindow.IsVisible() || !MacSpotlight.Enabled()
             return MacSpotlight.Stop()
-        if !IsObject(MacSpotlight._request)
-            return
         request := MacSpotlight._request
-        ALTRunSpotlightStart(request.Key, "", 500, request.Id)
-        MacSpotlight._started := A_TickCount
-        if !IsObject(MacSpotlight._pollTimer)
-            MacSpotlight._pollTimer := () => MacSpotlight._Poll()
-        SetTimer(MacSpotlight._pollTimer, 50)
-    }
-
-    static _Poll() {
-        if !SearchWindow.IsVisible() {
-            MacSpotlight.Stop()
+        if !IsObject(request)
             return
+        if !request.Started {
+            if A_TickCount < request.Due
+                return
+            ALTRunSpotlightStart(request.Key, "", 500, request.Id)
+            request.Started := true
         }
         text := ALTRunSpotlightPoll()
         if (text = "")
             return
-        SetTimer(MacSpotlight._pollTimer, 0)
-        if !IsObject(MacSpotlight._request)
+        data := JSON.Parse(text), entries := []
+        if data["Id"] != request.Id || data["Error"] = "cancelled"
             return
-        request := MacSpotlight._request, data := JSON.Parse(text), entries := []
-        if !(data["Key"] == request.Key) || data["Id"] != request.Id || data["Error"] = "cancelled"
-            return
-        if (data["Error"] != "" && data["Error"] != "cancelled")
+        SetTimer(MacSpotlight._timer, 0)
+        if (data["Error"] != "")
             Logger.Debug("Spotlight: " data["Error"])
         for entry in data["Entries"] {
             score := request.Expression["Needle"] = "" ? 75 : FileSearchProvider.NameScore(StrLower(request.Expression["Needle"]), entry["Name"])
@@ -185,16 +179,14 @@ class MacSpotlight {
         if MacSpotlight.Cache.Count >= 32
             MacSpotlight.Cache := Map()
         MacSpotlight.Cache[request.Key] := {At: A_TickCount, Entries: entries}
-        MacSpotlight._key := "", MacSpotlight._request := ""
+        MacSpotlight._request := ""
         SearchWindow.RefreshResults()
     }
 
     static Stop() {
         if IsObject(MacSpotlight._timer)
             SetTimer(MacSpotlight._timer, 0)
-        if IsObject(MacSpotlight._pollTimer)
-            SetTimer(MacSpotlight._pollTimer, 0)
         ALTRunSpotlightCancel()
-        MacSpotlight._key := "", MacSpotlight._request := ""
+        MacSpotlight._request := ""
     }
 }

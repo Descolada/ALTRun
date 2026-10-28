@@ -97,29 +97,29 @@ public static string ALTRunMacWindowReport(Keysharp.Builtins.Ks.Clr.ManagedInsta
     var canvas = (Eto.Forms.Control)canvasWrapper.Native;
     var window = (System.IntPtr)form.ControlObject.GetType().GetProperty("Handle").GetValue(form.ControlObject);
     var view = (System.IntPtr)canvas.ControlObject.GetType().GetProperty("Handle").GetValue(canvas.ControlObject);
-    var children = ALTRunMacObjC.Send(view, ALTRunMacObjC.Selector("accessibilityChildren"));
-    long count = ALTRunMacObjC.Send(children, ALTRunMacObjC.Selector("count")).ToInt64();
+    var children = ALTRunMacDesktopNative.Send(view, "accessibilityChildren");
+    long count = ALTRunMacDesktopNative.Send(children, "count").ToInt64();
     string role = "", selected = "";
     for (long i = 0; i < count; ++i)
     {
-        var child = ALTRunMacObjC.SendLong(children, ALTRunMacObjC.Selector("objectAtIndex:"), i);
-        var roleString = ALTRunMacObjC.Send(child, ALTRunMacObjC.Selector("accessibilityRole"));
-        role = System.Runtime.InteropServices.Marshal.PtrToStringUTF8(ALTRunMacObjC.Send(roleString, ALTRunMacObjC.Selector("UTF8String")));
-        var labelString = ALTRunMacObjC.Send(child, ALTRunMacObjC.Selector("accessibilityLabel"));
-        string label = System.Runtime.InteropServices.Marshal.PtrToStringUTF8(ALTRunMacObjC.Send(labelString, ALTRunMacObjC.Selector("UTF8String")));
+        var child = ALTRunMacDesktopNative.Arg(children, "objectAtIndex:", (nint)i);
+        var roleString = ALTRunMacDesktopNative.Send(child, "accessibilityRole");
+        role = System.Runtime.InteropServices.Marshal.PtrToStringUTF8(ALTRunMacDesktopNative.Send(roleString, "UTF8String"));
+        var labelString = ALTRunMacDesktopNative.Send(child, "accessibilityLabel");
+        string label = System.Runtime.InteropServices.Marshal.PtrToStringUTF8(ALTRunMacDesktopNative.Send(labelString, "UTF8String"));
         if (label?.StartsWith("Selected. ") == true) selected = label;
     }
     var overlay = (System.IntPtr)typeof(ALTRunMacFade).GetField("ghost", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic).GetValue(null);
-    return System.Text.Json.JsonSerializer.Serialize(new { Behavior = ALTRunMacObjC.Send(window, ALTRunMacObjC.Selector("collectionBehavior")).ToInt64(),
-        Children = count, Role = role, Selected = selected, Alpha = ALTRunMacFixtureDouble(window, ALTRunMacObjC.Selector("alphaValue")), Ghost = overlay != System.IntPtr.Zero });
+    return System.Text.Json.JsonSerializer.Serialize(new { Behavior = ALTRunMacDesktopNative.Send(window, "collectionBehavior").ToInt64(),
+        Children = count, Role = role, Selected = selected, Alpha = ALTRunMacFixtureDouble(window, ALTRunMacDesktopNative.Sel("alphaValue")), Ghost = overlay != System.IntPtr.Zero });
 }
 public static bool ALTRunMacPressFixtureResult(Keysharp.Builtins.Ks.Clr.ManagedInstance canvasWrapper)
 {
     var canvas = (Eto.Forms.Control)canvasWrapper.Native;
     var view = (System.IntPtr)canvas.ControlObject.GetType().GetProperty("Handle").GetValue(canvas.ControlObject);
-    var children = ALTRunMacObjC.Send(view, ALTRunMacObjC.Selector("accessibilityChildren"));
-    var child = ALTRunMacObjC.SendLong(children, ALTRunMacObjC.Selector("objectAtIndex:"), 0);
-    return ALTRunMacObjC.GetBool(child, ALTRunMacObjC.Selector("accessibilityPerformPress")) != 0;
+    var children = ALTRunMacDesktopNative.Send(view, "accessibilityChildren");
+    var child = ALTRunMacDesktopNative.Arg(children, "objectAtIndex:", 0);
+    return ALTRunMacObjC.GetBool(child, ALTRunMacDesktopNative.Sel("accessibilityPerformPress")) != 0;
 }
 #EndCSharp
 #endif

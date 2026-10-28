@@ -55,7 +55,7 @@ class MacFinderActions {
         FileAppend("PASS MAC_FINDER_ACTIONS transfer recursion and symlink safety`n", "*")
 
         term := 'report "quotes" * ? 漢字'
-        search := ALTRunMacSavedSearch(term, destination)
+        search := ALTRunMacSavedSearchQuery(MacSpotlight.Expression(term)["Query"], destination)
         MacFinderActions.Searches.Push(search)
         xml := FileRead(search)
         MacFinderActions.Check(InStr(xml, "RawQuery") && InStr(xml, "FXScopeArrayOfPaths") && InStr(xml, destination), "Finder search must retain the requested scope.")
@@ -77,11 +77,11 @@ class MacFinderActions {
 
         MacFinderActions.SavedApple := MacDesktop.GetOwnPropDesc("AppleScript")
         MacFinderActions.SavedStart := ProcessRunner.GetOwnPropDesc("StartApplication")
-        MacFinderActions.SavedRead := MacDesktop.GetOwnPropDesc("_Read")
+        MacFinderActions.SavedRead := MacDesktop.GetOwnPropDesc("Snapshot")
         MacDesktop.DefineProp("AppleScript", {Call: (self, script, title := "") => (MacFinderActions.Calls.Push({Script: script, Title: title}), true)})
         ProcessRunner.DefineProp("StartApplication", {Call: (self, executable, arguments := [], workingDirectory := "", capture := false)
             => MacFinderActions.Calls.Push({Executable: executable, Arguments: arguments})})
-        MacDesktop.DefineProp("_Read", {Call: (self, refresh) => Map("Folder", destination, "Selection", [file], "Folders", [destination], "Error", "", "Pending", false)})
+        MacDesktop.DefineProp("Snapshot", {Call: (self, refresh := false) => Map("Folder", destination, "Selection", [file], "Folders", [destination], "Error", "", "Pending", false)})
 
         MacFinderActions.Check(MacDesktop.CopyMove([file], destination), "Copy must dispatch to Finder.")
         copy := MacFinderActions.Calls.Pop()
@@ -163,7 +163,6 @@ class MacFinderActions {
         MacDesktop.DefineProp("Folders", {Call: (self) => [{Path: destination, Group: "open", Tag: "Finder"}]})
         try {
             QuickSwitch.Options := AppSettings.Extension("QuickSwitch")
-            MacQuickSwitch.Options := QuickSwitch.Options
             MacQuickSwitch.BuildPanel()
             MacQuickSwitch.Input.Value := "destination"
             MacQuickSwitch.Filter()
@@ -260,7 +259,7 @@ class MacFinderActions {
         if IsObject(MacFinderActions.SavedStart)
             ProcessRunner.DefineProp("StartApplication", MacFinderActions.SavedStart)
         if IsObject(MacFinderActions.SavedRead)
-            MacDesktop.DefineProp("_Read", MacFinderActions.SavedRead)
+            MacDesktop.DefineProp("Snapshot", MacFinderActions.SavedRead)
         MacDesktop.Stop()
         for search in MacFinderActions.Searches
             try FileDelete(search)

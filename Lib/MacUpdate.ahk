@@ -1,18 +1,23 @@
 ; Native updates are offered only to a notarized Developer ID application with a matching signed replacement.
 class MacUpdate {
-    static _identity := Map("Trusted", false, "Team", ""), _timer := "", _installing := false, _identityPending := false
+    static _timer := "", _installing := false
 
     static Init() {
 #if OSX
         if (Platform.AppBundle = "" || !ALTRunMacUpdateBeginIdentity(Platform.AppBundle))
             return
-        MacUpdate._identityPending := true
         MacUpdate._timer := () => MacUpdate._Poll()
         SetTimer(MacUpdate._timer, 200)
 #endif
     }
 
-    static TrustedTeam() => MacUpdate._identity["Trusted"] ? MacUpdate._identity["Team"] : ""
+    static TrustedTeam() {
+#if OSX
+        return ALTRunMacUpdateTrustedTeam()
+#else
+        return ""
+#endif
+    }
 
     static CanInstall(release) {
         if (!Platform.IsMac || MacUpdate.TrustedTeam() = "" || !IsObject(release))
@@ -41,11 +46,7 @@ class MacUpdate {
 
     static _Poll() {
 #if OSX
-        identity := ALTRunMacUpdateIdentityPoll()
-        if (identity != "") {
-            MacUpdate._identity := JSON.Parse(identity)
-            MacUpdate._identityPending := false
-        }
+        identityPending := ALTRunMacUpdateIdentityPending()
         if MacUpdate._installing {
             completed := ALTRunMacUpdateInstallPoll()
             if (completed != "") {
@@ -59,7 +60,7 @@ class MacUpdate {
                 MsgBox(I18n.T("Update.Failed", result["Error"]), App.Name, 48)
             }
         }
-        if (!MacUpdate._installing && !MacUpdate._identityPending)
+        if (!MacUpdate._installing && !identityPending)
             SetTimer(MacUpdate._timer, 0)
 #endif
     }
@@ -85,25 +86,17 @@ class MacUpdate {
 #CSharp
 using System.Linq;
 public static bool ALTRunMacUpdateBeginIdentity(string bundle) => ALTRunMacUpdater.BeginIdentity(bundle);
-public static string ALTRunMacUpdateIdentityPoll() => ALTRunMacUpdater.IdentityPoll();
+public static bool ALTRunMacUpdateIdentityPending() => ALTRunMacUpdater.IdentityPending();
+public static string ALTRunMacUpdateTrustedTeam() => ALTRunMacUpdater.TrustedTeam;
 public static bool ALTRunMacUpdateBeginInstall(string url, string sha, string version, string repository) => ALTRunMacUpdater.BeginInstall(url, sha, version, repository);
 public static string ALTRunMacUpdateInstallPoll() => ALTRunMacUpdater.InstallPoll();
 public static void ALTRunMacUpdateStop() => ALTRunMacUpdater.Stop();
 public static bool ALTRunMacUpdateSignalReady(string bundle, string version, string marker, string nonce)
     => ALTRunMacUpdater.SignalReady(bundle, version, marker, nonce);
-public static string ALTRunMacValidateUpdateArchive(string archive)
-{
-    try { return ALTRunMacUpdater.ValidateArchive(archive); }
-    catch (System.Exception error) { return "ERROR: " + error.Message; }
-}
-public static string ALTRunMacUpdateFixtureHelper(string current, string incoming, string backup, bool launchSucceeds)
-    => ALTRunMacUpdater.HelperScript(current, incoming, backup, 0, launchSucceeds ? "/usr/bin/true" : "/usr/bin/false");
-public static string ALTRunMacUpdateFixtureReadyHelper(string current, string incoming, string backup, string staging, string nonce)
-    => ALTRunMacUpdater.HelperScript(current, incoming, backup, 0, System.IO.Path.Combine(current, "Contents", "MacOS", "Fixture"), staging, nonce);
 
 private static class ALTRunMacUpdater
 {
-    private sealed record Identity(string Bundle, string BundleId, string Team, string Version, bool Trusted, string Error = "");
+    private sealed record Identity(string Bundle, string BundleId, string Team, string Version);
     private sealed record Command(int Code, string Output, string Error);
     private static System.Threading.Tasks.Task<Identity> identityJob;
     private static System.Threading.Tasks.Task<string> installJob;
@@ -130,16 +123,21 @@ private static class ALTRunMacUpdater
         identityJob = System.Threading.Tasks.Task.Run(() =>
         {
             try { return ReadIdentity(bundle); }
-            catch (System.Exception error) { return new Identity(bundle, "", "", "", false, error.Message); }
+            catch (System.Exception) { return null; }
         });
         return true;
     }
 
-    internal static string IdentityPoll()
+    internal static string TrustedTeam => identity?.Team ?? "";
+
+    internal static bool IdentityPending()
     {
-        if (identityJob?.IsCompleted != true) return "";
-        identity = identityJob.GetAwaiter().GetResult(); identityJob = null;
-        return System.Text.Json.JsonSerializer.Serialize(identity);
+        if (identityJob?.IsCompleted == true)
+        {
+            identity = identityJob.GetAwaiter().GetResult();
+            identityJob = null;
+        }
+        return identityJob != null;
     }
 
     private static Identity ReadIdentity(string bundle)
@@ -147,15 +145,7 @@ private static class ALTRunMacUpdater
         bundle = System.IO.Path.GetFullPath(bundle);
         if (!bundle.EndsWith(".app", System.StringComparison.OrdinalIgnoreCase) || new System.IO.DirectoryInfo(bundle).LinkTarget != null)
             throw new System.IO.InvalidDataException("The installed application is not a regular app bundle.");
-        string id = Plist(bundle, "CFBundleIdentifier"), version = Plist(bundle, "CFBundleShortVersionString");
-        if (id != "org.keysharp.ALTRun") return new Identity(bundle, id, "", version, false);
-        var signature = Run("/usr/bin/codesign", ["-d", "--verbose=4", bundle]);
-        string detail = signature.Output + "\n" + signature.Error;
-        var match = System.Text.RegularExpressions.Regex.Match(detail, @"(?m)^TeamIdentifier=([A-Z0-9]{10})\s*$");
-        if (signature.Code != 0 || !match.Success || !detail.Contains("Authority=Developer ID Application:", System.StringComparison.Ordinal))
-            return new Identity(bundle, id, "", version, false);
-        VerifyBundle(bundle, match.Groups[1].Value, id, version);
-        return new Identity(bundle, id, match.Groups[1].Value, version, true);
+        return VerifyBundle(bundle, "", "org.keysharp.ALTRun", "");
     }
 
     private static string Plist(string bundle, string key, System.Threading.CancellationToken token = default)
@@ -165,13 +155,15 @@ private static class ALTRunMacUpdater
         return result.Output.Trim();
     }
 
-    private static void VerifyBundle(string bundle, string team, string id, string version, System.Threading.CancellationToken token = default)
+    private static Identity VerifyBundle(string bundle, string team, string id, string version, System.Threading.CancellationToken token = default)
     {
-        if (Plist(bundle, "CFBundleIdentifier", token) != id || Plist(bundle, "CFBundleShortVersionString", token) != version)
+        string actualId = Plist(bundle, "CFBundleIdentifier", token), actualVersion = Plist(bundle, "CFBundleShortVersionString", token);
+        if (actualId != id || version.Length > 0 && actualVersion != version)
             throw new System.IO.InvalidDataException("The update's bundle identifier or version does not match the release.");
         var details = Run("/usr/bin/codesign", ["-d", "--verbose=4", bundle], token);
         string text = details.Output + "\n" + details.Error;
-        if (details.Code != 0 || !System.Text.RegularExpressions.Regex.IsMatch(text, @"(?m)^TeamIdentifier=" + System.Text.RegularExpressions.Regex.Escape(team) + @"\s*$")
+        var signer = System.Text.RegularExpressions.Regex.Match(text, @"(?m)^TeamIdentifier=([A-Z0-9]{10})\s*$");
+        if (details.Code != 0 || !signer.Success || team.Length > 0 && signer.Groups[1].Value != team
             || !text.Contains("Authority=Developer ID Application:", System.StringComparison.Ordinal))
             throw new System.IO.InvalidDataException("The update is not signed by the installed application's Developer ID team.");
         var verify = Run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", bundle], token);
@@ -179,11 +171,12 @@ private static class ALTRunMacUpdater
         var assess = Run("/usr/sbin/spctl", ["--assess", "--type", "execute", "--verbose=4", bundle], token);
         if (assess.Code != 0 || !(assess.Output + assess.Error).Contains("source=Notarized Developer ID", System.StringComparison.Ordinal))
             throw new System.IO.InvalidDataException("Gatekeeper did not accept the app as a notarized Developer ID application.");
+        return new Identity(bundle, actualId, signer.Groups[1].Value, actualVersion);
     }
 
     internal static bool BeginInstall(string url, string sha, string version, string repository)
     {
-        if (identity?.Trusted != true || installJob != null || handedOff) return false;
+        if (identity == null || installJob != null || handedOff) return false;
         cancellation = new System.Threading.CancellationTokenSource(System.TimeSpan.FromMinutes(5));
         installJob = System.Threading.Tasks.Task.Run(async () =>
         {
@@ -332,6 +325,7 @@ private static class ALTRunMacUpdater
             else if (!metadata && !name.EndsWith('/')) regular.Add(canonical);
         }
         var resolvedFiles = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+        var resolvedPaths = new System.Collections.Generic.List<string>();
         foreach (string name in names)
         {
             string physicalName = name.StartsWith("__MACOSX/", System.StringComparison.Ordinal) ? name[9..] : name;
@@ -344,15 +338,14 @@ private static class ALTRunMacUpdater
             }
             if (name.StartsWith("__MACOSX/", System.StringComparison.Ordinal) || name == "__MACOSX") continue;
             string resolved = ResolveArchivePath(name, links, root);
+            resolvedPaths.Add(resolved);
             if (regular.Contains(name) && !resolvedFiles.Add(resolved))
                 throw new System.IO.InvalidDataException("Archive files collide through symbolic links.");
         }
         if (root.Length == 0 || !regular.Contains(root + "/Contents/Info.plist")) throw new System.IO.InvalidDataException("The archive has no app Info.plist.");
         // A regular file may not be an ancestor of another entry. Ditto must not reinterpret it as a directory.
-        foreach (string name in names)
+        foreach (string resolved in resolvedPaths)
         {
-            if (name.StartsWith("__MACOSX/", System.StringComparison.Ordinal) || name == "__MACOSX") continue;
-            string resolved = ResolveArchivePath(name, links, root);
             string parent = resolved;
             while (parent.LastIndexOf('/') is int slash && slash >= 0)
             {
@@ -454,7 +447,7 @@ private static class ALTRunMacUpdater
         catch { return false; }
     }
 
-    internal static string HelperScript(string current, string source, string backup, int pid, string opener, string staging = "", string nonce = "")
+    internal static string HelperScript(string current, string source, string backup, int pid, string opener, string staging, string nonce)
     {
         string quote(string value) => "'" + value.Replace("'", "'\"'\"'") + "'";
         // Both app renames stay on the installation volume. Preserve the previous app after success.
@@ -464,8 +457,6 @@ private static class ALTRunMacUpdater
             + "/bin/mv \"$current\" \"$backup\"\n"
             + "if ! /bin/mv \"$incoming\" \"$current\"; then /bin/mv \"$backup\" \"$current\"; "
             + (pid > 0 ? "/usr/bin/open -n \"$current\" || :; " : "") + "exit 4; fi\n";
-        if (nonce.Length == 0)
-            return header + "if ! " + quote(opener) + " \"$current\"; then\n /bin/mv \"$current\" \"$incoming\"\n /bin/mv \"$backup\" \"$current\"\n exit 5\nfi\n/bin/rm -f \"$0\"\n";
         string marker = System.IO.Path.Combine(staging, "ready");
         return header + "marker=" + quote(marker) + "\nnonce=" + quote(nonce) + "\n"
             + "rollback() {\n kill \"$new_pid\" 2>/dev/null || :\n /bin/sleep 0.1\n kill -9 \"$new_pid\" 2>/dev/null || :\n wait \"$new_pid\" 2>/dev/null || :\n"

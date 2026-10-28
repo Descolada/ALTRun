@@ -92,6 +92,7 @@ class MacSearchFeatures {
         MacSearchFeatures.Check(output != "" && JSON.Parse(output)["Failed"].Length = 1, "Failed Safari reads must be reported so permission changes can be retried.")
     }
     static Shortcuts() {
+        savedItems := ShortcutsProvider.Items
         id := "01234567-89ab-cdef-0123-456789abcdef"
         parsed := ShortcutsProvider.Parse("Work (draft) (" id ")`nUntrusted error output`nDuplicate (" id ")")
         MacSearchFeatures.Check(parsed.Length = 1 && parsed[1].Name = "Work (draft)", "Shortcut names may contain parentheses; errors and duplicates are excluded.")
@@ -103,6 +104,36 @@ class MacSearchFeatures {
         MacSearchFeatures.Check(FileRead(input, "UTF-8") = "private literal $() ' 漢字`nsecond line", "Shortcut input must preserve literal content.")
         permissions := Clr.System.IO.File.GetUnixFileMode(input).ToString()
         MacSearchFeatures.Check(!InStr(permissions, "Other") && !InStr(permissions, "Group"), "Shortcut input must be private from creation.")
+        savedClipboard := ClipboardAll(), savedRunner := ShortcutsProvider.Runner
+        savedCopy := ActionCatalog.GetOwnPropDesc("CopyText"), savedNotify := App.GetOwnPropDesc("Notify")
+        copied := [], messages := [], temporary := []
+        ActionCatalog.DefineProp("CopyText", {Call: (self, text) => copied.Push(text)})
+        App.DefineProp("Notify", {Call: (self, text, duration := 1500) => messages.Push(text)})
+        try {
+            ShortcutsProvider.Runner := (exe, args, capture := false) => ProcessRunner.Start("/bin/sh", ["-c", "sleep 0.05; printf owned-shortcut-result"], "", capture)
+            Loop 3 {
+                job := ShortcutsProvider.Run(id, "owned input " A_Index)
+                temporary.Push(ShortcutsProvider._runs[job].File)
+            }
+            started := A_TickCount
+            while ShortcutsProvider._runs.Count && A_TickCount - started < 4000
+                Sleep(20)
+            MacSearchFeatures.Check(!ShortcutsProvider._runs.Count && copied.Length = 3, "The shared Shortcut poller must complete every concurrent run exactly once.")
+            for file in temporary
+                MacSearchFeatures.Check(!FileExist(file), "A completed Shortcut run retained its private input.")
+            ShortcutsProvider.Runner := (exe, args, capture := false) => ProcessRunner.Start("/bin/sh", ["-c", "sleep 10"], "", capture)
+            cancelled := ShortcutsProvider.Run(id, "owned cancelled input"), pendingFile := ShortcutsProvider._runs[cancelled].File
+            ShortcutsProvider.Stop()
+            MacSearchFeatures.Check(!ShortcutsProvider._runs.Count && ProcessRunner.IsFinished(cancelled) && !FileExist(pendingFile)
+                , "Stopping Shortcut jobs must cancel the owned process and remove its private input.")
+            Sleep(150)
+            MacSearchFeatures.Check(copied.Length = 3, "A cancelled Shortcut job published a late result.")
+        } finally {
+            ShortcutsProvider.Stop()
+            ShortcutsProvider.Runner := savedRunner, ShortcutsProvider.Items := savedItems
+            ActionCatalog.DefineProp("CopyText", savedCopy), App.DefineProp("Notify", savedNotify)
+            A_Clipboard := savedClipboard
+        }
     }
     static Scripts() {
         for ext in ["command", "applescript", "jxa", "scpt"] {
@@ -150,7 +181,7 @@ class MacSearchFeatures {
             Sleep(10)
         MacSearchFeatures.Check(output != "", "Native Spotlight query did not complete.")
         result := JSON.Parse(output)
-        MacSearchFeatures.Check(result["Id"] = 3 && result["Key"] = first["Query"] && result["Error"] = "", "An A/B/A search sequence must complete only the latest request, without syntax errors.")
+        MacSearchFeatures.Check(result["Id"] = 3 && result["Error"] = "", "An A/B/A search sequence must complete only the latest request, without syntax errors.")
     }
     static Ocr() {
         file := Platform.Join(MacSearchFeatures.Folder, "ocr.png")

@@ -10,7 +10,6 @@ class PreferencesWindow {
     static ContentX := 190, ContentW := 560, LabelW := 190
     static WidthS := 70, WidthM := 220, ButtonW := 200, ButtonH := 26       ; WidthL = 整个控件列 (_InputW)
     static WidthK := 150                                                    ; 热键框 ("K")
-    static _pairX := 0, _pairFirstW := 0, _pairSecondW := 0, _pairSizes := ["", ""]
     static ButtonY := 619                                                   ; 底部按钮的位置; 页面内容要在它上面 (y < ButtonY - 10)
     static _positionReset := false
     static Chrome := "", Palette := Map(), UiFont := 10, HintFont := 9
@@ -310,28 +309,10 @@ class PreferencesWindow {
     }
 
     static _BuildPages() {
-        PreferencesWindow._BuildGeneral()
-        PreferencesWindow._BuildWindow()
-        PreferencesWindow._BuildKeyboard()
-        PreferencesWindow._BuildAppearance()
-        PreferencesWindow._BuildFeatures()
-        PreferencesWindow._BuildApplications()
-        PreferencesWindow._BuildFileSearch()
-        PreferencesWindow._BuildFileIndex()
-        PreferencesWindow._BuildCommands()
-        PreferencesWindow._BuildSnippets()
-        PreferencesWindow._BuildClipboard()
-        PreferencesWindow._BuildWebSearch()
-        PreferencesWindow._BuildCalculator()
-        PreferencesWindow._BuildScripts()
-        PreferencesWindow._BuildHotkeys()
-        if (Platform.IsWindows || Platform.IsMac) {
-            PreferencesWindow._BuildQuickSwitch()
-            PreferencesWindow._BuildQuickSwitchPanel()
-            PreferencesWindow._BuildDateStamp()
+        for key in PreferencesWindow.PageKeys {
+            builder := "_Build" SubStr(key, 12)
+            PreferencesWindow.%builder%()
         }
-        PreferencesWindow._BuildUsage()
-        PreferencesWindow._BuildAdvanced()
     }
 
     static _BuildGeneral() {
@@ -375,7 +356,7 @@ class PreferencesWindow {
                     }
                 }
                 configured := PreferencesWindow.GetPath(PreferencesWindow.Working, "General.MacInputSource")
-                if (configured != "" && !PreferencesWindow._HasValue(values, configured)) {
+                if (configured != "" && !values.Contains(configured)) {
                     values.Push(configured)
                     labels.Push(configured)
                 }
@@ -660,7 +641,7 @@ class PreferencesWindow {
         PreferencesWindow._Lines(base "AutoSwitchExclude", "Prefs.QSAutoExclude", 3)
     }
 
-    static _BuildQuickSwitchPanel() {
+    static _BuildQSPanel() {
         base := "Extensions.QuickSwitch."
         PreferencesWindow._BeginPage("Prefs.Page.QSPanel", 160)
         PreferencesWindow._Check(base "ShowPanel", "Prefs.QSPanel")
@@ -852,13 +833,6 @@ class PreferencesWindow {
         return SubStr(first, 1, StrLen(second)) == second || SubStr(second, 1, StrLen(first)) == first
     }
 
-    static _HasValue(values, expected) {
-        for value in values
-            if (value == expected)
-                return true
-        return false
-    }
-
     static _ChangeDataFolder() {
         current := AppSettings.DataDir
         folder := DirSelect(current, 3, I18n.T("Prefs.DataFolderPrompt"))
@@ -920,7 +894,6 @@ class PreferencesWindow {
     static _BeginPage(nameKey, labelW := 190) {
         PreferencesWindow.Pages.Push({Key: nameKey, Name: I18n.T(nameKey), Wiki: PreferencesWindow.WikiPage(nameKey), Controls: []})
         PreferencesWindow._y := PreferencesWindow.HeaderH
-        PreferencesWindow._pairX := 0                                       ; 这一页成对设置的右列位置, 见 _Pair
         PreferencesWindow.LabelW := Max(180, labelW)
     }
 
@@ -1065,23 +1038,11 @@ class PreferencesWindow {
         return ctrl
     }
 
-    static _Field(path, labelKey, size, kind := "text") {
+    static _Field(path, labelKey, size, kind := "text", values := "", labels := "") {
         label := PreferencesWindow._Label(labelKey)
-        if (kind = "hotkey")
-            return PreferencesWindow._BelowInput(labelKey, label, PreferencesWindow._HotkeyBox(PreferencesWindow._InputX(), path))
-        value := PreferencesWindow.GetPath(PreferencesWindow.Working, path)
-        browseKind := (kind = "file" || kind = "folder")
-        ctrl := PreferencesWindow._Add("Edit", "x" PreferencesWindow._InputX() " w" PreferencesWindow._Width(size, browseKind) " r1 -Multi" (kind = "number" ? " Number" : ""), value)
-        if browseKind {
-            browse := PreferencesWindow._Add("Button", "x+4 yp-1 w30", I18n.T("Prefs.Browse"))
-            browseFn := ItemEditor._Browser(ctrl, kind, PreferencesWindow.Gui)
-            browse.OnEvent("Click", (p*) => (browseFn(p*), PreferencesWindow.MarkDirty()))
-        }
-        if (kind = "number")
-            PreferencesWindow._Bind(path, () => IsInteger(ctrl.Value) ? Integer(ctrl.Value) : 0)
-        else
-            PreferencesWindow._Bind(path, () => ctrl.Value)
+        ctrl := PreferencesWindow._Input(PreferencesWindow._InputX(), path, labelKey, size, kind, values, labels)
         PreferencesWindow._BelowInput(labelKey, label, ctrl)
+        return ctrl
     }
 
     static _BelowInput(labelKey, controls*) {
@@ -1090,18 +1051,8 @@ class PreferencesWindow {
         PreferencesWindow._Desc(labelKey, PreferencesWindow._InputX())
     }
 
-    static _Choice(path, labelKey, values, labels, size := "M") {
-        label := PreferencesWindow._Label(labelKey)
-        ctrl := PreferencesWindow._Add("DropDownList", "x" PreferencesWindow._InputX() " w" PreferencesWindow._Width(size), labels)
-        current := PreferencesWindow.GetPath(PreferencesWindow.Working, path)
-        ctrl.Value := 1
-        for index, value in values
-            if (value = current)
-                ctrl.Value := index
-        PreferencesWindow._Bind(path, () => values[ctrl.Value])
-        PreferencesWindow._BelowInput(labelKey, label, ctrl)
-        return ctrl
-    }
+    static _Choice(path, labelKey, values, labels, size := "M")
+        => PreferencesWindow._Field(path, labelKey, size, "choice", values, labels)
 
     static _Lines(path, labelKey, rows) {
         label := PreferencesWindow._Label(labelKey)
@@ -1112,13 +1063,7 @@ class PreferencesWindow {
         PreferencesWindow._Desc(labelKey, PreferencesWindow._InputX())
     }
 
-    static _Csv(path, labelKey, size) {
-        label := PreferencesWindow._Label(labelKey)
-        value := PreferencesWindow.JoinCsv(PreferencesWindow.GetPath(PreferencesWindow.Working, path))
-        ctrl := PreferencesWindow._Add("Edit", "x" PreferencesWindow._InputX() " w" PreferencesWindow._Width(size) " r1 -Multi", value)
-        PreferencesWindow._Bind(path, () => PreferencesWindow.SplitCsv(ctrl.Value))
-        PreferencesWindow._BelowInput(labelKey, label, ctrl)
-    }
+    static _Csv(path, labelKey, size) => PreferencesWindow._Field(path, labelKey, size, "csv")
 
     static _Button(labelKey, fn, group := "") {
         if (group != "")
@@ -1134,18 +1079,13 @@ class PreferencesWindow {
         label := PreferencesWindow._Label(left[2])
         first := PreferencesWindow._Input(PreferencesWindow._InputX(), left*)
         first.GetPos(&x, , &w)
-        sameAsFirstRow := PreferencesWindow._pairX && left[3] = PreferencesWindow._pairSizes[1] && right[3] = PreferencesWindow._pairSizes[2]
-        if sameAsFirstRow {                                                 ; 和这一页第一行一样的输入框: 用同样的宽度, 右边对齐到同一列
-            w := PreferencesWindow._pairFirstW
-            first.Move(, , w)
-        }
         PreferencesWindow._y += 3
         label2 := PreferencesWindow._Add("Text", "x" (x + w + 18), I18n.T(right[2]))
         PreferencesWindow._y -= 3
         label2.GetPos(&x2, , &w2)
-        secondW := sameAsFirstRow ? PreferencesWindow._pairSecondW : 0
+        secondW := 0
         overflow := x2 + w2 + 8 + (secondW ? secondW : PreferencesWindow._Width(right[3])) - (PreferencesWindow.ContentX + PreferencesWindow.ContentW)
-        if (!sameAsFirstRow && overflow > 0 && left[3] = right[3] && w > PreferencesWindow.WidthS) {
+        if (overflow > 0 && left[3] = right[3] && w > PreferencesWindow.WidthS) {
             w := Max(PreferencesWindow.WidthS, (PreferencesWindow.ContentX + PreferencesWindow.ContentW - x - 18 - w2 - 8) // 2)
             first.Move(, , w)
             label2.Move(x + w + 18)
@@ -1166,16 +1106,6 @@ class PreferencesWindow {
             label2.GetPos(&x2)
         }
         secondX := x2 + w2 + 8
-        if (overflow <= 0) {
-            target := PreferencesWindow._pairX
-            if !target
-                PreferencesWindow._pairX := secondX, PreferencesWindow._pairFirstW := w, PreferencesWindow._pairSizes := [left[3], right[3]]
-                , PreferencesWindow._pairSecondW := secondW ? secondW : PreferencesWindow._Width(right[3])
-            else if (w = PreferencesWindow._pairFirstW && target >= secondX && target + (secondW ? secondW : PreferencesWindow._Width(right[3])) <= PreferencesWindow.ContentX + PreferencesWindow.ContentW) {
-                label2.Move(target - 8 - w2)
-                secondX := target
-            }
-        }
         second := PreferencesWindow._Input(secondX, right*)
         if secondW
             second.Move(, , secondW)
@@ -1196,7 +1126,13 @@ class PreferencesWindow {
             return ctrl
         }
         text := (kind = "csv") ? PreferencesWindow.JoinCsv(current) : current
-        ctrl := PreferencesWindow._Add("Edit", "x" x " w" PreferencesWindow._Width(size) " r1 -Multi" (kind = "number" ? " Number" : ""), text)
+        browseKind := (kind = "file" || kind = "folder")
+        ctrl := PreferencesWindow._Add("Edit", "x" x " w" PreferencesWindow._Width(size, browseKind) " r1 -Multi" (kind = "number" ? " Number" : ""), text)
+        if browseKind {
+            browse := PreferencesWindow._Add("Button", "x+4 yp-1 w30", I18n.T("Prefs.Browse"))
+            browseFn := ItemEditor._Browser(ctrl, kind, PreferencesWindow.Gui)
+            browse.OnEvent("Click", (p*) => (browseFn(p*), PreferencesWindow.MarkDirty()))
+        }
         switch kind {
             case "number": PreferencesWindow._Bind(path, () => IsInteger(ctrl.Value) ? Integer(ctrl.Value) : 0)
             case "csv":    PreferencesWindow._Bind(path, () => PreferencesWindow.SplitCsv(ctrl.Value))
