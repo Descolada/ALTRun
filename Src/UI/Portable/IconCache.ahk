@@ -3,8 +3,11 @@
 
 class IconCache {
     static Size := 32, Scale := 1, OnLoaded := "", MaxIcons := 1500
-    static _images := IconCache._FileMap(), _sources := IconCache._FileMap(), _indices := IconCache._FileMap()
+    static _images := IconCache._FileMap(), _sources := IconCache._FileMap()
     static PrefetchMax := 300, PrefetchGapMs := 30, _prefetch := [], _prefetchTimer := "", _prefetchBusy := false
+    static CanLoadVisible := "", CanQueueVisible := ""
+    static _visible := [], _visibleKeys := IconCache._FileMap(), _visibleTimer := "", _visibleBusy := false
+    static _failed := IconCache._FileMap()
 
     static _FileMap() {
         files := Map()
@@ -25,19 +28,25 @@ class IconCache {
             spec := SubStr(spec, 7)
         if (Platform.IsWindows && RegExMatch(spec, "i)^(res:|ext:|url:|folder:|shell:|::\{)"))
             return spec
+        if (Platform.IsMac && RegExMatch(spec, "i)^(ext:|url:|folder:)"))
+            return spec
         if FileExist(spec) {
             SplitPath(spec, , , &ext)
-            if (Platform.IsWindows || RegExMatch(ext, "i)^(ico|png|jpg|jpeg|gif|bmp|tif|tiff|svg|webp)$"))
+            if (Platform.IsWindows || Platform.IsMac || RegExMatch(ext, "i)^(ico|png|jpg|jpeg|gif|bmp|tif|tiff|svg|webp)$"))
                 return spec
         }
         return ""
     }
 
     static Get(spec) {
+        ; Cached images need no filesystem or shell lookup during typing and mouse navigation.
+        normalized := IconCache._Normalize(spec), pixels := IconCache._Pixels(), key := IconCache._Key(normalized, pixels)
+        if IconCache._images.Has(key)
+            return IconCache._images[key]
         file := IconCache.File(spec)
         if (file = "")
             return ""
-        pixels := IconCache._Pixels(), key := IconCache._Key(file, pixels)
+        key := IconCache._Key(file, pixels)
         if !IconCache._images.Has(key) {
             if (IconCache._images.Count >= IconCache.MaxIcons)
                 IconCache.Clear()
@@ -50,6 +59,61 @@ class IconCache {
             IconCache._sources[key] := file
         }
         return IconCache._images[key]
+    }
+
+    static _Normalize(spec) => SubStr(spec, 1, 6) = "thumb:" ? SubStr(spec, 7) : spec
+
+    ; A paint must never invoke an image decoder or a native shell service.
+    static Peek(spec) {
+        spec := IconCache._Normalize(spec)
+        if (spec = "")
+            return ""
+        key := IconCache._Key(spec, IconCache._Pixels())
+        if IconCache._images.Has(key)
+            return IconCache._images[key]
+        if (IsObject(IconCache.CanQueueVisible) && !IconCache.CanQueueVisible.Call())
+            return ""
+        if (IconCache._failed.Has(key) && A_TickCount - IconCache._failed[key] < 30000)
+            return ""
+        if (!IconCache._visibleKeys.Has(key) && IconCache._visible.Length < IconCache.PrefetchMax) {
+            IconCache._visibleKeys[key] := true
+            IconCache._visible.Push({Spec: spec, Key: key})
+            if (IconCache._visibleTimer = "")
+                IconCache._visibleTimer := Logger.Watch("visible icon load", () => IconCache._LoadVisible())
+            SetTimer(IconCache._visibleTimer, IconCache.PrefetchGapMs)
+        }
+        return ""
+    }
+
+    static BeginFrame() {
+        ; Drop misses from the previous query before queuing the currently visible rows.
+        IconCache._visible := [], IconCache._visibleKeys.Clear()
+        if (IconCache._visibleTimer != "")
+            SetTimer(IconCache._visibleTimer, 0)
+    }
+
+    static _LoadVisible() {
+        if (IconCache._visibleBusy || !IconCache._visible.Length
+            || (IsObject(IconCache.CanLoadVisible) && !IconCache.CanLoadVisible.Call()))
+            return
+        IconCache._visibleBusy := true
+        try {
+            request := IconCache._visible.RemoveAt(1)
+            if (request.Key != IconCache._Key(request.Spec, IconCache._Pixels()))
+                return
+            loaded := IconCache.Get(request.Spec)
+            if !IsObject(loaded) {
+                if (IconCache._failed.Count >= IconCache.MaxIcons)
+                    IconCache._failed.Clear()
+                IconCache._failed[request.Key] := A_TickCount
+            }
+            if (IsObject(loaded) && IsObject(IconCache.OnLoaded))
+                IconCache.OnLoaded.Call()
+        } finally {
+            if (!IconCache._visible.Length && IconCache._visibleTimer != "")
+                SetTimer(IconCache._visibleTimer, 0)
+            IconCache._visibleBusy := false
+        }
     }
 
     static _Pixels() => Max(1, Round(IconCache.Size * IconCache.Scale))
@@ -71,6 +135,11 @@ class IconCache {
         SplitPath(spec, , , &extension)
         if !RegExMatch(extension, "i)^(ico|png|jpg|jpeg|gif|bmp|tif|tiff|svg|webp|exe|dll|icl|cpl|scr)$")
             return IconCache._ShellImage(spec, pixels)
+#endif
+#if OSX
+        SplitPath(spec, , , &extension)
+        if !RegExMatch(extension, "i)^(ico|icns|png|jpg|jpeg|gif|bmp|tif|tiff|svg|webp)$")
+            return ALTRunMacFileIcon(spec, pixels)
 #endif
         return Image.FromFile(spec, pixels, pixels)
     }
@@ -130,32 +199,16 @@ class IconCache {
         return IconCache.Get(spec)
     }
 
-    static AddTo(imageList, spec) {
-        file := IconCache.File(spec)
-        if (file = "")
-            return 0
-        key := imageList "|" IconCache._Key(file, IconCache._Pixels())
-        if !IconCache._indices.Has(key) {
-            iconImage := IconCache.Get(file)
-            if !IsObject(iconImage)
-                return 0
-            ; IL_Add consumes this bitmap copy; the decoded image stays cached for other lists.
-            try IconCache._indices[key] := IL_Add(imageList, "HBITMAP:" iconImage.ToBitmap(), 0xFF00FF, true)
-            catch
-                return 0
-        }
-        return IconCache._indices[key]
-    }
-
     static Clear() {
         if (IconCache._prefetchTimer != "")
             SetTimer(IconCache._prefetchTimer, 0)
         IconCache._prefetch := []
+        IconCache.BeginFrame()
+        IconCache._failed.Clear()
         for file, img in IconCache._images
             img.Dispose()
         IconCache._images.Clear()
         IconCache._sources.Clear()
-        IconCache._indices.Clear()
     }
 
     static Prefetch(specs) {
@@ -267,8 +320,31 @@ class IconCache {
         return RegExMatch(target, "i)^(\\\\|//|smb:|nfs:)") != 0 || Path.IsRemote(target)
     }
 
-    static _Extension(target) {
-        SplitPath(RTrim(target, "\/"), , , &ext)
-        return (RegExMatch(ext, "^(?=.*[A-Za-z])[A-Za-z0-9]{1,6}$") || ext = "appref-ms") ? ext : ""
-    }
 }
+
+#if OSX
+#CSharp
+public static object ALTRunMacFileIcon(string specification, long pixels)
+{
+    string kind = specification.ToLowerInvariant();
+    bool type = kind is "folder:" or "url:" || kind.StartsWith("ext:", System.StringComparison.Ordinal);
+    string value = kind == "folder:" ? "public.folder" : kind == "url:" ? "public.url"
+        : type ? specification[4..].TrimStart('.') : System.IO.Path.GetFullPath(specification);
+    var workspace = ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSWorkspace"), ALTRunMacObjC.Selector("sharedWorkspace"));
+    var icon = ALTRunMacObjC.SendArgument(workspace, ALTRunMacObjC.Selector(type ? "iconForFileType:" : "iconForFile:"), ALTRunMacObjC.String(value));
+    if (icon == System.IntPtr.Zero) return "";
+    // Draw the native icon directly at the requested size. TIFFRepresentation expands every
+    // representation (including 1024px frames) and can stall a search for seconds.
+    var copied = ALTRunMacObjC.Send(icon, ALTRunMacObjC.Selector("copy"));
+    var runtime = System.Type.GetType("MonoMac.ObjCRuntime.Runtime, MonoMac", true);
+    var wrap = System.Array.Find(runtime.GetMethods(), method => method.Name == "GetNSObject"
+        && !method.IsGenericMethod && method.GetParameters().Length == 2);
+    var native = wrap.Invoke(null, [copied, true]);
+    var handlerType = System.Type.GetType("Eto.Mac.Drawing.BitmapHandler, Eto.Mac64", true);
+    var handler = (Eto.Drawing.Bitmap.IHandler)System.Activator.CreateInstance(handlerType, native);
+    using var bitmap = new Eto.Drawing.Bitmap(handler);
+    using var sized = new Eto.Drawing.Bitmap(bitmap, (int)pixels, (int)pixels);
+    return Keysharp.Builtins.Ks.KeysharpImage.FromBitmap(null, sized);
+}
+#EndCSharp
+#endif

@@ -1616,7 +1616,8 @@ class ProviderTests {
         FileAppend("", root "\empty.txt")
         eq("silent: no output", ScriptProvider._Finished(byTitle["Restart Explorer"], root "\empty.txt"), I18n.T("Script.Done", "Restart Explorer"))
         FileAppend("; @altrun.title New One`n", root "\new.ahk", "UTF-8")
-        ScriptProvider._checked := 0                                         ; the folder changed: read again at the next search
+        ScriptProvider._checked := 0                                         ; the folder changed: the idle refresh makes it searchable
+        ScriptProvider._RefreshIfChanged()
         eq("refresh", titles("new one"), "New One")
         ScriptProvider.Folder := saved[1], ScriptProvider.Scripts := saved[2]
         ; Opening the Scripts folder the first time: three examples (one form each) are created and all can be read; an existing folder is left alone

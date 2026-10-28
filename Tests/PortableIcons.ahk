@@ -53,7 +53,10 @@ class PortableIcons {
 #endif
 #if WINDOWS
         PortableIcons.Windows()
+#elif OSX
+        PortableIcons.Mac()
 #endif
+        PortableIcons.Deferred(file)
         IconCache.Clear()
         IconCache.MaxIcons := 2
         for density in [1, 1.5, 2] {
@@ -63,6 +66,75 @@ class PortableIcons {
         }
         FileAppend("PASS PORTABLE_ICONS native specifications, density, remote guards and bitmap ownership`n", "*")
         ExitApp(0)
+    }
+
+    static Deferred(file) {
+        decode := IconCache.GetOwnPropDesc("_Decode").Call
+        ready := IconCache.CanLoadVisible, queueReady := IconCache.CanQueueVisible, onLoaded := IconCache.OnLoaded
+        originalTheme := ThemeManager.Current, originalScale := IconCache.Scale
+        layout := Map()
+        for name in ["Padding", "InputHeight", "ListTop", "IconSize", "FooterHeight"]
+            layout[name] := SearchWindow.%name%
+        state := {Decodes: 0, Changes: 0}
+        IconCache.Clear()
+        try {
+            IconCache.DefineProp("_Decode", {Call: (self, spec, pixels) => (state.Decodes += 1, decode.Call(self, spec, pixels))})
+            IconCache.CanLoadVisible := () => false
+            IconCache.CanQueueVisible := () => true
+            IconCache.OnLoaded := () => state.Changes += 1
+            ThemeManager.Current := ThemeManager.Defaults()
+            SearchWindow.Padding := 10, SearchWindow.InputHeight := 34, SearchWindow.ListTop := 64
+            SearchWindow.IconSize := 32, SearchWindow.FooterHeight := 0
+            item := ResultItem("Cold icon fixture", "Synthetic result", {Icon: file})
+            row := {Index: 1, Item: item, X: 10, Y: 64, Width: 620, Height: 48, Title: item.Title, Subtitle: item.Subtitle
+                , Shortcut: "Ctrl+1", Background: "DDE7F6", Selected: true}
+            rendered := LauncherCanvas.Render(640, 124, 1, [row])
+            try PortableIcons.Assert(state.Decodes = 0 && IconCache._visible.Length = 1, "Rendering synchronously decoded a cold icon.")
+            finally rendered.Dispose()
+            IconCache._LoadVisible()
+            PortableIcons.Assert(state.Decodes = 0, "Visible icon decoding interrupted a busy input field.")
+            IconCache.BeginFrame()
+            IconCache.Peek("thumb:" file), IconCache.Peek(file)
+            PortableIcons.Assert(IconCache._visible.Length = 1, "Visible icon requests were not deduplicated for the current frame.")
+            secondFile := Platform.Join(PortableIcons.Folder, "second.png")
+            FileCopy(file, secondFile, true)
+            IconCache.Peek(secondFile)
+            IconCache.CanLoadVisible := () => true
+            IconCache._LoadVisible()
+            PortableIcons.Assert(state.Decodes = 1 && state.Changes = 1 && IsObject(IconCache.Peek(file))
+                , "A deferred icon did not populate the cache and request a repaint.")
+            PortableIcons.Assert(IconCache._visible.Length = 1, "One timer tick decoded more than one queued icon.")
+            IconCache.Peek(file)
+            PortableIcons.Assert(state.Decodes = 1, "A warm paint decoded its icon again.")
+            IconCache._LoadVisible()
+            PortableIcons.Assert(state.Decodes = 2 && !IconCache._visible.Length, "The remaining deferred icon was not decoded on the next tick.")
+            IconCache.Clear()
+            IconCache.Scale := 1
+            IconCache.Peek(file)
+            IconCache.Scale := 2
+            IconCache._LoadVisible()
+            PortableIcons.Assert(state.Decodes = 2 && !IconCache._images.Count, "An old-density request was decoded for a different display.")
+            IconCache.Peek(file), IconCache._LoadVisible()
+            PortableIcons.Assert(IconCache.Peek(file).Width = IconCache.Size * 2, "The deferred icon used the old display density.")
+            IconCache.Clear()
+            IconCache.DefineProp("_Decode", {Call: (self, spec, pixels) => (state.Decodes += 1, "")})
+            IconCache.Peek(file), IconCache._LoadVisible()
+            IconCache.BeginFrame()
+            IconCache.Peek(file)
+            PortableIcons.Assert(state.Decodes = 4 && !IconCache._visible.Length, "A failed icon was repeatedly decoded while painting.")
+            IconCache.Clear()
+            IconCache.CanQueueVisible := () => false
+            IconCache.Peek(file)
+            PortableIcons.Assert(!IconCache._visible.Length, "Preparing a hidden frame queued recurring icon work.")
+            FileAppend("PASS PORTABLE_ICONS deferred render misses, busy-input gate, one load per tick, clear, density and failed-icon backoff`n", "*")
+        } finally {
+            IconCache.DefineProp("_Decode", {Call: decode})
+            IconCache.CanLoadVisible := ready, IconCache.CanQueueVisible := queueReady, IconCache.OnLoaded := onLoaded
+            ThemeManager.Current := originalTheme, IconCache.Scale := originalScale
+            for name, value in layout
+                SearchWindow.%name% := value
+            IconCache.Clear()
+        }
     }
 
 #if WINDOWS
@@ -77,6 +149,21 @@ class PortableIcons {
             PortableIcons.Assert(IconCache._sources[IconCache._Key(spec, 64)] == spec, "The icon source was replaced by a generic ALTRun bitmap: " spec)
         }
         PortableIcons.Assert(IconCache.Get(shortcut) = IconCache.Get(shortcut), "A shortcut icon was decoded again instead of cached.")
+    }
+#endif
+
+#if OSX
+    static Mac() {
+        note := Platform.Join(PortableIcons.Folder, "note.txt")
+        FileAppend("Synthetic native icon fixture.", note)
+        for spec in ["/System/Applications/Utilities/Terminal.app", note, PortableIcons.Folder, "ext:.txt", "folder:", "url:"
+            , "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericApplicationIcon.icns"] {
+            decoded := IconCache.Get(spec)
+            PortableIcons.Assert(IsObject(decoded) && decoded.Width = 64 && decoded.Height = 64, "macOS native icon failed: " spec)
+            PortableIcons.Assert(IconCache._sources[IconCache._Key(spec, 64)] == spec, "The native icon lost its source specification: " spec)
+            PortableIcons.Assert(IconCache.Get(spec) = decoded, "A native icon was decoded again instead of cached.")
+        }
+        FileAppend("PASS PORTABLE_ICONS macOS application, document, folder and type icons`n", "*")
     }
 #endif
 

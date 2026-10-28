@@ -12,9 +12,6 @@
 class TerminalProvider {
     static Id := "Terminal"
 
-    static Init() {
-    }
-
     static Search(query) {
         options := AppSettings.Feature("Terminal")
         if !query.MatchPrefix(options["Prefix"], &command)
@@ -84,15 +81,14 @@ class TerminalProvider {
     static _Launch(command, folder) {
         shell := TerminalProvider._Shell()
 #if OSX
-        text := "cd -- " ProcessRunner.QuoteShell(folder)
-        if (command != "") {
-            shellArgs := InStr(shell, "pwsh") ? " -NoExit -Command " : " -lc "
-            shellCommand := InStr(shell, "pwsh") ? command : command "; exec " ProcessRunner.QuoteShell(shell) " -i"
-            text .= "; " ProcessRunner.QuoteShell(shell) shellArgs ProcessRunner.QuoteShell(shellCommand)
-        } else
-            text .= "; " ProcessRunner.QuoteShell(shell) (InStr(shell, "pwsh") ? "" : " -i")
-        apple := 'tell application "Terminal"' "`nactivate`ndo script " ProcessRunner.QuoteAppleScript(text) "`nend tell"
-        return ProcessRunner.Start("/usr/bin/osascript", ["-e", apple])
+        options := AppSettings.Feature("Terminal")
+        terminal := options.Has("Terminal") ? options["Terminal"] : "auto"
+        launch := TerminalProvider.MacLaunch(command, folder, shell, terminal)
+        try return ProcessRunner.StartApplication("/usr/bin/osascript", ["-e", launch.Script])
+        catch as e {
+            try FileDelete(launch.Path)
+            throw e
+        }
 #else
         options := AppSettings.Feature("Terminal")
         configured := options.Has("Terminal") ? options["Terminal"] : EnvGet("TERMINAL")
@@ -135,6 +131,53 @@ class TerminalProvider {
 #endif
     }
 
+    static _MacTerminal(terminal) {
+        if (terminal = "" || terminal = "auto" || terminal = "Terminal" || terminal = "Terminal.app")
+            return "com.apple.Terminal"
+        if (terminal = "iTerm" || terminal = "iTerm2" || terminal = "iTerm.app")
+            return "com.googlecode.iterm2"
+        throw Error("Unsupported macOS terminal: " terminal ". Choose auto, Terminal or iTerm in Features.Terminal.Terminal.")
+    }
+
+    static MacShellScript(command, folder, shell) {
+        quoted := ProcessRunner.QuoteShell(shell)
+        script := "#!/bin/sh`n/bin/rm -f -- `"$0`"`ncd -- " ProcessRunner.QuoteShell(folder) " || exit`n"
+        SplitPath(shell, &name)
+        if RegExMatch(name, "i)^pwsh(?:\.exe)?$")
+            return script "exec " quoted (command != "" ? " -NoExit -Command " ProcessRunner.QuoteShell(command) : "") "`n"
+        if (command != "")
+            return script "exec " quoted " -lc " ProcessRunner.QuoteShell(command "`nexec " quoted " -i") "`n"
+        return script "exec " quoted " -i`n"
+    }
+
+    static MacLaunch(command, folder, shell, terminal := "auto") {
+        TerminalProvider._MacTerminal(terminal)
+        path := ALTRunMacTerminalFile(TerminalProvider.MacShellScript(command, folder, shell))
+        line := "exec /bin/sh " ProcessRunner.QuoteShell(path)
+        try return {Path: path, Line: line, Script: TerminalProvider.MacScript(line, terminal, path)}
+        catch as e {
+            try FileDelete(path)
+            throw e
+        }
+    }
+
+    static MacScript(line, terminal := "auto", wrapperPath := "") {
+        if (InStr(line, "`r") || InStr(line, "`n"))
+            throw Error("Terminal launch input must fit on one line.")
+        target := TerminalProvider._MacTerminal(terminal)
+        script := 'tell application id "' target '"' "`nactivate`n"
+        if (target = "com.apple.Terminal")
+            script .= "do script " ProcessRunner.QuoteAppleScript(line)
+        else
+            script .= "create window with default profile`ntell current session of current window to write text " ProcessRunner.QuoteAppleScript(line)
+        script .= "`nend tell"
+        if (wrapperPath = "")
+            return script
+        cleanup := "/bin/rm -f -- " ProcessRunner.QuoteShell(wrapperPath)
+        return "try`n" script "`non error failureMessage number failureNumber`ntry`ndo shell script " ProcessRunner.QuoteAppleScript(cleanup)
+            . "`nend try`nerror failureMessage number failureNumber`nend try"
+    }
+
     ; The folder open in Explorer / Total Commander (the window active before ALTRun was shown)
     static OpenAtCurrentFolder() {
 #if WINDOWS
@@ -147,3 +190,27 @@ class TerminalProvider {
 #endif
     }
 }
+
+#CSharp
+public static string ALTRunMacTerminalFile(string text)
+{
+    string directory = System.IO.Path.GetTempPath();
+    if (directory.IndexOfAny(['\r', '\n']) >= 0) directory = "/tmp";
+    string path = System.IO.Path.Combine(directory, "ALTRun-terminal-" + System.Guid.NewGuid().ToString("N") + ".sh");
+    try
+    {
+        var options = new System.IO.FileStreamOptions { Mode = System.IO.FileMode.CreateNew,
+            Access = System.IO.FileAccess.Write, Share = System.IO.FileShare.None,
+            UnixCreateMode = System.IO.UnixFileMode.UserRead | System.IO.UnixFileMode.UserWrite };
+        using var stream = new System.IO.FileStream(path, options);
+        using var writer = new System.IO.StreamWriter(stream, new System.Text.UTF8Encoding(false));
+        writer.Write(text);
+        return path;
+    }
+    catch
+    {
+        if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
+        throw;
+    }
+}
+#EndCSharp

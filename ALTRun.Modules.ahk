@@ -39,8 +39,6 @@
 #Include Src/UI/SearchInputLanguage.ahk
 #Include Src/UI/WindowFade.ahk
 #endif
-#Include Src/UI/Portable/ThemePreview.ahk
-#Include Src/UI/Portable/NavIcons.ahk
 #Include Src/UI/Portable/IconCache.ahk
 #Include Src/UI/Portable/LauncherCanvas.ahk
 #Include Src/UI/Portable/SearchWindow.ahk

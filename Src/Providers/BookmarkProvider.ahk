@@ -136,7 +136,7 @@ class BookmarkProvider {
     }
 
     static _RefreshIfChanged() {
-        if (A_TickCount - BookmarkProvider._checked < 25000 || !ProviderRegistry.IsEnabled(BookmarkProvider))
+        if (!BackgroundWork.CanRun() || A_TickCount - BookmarkProvider._checked < 25000 || !ProviderRegistry.IsEnabled(BookmarkProvider))
             return
         BookmarkProvider._checked := A_TickCount
         stamp := ""

@@ -23,9 +23,6 @@ class CustomCommandProvider {
     static Id := "CustomCommands"
     static _lastNeedle := "", _lastMatches := [], _lastList := ""
 
-    static Init() {
-    }
-
     ; All commands are scored first, and results are only made for the top MaxResults (with many commands one letter can
     ; match hundreds, and making a result for each would make typing lag). The learned bonus counts when taking the top ones, so often chosen commands aren't pushed out.
     ; When typing on (the new input starts with the previous one, at least 3 letters) only the previous matches are searched,

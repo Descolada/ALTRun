@@ -4,9 +4,9 @@
 ;-------------------------------------------------------------------------------
 ; Each feature (Src\Providers\*.ahk) is a class with static methods only:
 ;   static Id            the feature's name, also its settings key under Features in ALTRun.json
-;   static Init()        called once at start-up (builds indexes etc.)
 ;   static Search(query) takes a SearchQuery, returns [ResultItem...]
 ;   Optional:
+;   static Init()        called once at start-up (builds indexes etc.)
 ;   static EditItem(item) / DeleteItem(item)   F3 edit / Ctrl+Del delete in the results (the result's Source points
 ;                                              to its entry in the settings, see ResultActions.CanEdit)
 ;   static DeletePrompt(item)                  the confirmation text before deleting (default "Delete ...?")
@@ -51,7 +51,7 @@ class ProviderRegistry {
 
     static InitAll() {
         for provider in ProviderRegistry.Providers {
-            if !ProviderRegistry.IsEnabled(provider)
+            if !ProviderRegistry.IsEnabled(provider) || !HasMethod(provider, "Init")
                 continue
             try {
                 start := Logger.Ms()
@@ -107,7 +107,7 @@ class ProviderRegistry {
             count := Knowledge.Picks.Has(item.Uid) && Knowledge.Picks[item.Uid] is Map && Knowledge.Picks[item.Uid].Has("Count")
                 ? Knowledge.Picks[item.Uid]["Count"] : 0
             if (IsNumber(count) && count > 0)
-                picked.Push({Item: item, Count: count, Order: picked.Length})
+                picked.Push({Item: item, Count: count})
             else
                 rest.Push(item)
         }
@@ -219,12 +219,12 @@ class ProviderRegistry {
     static SortByScore(items) {
         if (items.Length < 2)
             return items
-        lines := ""
+        scores := Map()
         for index, item in items
-            lines .= Format("{:.6f}", item.Score - index * 0.00001) "`t" index "`n"
+            scores[index] := item.Score - index * 0.00001
         sorted := []
-        for line in StrSplit(RTrim(Sort(lines, "N R"), "`n"), "`n")
-            sorted.Push(items[Integer(StrSplit(line, "`t")[2])])
+        for index in ALTRunRankedIndexes(scores, items.Length, true)
+            sorted.Push(items[index])
         return sorted
     }
 

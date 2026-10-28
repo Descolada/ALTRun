@@ -16,9 +16,6 @@ class RecentProvider {
     static Keep := 30                                                       ; at most this many entries kept in Knowledge.json
     static Skip := Map("WebSearch", 1, "Windows", 1, "Clipboard", 1, "Calculator", 1, "Snippets", 1, "Help", 1, "Terminal", 1)
 
-    static Init() {
-    }
-
     static Search(query) {
         return []
     }

@@ -61,7 +61,7 @@
 
 ![Keysharp 深色主题启动器，使用虚构示例数据](docs/images/screenshots/keysharp-launcher-dark.png)
 
-[Windows 深色设置](docs/images/screenshots/keysharp-preferences-windows-dark.png) · [Linux/GTK 深色设置](docs/images/screenshots/keysharp-preferences-linux-dark.png)
+[Windows 深色设置](docs/images/screenshots/keysharp-preferences-windows-dark.png) · [Linux/GTK 深色设置](docs/images/screenshots/keysharp-preferences-linux-dark.png) · [macOS 启动器](docs/images/screenshots/keysharp-launcher-macos-dark.png) · [macOS 深色设置](docs/images/screenshots/keysharp-preferences-macos-dark.png)
 
 偏好设置窗口可调整大小，切换页面时保留窗口尺寸。Windows 热键框在应用控件主题后仍保留已录制的快捷键；启动时会自动修复被保存为 `Alt+Space` 等显示名称的热键。
 
@@ -73,7 +73,9 @@ NixOS 启动外部应用、浏览器链接和终端时，不继承 Keysharp 私�
 
 Wayland 上的窗口置顶需要 Keysharp 桌面代理与合成器集成正常工作。Cinnamon 会话崩溃后，可用 `systemctl --user restart keysharp-desktop.service` 重启失败的代理，再运行 `keysharp-desktop probe`，应显示 `backend=cinnamon` 且有可用操作。启动频率限制及恢复步骤见[安装与故障排查](docs/wiki/Installation-zh.md)。
 
-支持 Linux `.desktop` 应用索引、macOS `.app` 索引、本机路径处理、已安装的终端和跨平台脚本输出捕获。标准界面已在 Windows 和 Ubuntu 24.04 的 X11/Xvfb 环境通过冒烟检查，涵盖搜索结果、操作面板、偏好设置和文件夹浏览。macOS 为实验性支持，尚未验证。全局热键、托盘、窗口切换和剪贴板自动化取决于 Keysharp 桌面后端与桌面会话。Hyprland 验证覆盖启动器几何、位图绘制及基本交互；全局输入和其它合成器集成仍需单独验证。如果窗口管理器占用了 `Alt+Space`，可在偏好设置里换一个热键。
+支持 Linux `.desktop` 应用索引、macOS `.app` 索引、本机路径处理、已安装的终端和跨平台脚本输出捕获。标准界面已在 Windows 和 Ubuntu 24.04 的 X11/Xvfb 环境通过冒烟检查，涵盖搜索结果、操作面板、偏好设置和文件夹浏览。macOS 已在 Apple Silicon 上通过启动、单实例通信、应用索引、偏好设置、图标、Unicode 文本选择和窗口缩放检查。全局热键、托盘、窗口切换和剪贴板自动化取决于 Keysharp 桌面后端与桌面会话。Hyprland 验证覆盖启动器几何、位图绘制及基本交互；全局输入和其它合成器集成仍需单独验证。如果窗口管理器占用了 `Alt+Space`，可在偏好设置里换一个热键。
+
+macOS 可在 Finder 中双击 `ALTRun.command`，或运行 `./ALTRun.command`；它会查找相邻的 Keysharp 构建或已安装的 `Keysharp.app`，也可用 `KEYSHARP_BIN` 指定宿主。默认快捷键为 **Option+Space**；结果支持 **Command+1–9**、**Command+Enter** 和 **Command+,**，并保留原生文本编辑快捷键。支持本机应用名称与图标、Terminal/iTerm、Finder 定位、废纸篓、音量和系统工具。可选登录自启只管理自己的 LaunchAgent；最近文档使用主目录内近 90 天的 Spotlight 使用记录，在后台刷新。权限要求与验证步骤见 [macOS 安装说明](docs/wiki/Installation.md#macos-setup-and-verification)。
 
 Everything、Microsoft Store 索引、资源管理器/Total Commander 对话框快速跳转、Windows 输入法/CapsLock 集成、外壳属性/提权、Windows 开机启动和“发送到”快捷方式仍是 Windows 集成，在其它系统上会禁用。Linux/macOS 使用本地文件索引。脚本支持 `.ahk`/`.ks`、`.sh`、`.py`、`.ps1`，需要对应解释器；`.bat`/`.cmd` 仅限 Windows。通过脚本扩展启动源码脚本时，Keysharp 的编译器组件也必须保留。
 

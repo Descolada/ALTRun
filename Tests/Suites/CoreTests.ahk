@@ -500,14 +500,9 @@ class CoreTests {
         eq("normal math still works", first("12*(3+4)"), "84")
     }
 
-    ; Only one ALTRun: a second start hands the command-line arguments to the running one (WM_COPYDATA); a restart (/restart) replaces it
+    ; Windows helper identity and WM_COPYDATA transport; full launcher handoff is covered by StartupSmoke.
     static SingleInstance() {
         eq := (n, a, e) => TestRunner.Equal("SingleInstance." n, a, e)
-        eq("restart (compiled)", App.IsRestart('"C:\ALTRun\ALTRun.exe" /restart -Reloaded'), true)
-        eq("restart (script)", App.IsRestart('"C:\AHK\AutoHotkey64.exe" /restart "C:\ALTRun\ALTRun.ahk" -Preferences 3'), true)
-        eq("restart (no quotes)", App.IsRestart('ALTRun.exe /RESTART'), true)
-        eq("double-click", App.IsRestart('"C:\ALTRun\ALTRun.exe"'), false)
-        eq("send to", App.IsRestart('"C:\ALTRun\ALTRun.exe" -SendTo "D:\a /restart b"'), false)
         eq("no other instance", App._RunningInstance(), 0)
         eq("title: compiled exe", App.IsInstanceTitle("C:\ALTRun\ALTRun.exe", "C:\ALTRun\ALTRun.exe"), true)
         eq("title: script", App.IsInstanceTitle("C:\ALTRun\ALTRun.ahk - AutoHotkey v2.0.19", "C:\ALTRun\ALTRun.ahk"), true)
@@ -1148,8 +1143,6 @@ Func | PTTools | PT Tools (AHK)=99
         TestRunner.True("SystemInfo.version", InStr(info, App.Name " " App.Version " (") = 1)
         TestRunner.True("SystemInfo.no paths", !InStr(info, AppSettings.DataDir) && !InStr(info, A_ScriptDir))
         TestRunner.Equal("SystemInfo.lines", StrSplit(Trim(info, "`n"), "`n").Length, 9)
-        ; Running as administrator (#158): a new elevated instance replaces a running non-elevated one; otherwise the arguments are handed over as usual
-        TestRunner.Equal("Admin.takes over", (App.TakesOver(true, false) ? 1 : 0) (App.TakesOver(true, true) ? 1 : 0) (App.TakesOver(false, false) ? 1 : 0) (App.TakesOver(false, true) ? 1 : 0), "1000")
         TestRunner.Equal("Admin.this process", Win.IsElevated(ProcessExist()) ? 1 : 0, A_IsAdmin ? 1 : 0)
         TestRunner.Equal("Admin.no such process", Win.IsElevated(0) ? 1 : 0, 0)
         TestRunner.Equal("Admin.suffix", App.AdminSuffix(), A_IsAdmin ? " (Administrator)" : "")

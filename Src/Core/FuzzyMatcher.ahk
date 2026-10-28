@@ -260,18 +260,51 @@ class FuzzyMatcher {
     }
 
     ; scores: index -> score (Map); returns the indexes of the limit highest scores (on ties, lower indexes first)
-    static TopIndexes(scores, limit) {
-        if !scores.Count
-            return []
-        lines := ""
-        for index, score in scores
-            lines .= Format("{:09.4f}", score) "`t" Format("{:07}", 9999999 - index) "`n"
-        indexes := []
-        for line in StrSplit(Sort(RTrim(lines, "`n"), "R"), "`n") {
-            indexes.Push(9999999 - Integer(StrSplit(line, "`t")[2]))
-            if (indexes.Length >= limit)
-                break
-        }
-        return indexes
+    static TopIndexes(scores, limit) => ALTRunRankedIndexes(scores, limit, false)
+}
+
+#CSharp
+private readonly record struct ALTRunSearchRank(long Index, string Key, double Number);
+
+private sealed class ALTRunSearchRankComparer(bool numeric) : System.Collections.Generic.IComparer<ALTRunSearchRank>
+{
+    public int Compare(ALTRunSearchRank left, ALTRunSearchRank right)
+    {
+        int result = numeric ? left.Number.CompareTo(right.Number)
+            : System.StringComparer.OrdinalIgnoreCase.Compare(left.Key, right.Key);
+        return result != 0 ? result : right.Index.CompareTo(left.Index);
     }
 }
+
+public static Keysharp.Builtins.Array ALTRunRankedIndexes(Keysharp.Builtins.Map scores, long limit, bool numeric)
+{
+    var culture = System.Globalization.CultureInfo.InvariantCulture;
+    int count = (int)scores.Count;
+    int take = (int)System.Math.Min(count, System.Math.Max(1, limit));
+    if (take == 0) return new Keysharp.Builtins.Array();
+    var comparer = new ALTRunSearchRankComparer(numeric);
+    var queue = take < count ? new System.Collections.Generic.PriorityQueue<ALTRunSearchRank, ALTRunSearchRank>(comparer) : null;
+    var selected = new System.Collections.Generic.List<ALTRunSearchRank>(take);
+    foreach (var (key, value) in scores)
+    {
+        long index = System.Convert.ToInt64(key, culture);
+        double score;
+        try { score = System.Convert.ToDouble(value, culture); }
+        catch { score = 0; }
+        // Retain the search model's F4/F6 precision and tie ordering without repeatedly copying a growing string.
+        string text = score.ToString(numeric ? "F6" : "F4", culture);
+        var rank = numeric
+            ? new ALTRunSearchRank(index, "", double.Parse(text, culture))
+            : new ALTRunSearchRank(index, text.PadLeft(9, '0') + "\t" + (9999999 - index).ToString("D7", culture), 0);
+        if (queue == null) selected.Add(rank);
+        else if (queue.Count < take) queue.Enqueue(rank, rank);
+        else queue.EnqueueDequeue(rank, rank);
+    }
+    if (queue != null)
+        foreach (var entry in queue.UnorderedItems) selected.Add(entry.Element);
+    selected.Sort((left, right) => comparer.Compare(right, left));
+    var result = new object[selected.Count];
+    for (int index = 0; index < selected.Count; index++) result[index] = selected[index].Index;
+    return new Keysharp.Builtins.Array(result);
+}
+#EndCSharp

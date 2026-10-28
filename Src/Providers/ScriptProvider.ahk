@@ -20,7 +20,7 @@ class ScriptProvider {
     static Id := "Scripts"
     static Extensions := Map("ahk", 1, "ks", 1, "ps1", 1, "bat", 1, "cmd", 1, "py", 1, "sh", 1)
     static Scripts := []
-    static _lastStamp := "", _checked := 0
+    static _lastStamp := "", _checked := 0, _refreshTimer := ""
     static TimeoutMs := 120000                                              ; how long to wait for a background script at most
 
     static HintIcon := "res:imageres.dll,-5323"
@@ -29,12 +29,12 @@ class ScriptProvider {
 
     static Init() {
         ScriptProvider.Load()
-        OnExit((*) => ProcessRunner.CancelAll())
+        if !IsObject(ScriptProvider._refreshTimer)
+            ScriptProvider._refreshTimer := Logger.Watch("scripts refresh", () => ScriptProvider._RefreshIfChanged())
+        SetTimer(ScriptProvider._refreshTimer, 2000)
     }
 
     static Search(query) {
-        if (A_TickCount - ScriptProvider._checked > 2000)                   ; check whether the folder changed at most every 2 s
-            ScriptProvider._RefreshIfChanged()
         results := [], keyword := AppSettings.Feature("Scripts")["Keyword"], full := ""
         onlyScripts := (keyword != "" && query.HasRest && query.MatchKeyword([keyword], &term))
         needle := StrLower(onlyScripts ? term : query.Text)
@@ -275,6 +275,8 @@ class ScriptProvider {
     }
 
     static _RefreshIfChanged() {
+        if (!BackgroundWork.CanRun() || A_TickCount - ScriptProvider._checked < 2000 || !ProviderRegistry.IsEnabled(ScriptProvider))
+            return
         ScriptProvider._checked := A_TickCount
         if (ScriptProvider._Stamp() != ScriptProvider._lastStamp)
             ScriptProvider.Load()

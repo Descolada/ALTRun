@@ -94,7 +94,6 @@ class App {
     static PreviousWindow := 0
     static _settingsTime := ""
     static _watchTimer := ""
-    static _handOffNote := ""
 
     static Start() {
         App._SetApplicationIdentity()
@@ -113,8 +112,6 @@ class App {
         AppSettings.Load()
         Logger.Enabled := AppSettings.General["SaveLog"] ? true : false
         Logger.Debug("===== " App.Name " " App.Version (A_IsAdmin ? " (administrator)" : "") " starting =====")
-        if (App._handOffNote != "")
-            Logger.Debug(App._handOffNote)
         Logger.Time("startup: settings", started)                          ; log the time of each start-up stage when "Write debug log" is on
         phase := Logger.Ms()
         AppSettings.General["Language"] := I18n.Normalize(AppSettings.General["Language"])   ; the former "zh" -> "zh-CN"
@@ -154,8 +151,8 @@ class App {
         else if (AppSettings.MovedFrom != "")
             App.Toast(I18n.T("Settings.Moved", AppSettings.File), 5000)
         UpdateChecker.CleanUp()
-        SetTimer(() => (IconCache.LoadDisk(), ProviderRegistry.WarmUp(), SearchWindow._PrepareLater()), -500)   ; before the first input: load the icon cache, compute the search keys, prepare the empty search box
-        SetTimer(() => IconCache.Prefetch(ProviderRegistry.IconSpecs()), -SearchWindow.IconPrefetchDelay)   ; then read the common items' icons in the background
+        SetTimer(() => App._WarmWhenIdle(), -500)
+        SetTimer(() => App._PrefetchWhenIdle(), -SearchWindow.IconPrefetchDelay)
         if AppSettings.General["CheckForUpdates"]
             UpdateChecker.Schedule()                                        ; checked in the background (see UpdateChecker); a new version shows in the search window
 
@@ -165,6 +162,20 @@ class App {
         SetTimer(() => App._PollRequests(), 100)
         App._WatchWake()
         App._HandleCommandLine(A_Args)
+    }
+
+    static _WarmWhenIdle() {
+        if !BackgroundWork.CanRun()
+            return SetTimer(() => App._WarmWhenIdle(), -500)
+        IconCache.LoadDisk()
+        ProviderRegistry.WarmUp()
+        SearchWindow._PrepareLater()
+    }
+
+    static _PrefetchWhenIdle() {
+        if !BackgroundWork.CanRun()
+            return SetTimer(() => App._PrefetchWhenIdle(), -500)
+        IconCache.Prefetch(ProviderRegistry.IconSpecs())
     }
 
     ;---------------------------------------------------------------------------
@@ -183,25 +194,6 @@ class App {
     }
 
     #if WINDOWS
-    static _NativeHandOff() {
-        running := App._RunningInstance()
-        if !running
-            return false
-        if !App.IsRestart(DllCall("GetCommandLineW", "Str")) {
-            DllCall("GetWindowThreadProcessId", "Ptr", running, "UInt*", &pid := 0)
-            if App.TakesOver(A_IsAdmin, A_IsAdmin && Win.IsElevated(pid)) {
-                App._handOffNote := "App: started as administrator, replacing the instance without administrator rights"
-            } else {
-                DllCall("AllowSetForegroundWindow", "UInt", pid)            ; windows it shows may come to the front (this process was just started by the user, so it has that right)
-                if App.SendArgs(running, A_Args)
-                    return true
-                App._handOffNote := "App: running instance did not answer, replacing it"
-            }
-        }
-        App._CloseInstance(running)
-        return false
-    }
-
     ; The (hidden) main window of another ALTRun from the same program file, 0 if none
     static _RunningInstance() {
         saved := A_DetectHiddenWindows
@@ -224,11 +216,6 @@ class App {
         return (title = scriptPath || InStr(title, scriptPath " - AutoHotkey") = 1) ? true : false
     }
 
-    ; started by App.Restart: the command line is "program" /restart ...
-    ; This new one runs as administrator but the running one doesn't (right-click → Run as administrator, or the scheduled task started after the start-up shortcut):
-    ; replace it, otherwise this one would hand over the arguments and exit, leaving normal rights. The other way round (normal to administrator) hands over as usual
-    static TakesOver(selfAdmin, runningElevated) => (selfAdmin && !runningElevated)
-
     ; Running as administrator, Windows blocks messages from programs with normal rights (UIPI). Allow WM_COPYDATA: search results from Everything,
     ; the current folder Total Commander replies with (QuickSwitch), arguments from ALTRun instances started later; and TaskbarCreated, to recreate
     ; the tray icon after Explorer restarts. Each WM_COPYDATA handler checks its own identifier first and only handles the replies it waits for
@@ -248,10 +235,6 @@ class App {
 
     ; Shown after the name / version when running as administrator: " (Administrator)"
     static AdminSuffix() => A_IsAdmin ? " (" I18n.T("App.Admin") ")" : ""
-
-    static IsRestart(commandLine) {
-        return RegExMatch(commandLine, 'i)^\s*("[^"]*"|\S+)\s+/restart(\s|$)') ? true : false
-    }
 
     ; 参数一行一个发过去; 对方回复 1 才算收到 (卡住 3 秒没回应、旧版本不认识时返回 false)
     #if WINDOWS
@@ -285,38 +268,33 @@ class App {
         return 1
     }
 
-    ; Closes the other ALTRun (a normal exit, saving the learned ranking etc.); killed if it hasn't exited after 3 s
-    static _CloseInstance(hwnd) {
-        saved := A_DetectHiddenWindows
-        DetectHiddenWindows(true)
-        try {
-            pid := WinGetPID(hwnd)
-            WinClose(hwnd)
-            if !WinWaitClose(hwnd, , 3)
-                ProcessClose(pid)
-        }
-        DetectHiddenWindows(saved)
-    }
     #endif
 
     ;---------------------------------------------------------------------------
     ; Window focus / notifications
     ;---------------------------------------------------------------------------
     static RememberActiveWindow() {
-        activeHwnd := WinExist("A")
+        try activeHwnd := WinExist("A")
+        catch {
+            App.PreviousWindow := 0
+            return false
+        }
         if (activeHwnd && !(IsObject(SearchWindow.Gui) && activeHwnd = SearchWindow.Gui.Hwnd))
             App.PreviousWindow := activeHwnd
     }
 
     static FocusPreviousWindow() {
         target := App.PreviousWindow
-        if (!target || !WinExist("ahk_id " target))
+        if !target
             return false
         try {
+            if !WinExist("ahk_id " target)
+                return false
             WinActivate("ahk_id " target)
             WinWaitActive("ahk_id " target, , 1)
+            return WinActive("ahk_id " target) ? true : false
         }
-        return WinActive("ahk_id " target) ? true : false
+        return false
     }
 
     ; A short notice after an action (copied, cleared...): a HUD in the theme's colors that disappears after duration ms, see Hud.ahk
@@ -652,7 +630,7 @@ class App {
     ; The start-up / Explorer "Send to" / Start menu shortcuts, created or deleted as set.
     ; Only ALTRun's own are deleted (see IsOwnShortcut): a shortcut of the same name the user put there is left alone
     static _UpdateShellShortcuts() {
-        if Platform.IsLinux {
+        if (Platform.IsLinux || Platform.IsMac) {
             try DesktopIntegration.UpdateAutostart(AppSettings.General["LaunchAtLogin"])
             catch as e
                 Logger.Error("App: cannot update autostart - " e.Message)

@@ -76,13 +76,6 @@ class PortableSmoke {
         Knowledge.Load()
         Usage.Load()
         ThemeManager.Load("Light", "Compact")
-        preview := ThemePreview.ForName("Light", 112, 76)
-        PortableSmoke.Assert(preview.Width = 112 && preview.Height = 76, "The theme preview has incorrect dimensions.")
-        preview.Dispose()
-        previews := IL_Create(1, 1, true)
-        try PortableSmoke.Assert(ThemePreview.AddTo(previews, "Light", 112, 76) = 0, "The theme preview was not added to its image list.")
-        finally IL_Destroy(previews)
-        PortableSmoke.Mark("portable theme preview")
         ProviderRegistry.Providers := []
         for provider in [ClipboardProvider, ApplicationProvider, CustomCommandProvider, SnippetProvider, SystemProvider
             , CalculatorProvider, WebSearchProvider, BookmarkProvider, WindowProvider, ScriptProvider
@@ -195,6 +188,8 @@ class PortableSmoke {
         PortableSmoke.Assert(bindings["Features.Snippets.PasteMode"] == "Auto", "The snippet Auto paste mode was changed by opening Preferences.")
         for path in ["Features.Clipboard.MaxItems", "Features.Clipboard.IgnoreApps", "Features.Windows.Enabled", "Features.Windows.Keyword", "Features.Bookmarks.Enabled", "Features.Bookmarks.Keyword", "Appearance.Density", "Appearance.Placeholder", "General.TabKey"]
             PortableSmoke.Assert(bindings.Has(path), "Preferences has no binding for " path)
+        if Platform.IsMac
+            PortableSmoke.Assert(bindings.Has("General.LaunchAtLogin"), "macOS Preferences has no launch-at-login setting.")
         PortableSmoke.Assert(!bindings.Has("Features.Applications.RefreshMinutes"), "Preferences retained the obsolete application refresh setting.")
         PreferencesWindow._SelectRow(PreferencesWindow._PageIndex("Prefs.Page.Commands"))
         PortableSmoke.Assert(PreferencesWindow._lists["CustomCommands"].Items.Length = 1, "The command editor did not load settings.")

@@ -62,8 +62,13 @@ class Platform {
         target := Path.Resolve(target)
         if Platform.IsWindows
             return Run('"' target '" ' arguments)
+        if (Platform.IsMac && DirExist(target) && RegExMatch(target, "i)\.app/?$")) {
+            if (arguments != "")
+                return ProcessRunner.StartApplicationCommand('"/usr/bin/open" -a ' ALTRunQuoteArgument(target) ' --args ' arguments)
+            return ProcessRunner.StartApplication("/usr/bin/open", ["-a", target])
+        }
         if (arguments != "" || Platform.FindExecutable(target) != "")
-            return ProcessRunner.StartApplicationCommand('"' target '" ' arguments)
+            return ProcessRunner.StartApplicationCommand(ALTRunQuoteArgument(target) " " arguments)
         opener := Platform.IsMac ? "/usr/bin/open" : Platform.FindExecutable("xdg-open")
         if (opener = "")
             throw Error("No desktop opener is installed (xdg-open).")
@@ -82,7 +87,13 @@ class Platform {
         return Platform.Open(DirExist(target) ? target : folder)
     }
 
-    static Edit(file) => Platform.IsWindows ? Run('notepad.exe "' file '"') : Platform.Open(file)
+    static Edit(file) {
+        if Platform.IsWindows
+            return Run('notepad.exe "' file '"')
+        if Platform.IsMac
+            return ProcessRunner.StartApplication("/usr/bin/open", ["-t", Path.Resolve(file)])
+        return Platform.Open(file)
+    }
 
     static EditSelection(control) {
         offsets := ALTRunEditSelection(control.ToClr())
@@ -97,6 +108,22 @@ class Platform {
 
 #CSharp
 public static string ALTRunHome() => System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile);
+
+// ProcessStartInfo.Arguments uses double-quote/backslash escaping, without invoking a shell.
+public static string ALTRunQuoteArgument(string value)
+{
+    var result = new System.Text.StringBuilder("\"");
+    int slashes = 0;
+    foreach (char character in value)
+    {
+        if (character == '\\') { slashes++; continue; }
+        result.Append('\\', slashes * (character == '"' ? 2 : 1) + (character == '"' ? 1 : 0));
+        result.Append(character);
+        slashes = 0;
+    }
+    return result.Append('\\', slashes * 2).Append('"').ToString();
+}
+
 private sealed class ALTRunIdentity { internal readonly long Value; internal ALTRunIdentity(long value) { Value = value; } }
 private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, ALTRunIdentity> ALTRunIdentities = new();
 private static long ALTRunNextIdentity;

@@ -8,17 +8,27 @@
 ; Actions panel (→): close the window.
 ; Only windows visible on the taskbar are listed: visible, with a title, not tool windows / windows owned by another window,
 ; not on another virtual desktop (DWM cloaked), and none of ALTRun's own windows.
-; The window list is reused within a search; typing within 1 s doesn't enumerate again.
+; Default searches use the last window snapshot; a timer refreshes it while the launcher is closed.
+; The explicit window keyword can refresh a snapshot older than 1 s.
 ;
 ; Settings (ALTRun.json -> Features.Windows): Enabled / Keyword / InDefaultResults
 ;===============================================================================
 
 class WindowProvider {
     static Id := "Windows"
-    static CacheMs := 1000
-    static _list := [], _listTime := 0
+    static CacheMs := 1000, RefreshMs := 5000
+    static _list := [], _listTime := 0, _refreshTimer := ""
 
     static Init() {
+        WindowProvider.List()
+        if !IsObject(WindowProvider._refreshTimer)
+            WindowProvider._refreshTimer := Logger.Watch("window list refresh", () => WindowProvider._RefreshIfIdle())
+        SetTimer(WindowProvider._refreshTimer, WindowProvider.RefreshMs)
+    }
+
+    static _RefreshIfIdle() {
+        if (BackgroundWork.CanRun() && ProviderRegistry.IsEnabled(WindowProvider))
+            WindowProvider.List()
     }
 
     static Search(query) {
@@ -29,7 +39,7 @@ class WindowProvider {
         } else if (!options["InDefaultResults"] || StrLen(query.Text) < 2) {
             return []
         }
-        windows := WindowProvider.List()
+        windows := WindowProvider.List(exclusive)
         needle := StrLower(Trim(term))
         scores := Map()
         for index, window in windows {
@@ -56,15 +66,20 @@ class WindowProvider {
     }
 
     ; The windows on the taskbar, in z-order (frontmost first): [{Hwnd, Title, Process, Path, Keys}]
-    static List() {
-        if (A_TickCount - WindowProvider._listTime < WindowProvider.CacheMs)
+    static List(refresh := true) {
+        if (!refresh || A_TickCount - WindowProvider._listTime < WindowProvider.CacheMs)
             return WindowProvider._list
-        list := []
-        try handles := WinGetList()
-        catch as e {
+        try WindowProvider._list := WindowProvider._Enumerate()
+        catch as e
             Logger.Debug("WindowProvider: window enumeration is unavailable - " e.Message)
-            return []
-        }
+        ; Cache failed attempts too; retain a useful snapshot if a desktop backend is temporarily unavailable.
+        WindowProvider._listTime := A_TickCount
+        return WindowProvider._list
+    }
+
+    static _Enumerate() {
+        list := []
+        handles := WinGetList()
         for hwnd in handles {
             if !WindowProvider.IsSwitchable(hwnd)
                 continue
@@ -82,7 +97,6 @@ class WindowProvider {
             list.Push({Hwnd: hwnd, Title: title, Process: process, Path: exePath
                 , Keys: [FuzzyMatcher.Key(title), FuzzyMatcher.Key(name), (pinyinText != title) ? FuzzyMatcher.Key(pinyinText) : ""]})
         }
-        WindowProvider._list := list, WindowProvider._listTime := A_TickCount
         return list
     }
 

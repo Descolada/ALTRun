@@ -16,9 +16,6 @@ class HelpProvider {
     static WikiUrl := "https://github.com/zhugecaomao/ALTRun/wiki/"
     static _tipIndex := 0
 
-    static Init() {
-    }
-
     ; Wiki page URL: the Chinese UI opens the Chinese page (Usage-zh), other languages the English page (Usage)
     static WikiPage(page, lang := I18n.Lang) {
         return HelpProvider.WikiUrl page (SubStr(lang, 1, 2) = "zh" ? "-zh" : "")

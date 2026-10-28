@@ -1,7 +1,7 @@
 ; Shared bitmap drawing for the portable launcher; geometry stays in logical GUI units.
 class LauncherCanvas {
     static _fits := LauncherCanvas._TextMap()
-    static _metrics := LauncherCanvas._TextMap()
+    static _measurements := LauncherCanvas._TextMap()
 
     static _TextMap() {
         values := Map()
@@ -18,14 +18,23 @@ class LauncherCanvas {
             try control.ToClr().AccessibleName := text
         } else if Platform.IsLinux {
             try control.ToClr().ControlObject.Accessible.Name := text
+        } else if Platform.IsMac {
+#if OSX
+            ALTRunMacAccessibleLabel(control.ToClr(), text)
+#endif
         }
     }
 
-    static Metrics(canvas, options, family) {
-        key := options "|" family "|" canvas.ScaleX
-        if !LauncherCanvas._metrics.Has(key)
-            LauncherCanvas._metrics[key] := canvas.MeasureText("Ag", options, family)
-        return LauncherCanvas._metrics[key]
+    static Metrics(canvas, options, family) => LauncherCanvas.Measure(canvas, "Ag", options, family)
+
+    static Measure(canvas, text, options, family) {
+        key := options "|" family "|" canvas.ScaleX "|" text
+        if !LauncherCanvas._measurements.Has(key) {
+            if (LauncherCanvas._measurements.Count >= 2000)
+                LauncherCanvas._measurements.Clear()
+            LauncherCanvas._measurements[key] := canvas.MeasureText(text, options, family)
+        }
+        return LauncherCanvas._measurements[key]
     }
 
     static Blend(first, second, amount) {
@@ -43,12 +52,12 @@ class LauncherCanvas {
         if LauncherCanvas._fits.Has(key)
             return LauncherCanvas._fits[key]
         fitted := text
-        if (canvas.MeasureText(text, options, family).Width > width) {
+        if (LauncherCanvas.Measure(canvas, text, options, family).Width > width) {
             low := 0, high := ALTRunLauncherTextLength(text)
             while (low < high) {
                 middle := Ceil((low + high) / 2)
                 candidate := ALTRunLauncherPrefix(text, middle) Chr(0x2026)
-                if (canvas.MeasureText(candidate, options, family).Width <= width)
+                if (LauncherCanvas.Measure(canvas, candidate, options, family).Width <= width)
                     low := middle
                 else
                     high := middle - 1
@@ -70,8 +79,8 @@ class LauncherCanvas {
                 return fitted
             for range in FuzzyMatcher.MatchRanges(query, fitted) {
                 before := SubStr(fitted, 1, range[1] - 1), matched := SubStr(fitted, range[1], range[2])
-                offset := before != "" ? canvas.MeasureText(before, options, family).Width : 0
-                spanWidth := canvas.MeasureText(matched, options, family).Width
+                offset := before != "" ? LauncherCanvas.Measure(canvas, before, options, family).Width : 0
+                spanWidth := LauncherCanvas.Measure(canvas, matched, options, family).Width
                 clipped := canvas.SaveState()
                 try {
                     canvas.Clip(Image.Path().AddRect(x + offset, y, spanWidth, LauncherCanvas.Metrics(canvas, options, family).Height + 4))
@@ -83,8 +92,12 @@ class LauncherCanvas {
     }
 
     static Render(width, height, scale, rows) {
+        IconCache.BeginFrame()
         canvas := Image.Create(width, height, , scale)
-        canvas.FillRect(0, 0, width, height, LauncherCanvas.Color("Background"))
+        if Platform.IsMac
+            canvas.FillRoundRect(0, 0, width, height, 10, LauncherCanvas.Color("Background"))
+        else
+            canvas.FillRect(0, 0, width, height, LauncherCanvas.Color("Background"))
         family := ThemeManager.FontName(), pad := SearchWindow.Padding
         canvas.DrawRoundRect(0.5, 0.5, width - 1, height - 1, 10, LauncherCanvas.Color("Border"), 1)
         surface := LauncherCanvas.Blend(ThemeManager.Get("Background"), ThemeManager.Get("InputText"), 0.035)
@@ -110,9 +123,10 @@ class LauncherCanvas {
         LauncherCanvas.Icon(canvas, item, iconX, iconY, iconSize, row.Background, row.Selected)
         titleX := iconX + iconSize + 14
         shortcutOptions := "s" ThemeManager.Get("ShortcutFontSize")
-        badgeWidth := Max(42, canvas.MeasureText(row.Shortcut, shortcutOptions, family).Width + 14)
+        badgeSize := LauncherCanvas.Measure(canvas, row.Shortcut, shortcutOptions, family)
+        badgeWidth := Max(42, badgeSize.Width + 14)
         badgeX := row.X + row.Width - badgeWidth - 12
-        badgeHeight := Max(21, canvas.MeasureText(row.Shortcut, shortcutOptions, family).Height + 7)
+        badgeHeight := Max(21, badgeSize.Height + 7)
         badgeY := row.Y + (row.Height - badgeHeight) / 2
         badgeBackground := LauncherCanvas.Blend(row.Background, ThemeManager.Get(row.Selected ? "SelectedTitle" : "Title"), 0.065)
         canvas.FillRoundRect(badgeX, badgeY, badgeWidth, badgeHeight, 5, "0xFF" badgeBackground)
@@ -134,7 +148,7 @@ class LauncherCanvas {
     }
 
     static Icon(canvas, item, x, y, size, background, selected) {
-        iconImage := IconCache.Get(item.Icon)
+        iconImage := IconCache.Peek(item.Icon)
         if IsObject(iconImage) {
             canvas.DrawImage(iconImage, x, y, size, size)
             return
@@ -160,7 +174,7 @@ class LauncherCanvas {
                 canvas.FillRoundRect(x, y, size, size, 7, soft)
                 glyph := item.Kind = "text" ? "=" : Chr(0x203A)
                 options := "s" Round(size * 0.53), family := ThemeManager.FontName()
-                measured := canvas.MeasureText(glyph, options, family)
+                measured := LauncherCanvas.Measure(canvas, glyph, options, family)
                 canvas.DrawText(glyph, x + (size - measured.Width) / 2, y + (size - measured.Height) / 2, ink, options, family)
         }
     }
@@ -182,7 +196,7 @@ class LauncherCanvas {
         hint := label != "" ? "Enter  " label "     " : ""
         hint .= SearchWindow.Mode = "actions" ? "" : I18n.T("Status.Actions") "  " Chr(0x2192)
         hint := LauncherCanvas.Fit(canvas, hint, width * 0.49 - pad, options, family)
-        measured := canvas.MeasureText(hint, options, family)
+        measured := LauncherCanvas.Measure(canvas, hint, options, family)
         canvas.DrawText(hint, width - pad - measured.Width, top + 10, color, options, family)
     }
 }
@@ -196,3 +210,60 @@ public static string ALTRunLauncherPrefix(string text, long length)
     return length >= starts.Length ? text : text[..starts[(int)length]];
 }
 #EndCSharp
+
+#if OSX
+#CSharp
+public static void ALTRunMacAccessibleLabel(Keysharp.Builtins.Ks.Clr.ManagedInstance wrapper, string text)
+{
+    var control = (Eto.Forms.Control)wrapper.Native;
+    if (control.ControlObject?.GetType().GetProperty("Handle")?.GetValue(control.ControlObject) is not System.IntPtr handle) return;
+    var selector = ALTRunMacObjC.Selector("setAccessibilityLabel:");
+    if (ALTRunMacObjC.Responds(handle, ALTRunMacObjC.Selector("respondsToSelector:"), selector) == 0) return;
+    ALTRunMacObjC.SendArgument(handle, selector, ALTRunMacObjC.String(text));
+}
+
+public static void ALTRunMacRoundWindow(Keysharp.Builtins.Ks.Clr.ManagedInstance wrapper, double radius)
+{
+    var form = (Eto.Forms.Form)wrapper.Native;
+    var native = form.ControlObject;
+    if (native?.GetType().GetProperty("Handle")?.GetValue(native) is not System.IntPtr window)
+        throw new System.InvalidOperationException("The macOS launcher window is unavailable.");
+    var view = ALTRunMacObjC.Send(window, ALTRunMacObjC.Selector("contentView"));
+    ALTRunMacObjC.SetBool(window, ALTRunMacObjC.Selector("setOpaque:"), 0);
+    ALTRunMacObjC.SendArgument(window, ALTRunMacObjC.Selector("setBackgroundColor:"),
+        ALTRunMacObjC.Send(ALTRunMacObjC.Class("NSColor"), ALTRunMacObjC.Selector("clearColor")));
+    ALTRunMacObjC.SetBool(view, ALTRunMacObjC.Selector("setWantsLayer:"), 1);
+    var layer = ALTRunMacObjC.Send(view, ALTRunMacObjC.Selector("layer"));
+    if (layer == System.IntPtr.Zero)
+        throw new System.InvalidOperationException("The macOS launcher clipping layer is unavailable.");
+    ALTRunMacObjC.SetBool(layer, ALTRunMacObjC.Selector("setOpaque:"), 0);
+    ALTRunMacObjC.SetDouble(layer, ALTRunMacObjC.Selector("setCornerRadius:"), radius);
+    ALTRunMacObjC.SetBool(layer, ALTRunMacObjC.Selector("setMasksToBounds:"), 1);
+    ALTRunMacObjC.Send(window, ALTRunMacObjC.Selector("invalidateShadow"));
+    form.SizeChanged += (_, _) => ALTRunMacObjC.Send(window, ALTRunMacObjC.Selector("invalidateShadow"));
+}
+
+private static class ALTRunMacObjC
+{
+    private const string Library = "/usr/lib/libobjc.A.dylib";
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_getClass")]
+    internal static extern System.IntPtr Class(string name);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "sel_registerName")]
+    internal static extern System.IntPtr Selector(string name);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    internal static extern System.IntPtr Send(System.IntPtr target, System.IntPtr selector);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    internal static extern System.IntPtr SendArgument(System.IntPtr target, System.IntPtr selector, System.IntPtr argument);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    internal static extern byte Responds(System.IntPtr target, System.IntPtr selector, System.IntPtr argument);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    internal static extern void SetBool(System.IntPtr target, System.IntPtr selector, byte value);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    internal static extern void SetDouble(System.IntPtr target, System.IntPtr selector, double value);
+    [System.Runtime.InteropServices.DllImport(Library, EntryPoint = "objc_msgSend")]
+    private static extern System.IntPtr SendString(System.IntPtr target, System.IntPtr selector,
+        [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string text);
+    internal static System.IntPtr String(string text) => SendString(Class("NSString"), Selector("stringWithUTF8String:"), text);
+}
+#EndCSharp
+#endif

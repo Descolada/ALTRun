@@ -550,15 +550,16 @@ class Win {
         key := SubStr(hk, i), up := ""
         if RegExMatch(key, "i)^(.+?)\s+up$", &m)
             key := m[1], up := " Up"
-        label := (InStr(mods, "^") ? "Ctrl+" : "") (InStr(mods, "!") ? "Alt+" : "") (InStr(mods, "+") ? "Shift+" : "") (InStr(mods, "#") ? "Win+" : "")
+        label := (InStr(mods, "^") ? "Ctrl+" : "") (InStr(mods, "!") ? (Platform.IsMac ? "Option+" : "Alt+") : "")
+            . (InStr(mods, "+") ? "Shift+" : "") (InStr(mods, "#") ? (Platform.IsMac ? "Cmd+" : "Win+") : "")
         return label Win.KeyLabel(key, names) up
     }
 
     ; Recover display labels persisted by an editor without changing AutoHotkey hotkey syntax.
     static NormalizeHotkeyLabel(hk) {
         original := hk, key := Trim(hk), mods := "", suffix := ""
-        symbols := Map("ctrl", "^", "alt", "!", "shift", "+", "win", "#")
-        while RegExMatch(key, "i)^(Ctrl|Alt|Shift|Win)\s*\+\s*(.+)$", &part) {
+        symbols := Map("ctrl", "^", "alt", "!", "option", "!", "shift", "+", "win", "#", "cmd", "#", "command", "#")
+        while RegExMatch(key, "i)^(Ctrl|Alt|Option|Shift|Win|Cmd|Command)\s*\+\s*(.+)$", &part) {
             mods .= symbols[StrLower(part[1])]
             key := part[2]
         }

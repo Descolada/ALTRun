@@ -23,7 +23,7 @@ This source checkout requires [Keysharp](https://github.com/keysharp-org/Keyshar
 
 Windows, Linux and macOS share a Picture-rendered launcher with a native search field and themed settings controls. On Windows, ALTRun sets its own process application identity before assigning its icon so other Keysharp scripts keep their taskbar identity. Linux discovers applications through XDG `.desktop` entries; macOS scans `.app` bundles. File browsing accepts `/absolute/paths/`, `~/` and `$HOME/`, and preserves case in Unix file identities. Installed terminals and `.sh`, `.py`, `.ps1`, `.ahk`/`.ks` scripts use platform interpreters and argument arrays; background scripts capture stdout/stderr and terminate their process tree on timeout. Captured output is decoded as UTF-8; Windows scripts invoking legacy OEM-encoded tools should convert their output to UTF-8. Keep the Keysharp compiler deployed for source scripts.
 
-The portable interface passed smoke checks on Windows and Ubuntu 24.04 under X11/Xvfb, covering search results, action panels, preferences and folder browsing. Linux launcher keys use native events and their modifiers; native focus controls dismissal, and double-click opens results. Footer commands and result context menus use the launcher's action panel to avoid GTK popup grabs that can crash Cinnamon on Wayland. Application ICO frames use GTK-compatible DIB encoding for tray icons and file previews. A separate Xvfb input fixture checks real keys, clicks and interaction with another window. These checks do not establish native Wayland or global-hook integration. macOS support is experimental and unverified. Global shortcuts, tray support, window enumeration/activation and clipboard automation depend on the Keysharp desktop backend and session. A window manager may reserve `Alt+Space`; choose another hotkey in Preferences.
+The portable interface passed smoke checks on Windows and Ubuntu 24.04 under X11/Xvfb, covering search results, action panels, preferences and folder browsing. Linux launcher keys use native events and their modifiers; native focus controls dismissal, and double-click opens results. Footer commands and result context menus use the launcher's action panel to avoid GTK popup grabs that can crash Cinnamon on Wayland. Application ICO frames use GTK-compatible DIB encoding for tray icons and file previews. A separate Xvfb input fixture checks real keys, clicks and interaction with another window. These checks do not establish native Wayland or global-hook integration. The macOS port has passed native checks on Apple silicon with macOS 26.5 and the sibling Keysharp build, including startup, instance handoff, search, preferences, icons, Unicode selection, settings persistence and launcher resizing. Global shortcuts, tray support, window enumeration/activation and clipboard automation depend on the Keysharp desktop backend and session. A window manager may reserve `Alt+Space`; choose another hotkey in Preferences.
 
 On Linux, showing the launcher requests GTK window activation before focusing the search field; explicit theme colors keep full and partial text selections visible. Escape dismissal and result execution work even when Wayland window geometry is unavailable; remembered placement and header dragging use geometry only when it is available. Always-on-top behavior on Wayland requires a functioning Keysharp desktop broker and compositor integration.
 
@@ -46,6 +46,48 @@ hl.window_rule({
 Everything, Microsoft Store indexing, Explorer/Total Commander Quick Switch, Windows input-language/CapsLock handling, shell properties/elevation and Windows Startup/Start menu/Send To integration are Windows-only. Other platforms use the local file index, and these Windows integrations are disabled. Writable source folders keep `Data/` beside the program; otherwise user data uses the platform's application-data location (`$XDG_DATA_HOME/ALTRun` or `~/.local/share/ALTRun` on Linux, `~/Library/Application Support/ALTRun` on macOS).
 
 The existing downloadable executables, Scoop/winget packages and release workflow are AutoHotkey Windows builds, and do not package this Keysharp port. Keysharp update checks open the release page or suggest a source update; they never replace a Keysharp executable with an AutoHotkey package. Update this checkout from source. A Keysharp release needs a separate platform-specific packaging workflow.
+
+### macOS setup and verification
+
+From this checkout, double-click `ALTRun.command` in Finder or run:
+
+```sh
+./ALTRun.command
+```
+
+The launcher finds a sibling `../Keysharp` (or `../keysharp`) Debug or Release app bundle, then `~/Applications/Keysharp.app`, `/Applications/Keysharp.app`, or `keysharp` on `PATH`. Its working directory is always the ALTRun folder. To select a different Keysharp installation, including paths with spaces:
+
+```sh
+KEYSHARP_BIN="/path/to/Keysharp.app" ./ALTRun.command
+```
+
+Keysharp must include its parser/compiler components and macOS dependencies. See the sibling Keysharp checkout's installation/build instructions if it has not been built. This port uses Keysharp directly; the Windows release downloads do not supply a macOS runtime.
+
+The default show shortcut is **Option+Space** (`!Space` in settings); Option+R is the secondary shortcut. macOS `#` hotkeys use Command. Inside the launcher, Command+1–9 opens a result, Command+Enter performs its alternate action, Command+, opens Preferences, Command+L shows Large Type when enabled, and Command+E edits a supported item. The corresponding Control shortcuts continue to work. Native Command+A/C/X/V and Command-based cursor movement stay with the macOS text field. Shortcut hints use Command on macOS.
+
+Keysharp needs macOS permissions for global shortcuts, snippets, pasting into other applications and window switching. Grant **Accessibility** and **Input Monitoring** to the Keysharp host you use in System Settings → Privacy & Security, then restart ALTRun. **Screen Recording** is needed for foreign window titles in Keysharp's window inventory. Terminal and Finder AppleScript actions may request **Automation** permission for those targets. These are operating-system grants; ALTRun cannot grant them itself. Apple's [Accessibility](https://support.apple.com/guide/mac-help/mh43185/mac) and [Input Monitoring](https://support.apple.com/guide/mac-help/mchl4cedafb6/mac) instructions explain the controls. Search, calculation, preferences and file browsing do not require global input automation.
+
+Applications are scanned in `/Applications`, `/System/Applications` and `~/Applications`, including subfolders. CoreFoundation supplies localized display names and reads XML or binary `Info.plist` files. Filename and bundle ID remain searchable; background helpers and nested application contents are skipped. Custom `.app` launch arguments are forwarded through `open -a ... --args`. File reveal selects the item in Finder; editing settings uses the default text editor. Native file icons and application bundle icons are used when available.
+
+Terminal commands open Terminal.app with the configured shell (zsh by default). Set `Features.Terminal.Terminal` to `iTerm` to use iTerm2. Paths and command text are quoted independently for AppleScript and the shell, including spaces, quotes and Unicode. Terminal receives one short launcher line. A private temporary script deletes itself before executing the command, preserving quoted paths and multiline text without interactive quote-continuation prompts. The command runs in the configured shell before it becomes interactive, so directory changes and exported variables carry through. A trailing shell comment does not discard that interactive continuation; an explicit `exit` exits normally.
+
+**Launch ALTRun at login** is off by default on macOS. Enabling it writes `~/Library/LaunchAgents/org.keysharp.ALTRun.plist` with the current host and source path and takes effect at the next login. Disabling it removes only the entry owned by this checkout. Another checkout's or an unrelated plist is preserved. Changing this preference does not start or stop a login job in the current session. Keep both checkout and runtime at their recorded locations. The format follows Apple's [launchd agent documentation](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html).
+
+`recent ...` queries Spotlight last-used dates for local items under your home folder opened in the past 90 days. The first query returns cached results while a worker updates the list; a visible recent query refreshes when the lookup finishes. Results are cached for 60 seconds. Missing paths and duplicates are removed; applications are excluded. This is not the Apple menu's private Recent Items list: documents without Spotlight metadata, outside your home folder, or excluded from indexing are absent. ALTRun does not change Spotlight settings or read private shared-file-list archives.
+
+System search includes screen lock (Control+Command+Q), sleep, display sleep, volume/mute, shutdown, restart, sign out, empty Trash and native tools such as System Settings, Activity Monitor, TextEdit, Finder, Disk Utility and Console when installed. Existing confirmation settings apply to shutdown, restart, sign out and empty Trash. Tool discovery does not establish permission to execute every action.
+
+Run the bounded fixtures from the checkout to verify a macOS runtime (use your Keysharp executable path):
+
+```sh
+altrun_host="../Keysharp/bin/Debug/net10.0/Keysharp"
+"$altrun_host" --validate ALTRun.ahk
+for fixture in PlatformServices SettingsFallback PortableHttp FolderWatcherSmoke MacPlatform MacProviders MacDesktopIntegration PortableSmoke PortableIcons PortablePlacement MacCorners MacInput StartupSmoke; do
+    "$altrun_host" "Tests/$fixture.ahk" || break
+done
+```
+
+These fixtures use temporary data and do not install login jobs or run power, logout or empty-Trash commands. UI fixtures briefly show owned windows. Native input checks run only when the required permissions are already granted. They do not replace manual verification of automation against each external application. The old `Tests/RunTests.ahk` suite and Windows CI still target the legacy Windows UI and AutoHotkey executable; use the portable and macOS fixtures for this source port.
 
 ### Cinnamon Wayland troubleshooting
 

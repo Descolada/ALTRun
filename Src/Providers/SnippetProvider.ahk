@@ -19,9 +19,6 @@ class SnippetProvider {
     static TextMinChars := 3                                                ; the text is searched only from this many characters (shorter would hit a heap)
     static TextScore := 35                                                  ; score of text-only matches: after name / keyword matches and applications, commands
 
-    static Init() {
-    }
-
     static Icon => IconCache.Own("Snippet", "res:imageres.dll,-102")
 
     static Search(query) {
@@ -223,7 +220,7 @@ class SnippetProvider {
             pos += StrLen(value)
         }
         while InStr(text, "{uuid}")                                        ; each {uuid} differs
-            text := StrReplace(text, "{uuid}", SnippetProvider.NewUuid(), , , 1)
+            text := StrReplace(text, "{uuid}", Platform.NewUuid(), , , 1)
         pos := 1                                                            ; {clipboard:N}: the Nth entry back in the clipboard history
         while (pos := RegExMatch(text, "\{clipboard:(\d+)\}", &m, pos)) {
             index := Integer(m[1]) + 1                                      ; only text counts (copied files and images are skipped)
@@ -233,11 +230,6 @@ class SnippetProvider {
         }
         text := StrReplace(text, "{clipboard}", A_Clipboard)
         return text
-    }
-
-    ; A lower-case UUID without braces, e.g. 3f2b8c1e-...
-    static NewUuid() {
-        return Platform.NewUuid()
     }
 
     ; Whether every word appears in the text (case-insensitive, no fuzzy matching: fuzzy matching on long text would hit almost anything).

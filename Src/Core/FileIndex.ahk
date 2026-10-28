@@ -326,6 +326,8 @@ class FileIndex {
             FileIndex._initialsJob := ""
             return SetTimer(FileIndex._initialsTimer, 0)
         }
+        if !BackgroundWork.CanRun()
+            return                                                          ; the periodic timer resumes this job after the launcher closes
         names := job.Names, count := names.Length, i := job.Pos, start := A_TickCount
         while (i < count && A_TickCount - start < 15) {
             i++

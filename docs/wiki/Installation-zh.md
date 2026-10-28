@@ -23,7 +23,7 @@
 
 Windows、Linux 和 macOS 共用 Picture 绘制的启动器，保留原生搜索输入框和主题设置控件。Windows 上先设置 ALTRun 独立的进程应用标识再设置图标，使其它 Keysharp 脚本保留自己的任务栏标识。Linux 通过 XDG `.desktop` 文件发现应用，macOS 扫描 `.app` 包。文件浏览支持 `/绝对路径/`、`~/`、`$HOME/`，Unix 文件身份保留大小写。终端与 `.sh`、`.py`、`.ps1`、`.ahk`/`.ks` 脚本使用本机解释器及参数数组；后台脚本捕获标准输出/错误，超时会终止整个进程树。输出按 UTF-8 解码；Windows 脚本调用仍输出 OEM 编码的旧工具时，应把输出转为 UTF-8。运行源码脚本时须保留 Keysharp 编译器。
 
-标准界面已在 Windows 和 Ubuntu 24.04 的 X11/Xvfb 环境通过冒烟检查，涵盖搜索结果、操作面板、偏好设置和文件夹浏览。Linux 启动器使用本机按键事件及其修饰键，根据本机焦点隐藏窗口，双击打开结果；底部菜单命令和结果右键菜单在启动器内的操作面板中显示，避免 GTK 弹出菜单抓取输入时导致 Cinnamon 的 Wayland 会话崩溃。ICO 图标采用兼容 GTK 的 DIB 编码以正确显示托盘和文件预览。独立 Xvfb 输入测试覆盖真实键鼠事件以及与其它窗口的交互。这些检查不代表验证了原生 Wayland 或全局钩子集成。macOS 为实验性支持，尚未验证。全局热键、托盘、窗口枚举/激活和剪贴板自动化取决于 Keysharp 桌面后端与桌面会话。窗口管理器可能占用 `Alt+Space`，可在偏好设置里换一个热键。
+标准界面已在 Windows 和 Ubuntu 24.04 的 X11/Xvfb 环境通过冒烟检查，涵盖搜索结果、操作面板、偏好设置和文件夹浏览。Linux 启动器使用本机按键事件及其修饰键，根据本机焦点隐藏窗口，双击打开结果；底部菜单命令和结果右键菜单在启动器内的操作面板中显示，避免 GTK 弹出菜单抓取输入时导致 Cinnamon 的 Wayland 会话崩溃。ICO 图标采用兼容 GTK 的 DIB 编码以正确显示托盘和文件预览。独立 Xvfb 输入测试覆盖真实键鼠事件以及与其它窗口的交互。这些检查不代表验证了原生 Wayland 或全局钩子集成。macOS 已在 Apple Silicon 上通过启动、单实例通信、应用索引、偏好设置、图标、Unicode 文本选择和窗口缩放检查。全局热键、托盘、窗口枚举/激活和剪贴板自动化取决于 Keysharp 桌面后端与桌面会话。窗口管理器可能占用 `Alt+Space`，可在偏好设置里换一个热键。
 
 Linux 显示启动器时先请求 GTK 激活窗口，再聚焦搜索框；全选和部分文字选区显式使用主题颜色，保持高亮可见。Wayland 无法提供窗口几何信息时，仍可按 Escape 隐藏窗口或执行搜索结果；记住位置与拖动标题区域只在几何信息可用时进行。Wayland 上的窗口置顶需要 Keysharp 桌面代理与合成器集成正常工作。
 
@@ -46,6 +46,14 @@ hl.window_rule({
 Everything、Microsoft Store 索引、资源管理器/Total Commander 对话框快速跳转、Windows 输入法/CapsLock、外壳属性/提权、Windows 启动/开始菜单/“发送到”集成仅限 Windows，在其它平台禁用。其它平台使用本地文件索引。可写的源码目录在程序旁保留 `Data/`；否则使用本机用户应用数据位置：Linux 的 `$XDG_DATA_HOME/ALTRun` 或 `~/.local/share/ALTRun`，macOS 的 `~/Library/Application Support/ALTRun`。
 
 现有可下载程序、Scoop/winget 包和发布工作流都是 AutoHotkey Windows 构建，不包含此 Keysharp 移植版。用 Keysharp 检查更新时打开发布页面或提示更新源码，不会用 AutoHotkey 包替换 Keysharp 可执行文件。请从源码更新此版本；Keysharp 发布需要单独的平台打包工作流。
+
+### macOS 设置
+
+在 Finder 中双击 `ALTRun.command`，或在源码目录运行 `./ALTRun.command`。启动脚本会查找相邻的 `../Keysharp`（或 `../keysharp`）Debug/Release 构建、已安装的 `Keysharp.app`，以及 `PATH` 中的 `keysharp`。也可用 `KEYSHARP_BIN="/路径/Keysharp.app" ./ALTRun.command` 指定宿主。
+
+默认显示快捷键为 Option+Space；`#` 表示 Command。启动器支持 Command+1–9、Command+Enter、Command+,、Command+L 和 Command+E，并保留原生 Command 文本编辑与光标移动。全局输入和窗口自动化需要为所用 Keysharp 宿主授予 macOS 的辅助功能、输入监控及屏幕录制权限；Terminal/Finder 操作可能还需要自动化权限。
+
+登录自启默认关闭；在偏好设置中启用后只管理 `~/Library/LaunchAgents/org.keysharp.ALTRun.plist`，下次登录生效，不覆盖其它来源的文件。最近文档来自主目录内近 90 天的 Spotlight 使用日期，在后台查询并缓存 60 秒；未索引或没有使用记录的文件不会显示。终端默认使用 Terminal.app，可将 `Features.Terminal.Terminal` 设为 `iTerm`。更多功能、权限说明和测试命令见 [macOS 设置与验证](Installation.md#macos-setup-and-verification)。
 
 ### Cinnamon Wayland 故障排查
 

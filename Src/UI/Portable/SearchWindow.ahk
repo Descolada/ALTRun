@@ -1,8 +1,8 @@
 ; SearchWindow.ahk - Portable launcher UI with provider actions, history and keyboard navigation.
 
 class SearchWindow {
-    static _visible := false, _focusArmed := false, _imageList := 0
-    static Gui := "", Input := "", List := "", Canvas := "", Frame := "", Separator := ""
+    static _visible := false, _focusArmed := false
+    static Gui := "", Input := "", List := "", Canvas := "", Frame := ""
     static RowModel := [], FooterHeight := 38, Hovered := 0, _painting := false, _paintAgain := false, _drag := ""
     static Results := [], Selected := 0, Offset := 0
     static Mode := "results"                        ; results = 搜索结果; actions = 操作面板
@@ -15,8 +15,9 @@ class SearchWindow {
     static Marked := SearchWindow._MarkedMap()
     static _historyDraft := ""                       ; 开始翻记录之前输入框里的文字, Ctrl+↓ 翻回来时恢复
     static Width := 0, Padding := 0, InputHeight := 0, RowHeight := 0, IconSize := 0, VisibleRows := 8
-    static SelectedRadius := 0
     static _searchTimer := "", _hideTimer := "", _showResize := ""
+    static _lastSearchState := ""
+    static _settingInput := 0
     static _shownRows := -1                                                 ; 窗口当前按几行结果的高度显示
     static _tip := ""                                                       ; 这次显示时的使用提示 (HelpProvider.NextTip)
     static LastArea := "", HiddenAt := 0, _shownArea := ""                   ; 上次隐藏时所在屏幕的工作区和时间 (Hud 用)
@@ -24,8 +25,12 @@ class SearchWindow {
     static _keepOpen := false                        ; 右键菜单 / 删除确认期间不因失去焦点而隐藏
     static IconPrefetchDelay := 2000, PrepareDelay := 200, _prepareTimer := "", _prepared := false
     static ListTop := 58
+    static LastInputAt := 0
 
     static Create() {
+        SearchWindow._lastSearchState := ""
+        if IsObject(SearchWindow._searchTimer)
+            SetTimer(SearchWindow._searchTimer, 0)
         if IsObject(SearchWindow._showResize)
             SetTimer(SearchWindow._showResize, 0)
         SearchWindow._showResize := ""
@@ -52,7 +57,7 @@ class SearchWindow {
         if Platform.IsWayland
             g.Opt("+Resize")
         g.MarginX := 0, g.MarginY := 0
-        g.BackColor := ThemeManager.Get("Background")
+        g.BackColor := Platform.IsMac ? "Transparent" : ThemeManager.Get("Background")
         g.SetFont("s" ThemeManager.Get("InputFontSize") " c" ThemeManager.Get("InputText"), ThemeManager.FontName())
         pad := SearchWindow.Padding, contentWidth := SearchWindow.Width - pad * 2
         surface := LauncherCanvas.Blend(ThemeManager.Get("Background"), ThemeManager.Get("InputText"), 0.035)
@@ -106,8 +111,15 @@ class SearchWindow {
         canvasControl.OnEvent("ContextMenu", (ctrl, info, right, x, y) => SearchWindow._OnRowContextMenu(SearchWindow.Hovered, x, y))
         g.OnEvent("DpiChanged", (*) => SearchWindow._Repaint())
         g.Show("Hide w" SearchWindow.Width " h" SearchWindow._WindowHeight(0))
+#if OSX
+        ALTRunMacRoundWindow(g.ToClr(), 10)
+#endif
         SearchWindow._hideTimer := () => SearchWindow._HideIfInactive()
         BackgroundWork.IsBusy := () => !SearchWindow._AllowsBackgroundWork()
+        IconCache.CanQueueVisible := () => SearchWindow.IsVisible() || SearchWindow._showing
+        IconCache.CanLoadVisible := () => SearchWindow.IsVisible() && !SearchWindow._showing
+            && !SearchWindow._painting && A_TickCount - SearchWindow.LastInputAt >= 150
+        IconCache.OnLoaded := () => SearchWindow.IsVisible() ? SearchWindow._Repaint() : ""
         SearchWindow._Layout()
     }
 
@@ -299,6 +311,7 @@ class SearchWindow {
     static _ScreenScale() => LauncherCanvas.ScreenScale(SearchWindow.Gui)
 
     static Hide() {
+        IconCache.BeginFrame()
         if IsObject(SearchWindow._showResize)
             SetTimer(SearchWindow._showResize, 0)
         SearchWindow._showResize := ""
@@ -382,13 +395,25 @@ class SearchWindow {
     }
 
     static _SetInput(text) {
-        SearchWindow.Input.Value := text
-        length := StrLen(text)
-        Platform.SelectEdit(SearchWindow.Input, length, length)
-        SearchWindow._RunSearch()
+        SearchWindow.LastInputAt := A_TickCount
+        ++SearchWindow._settingInput
+        try {
+            SearchWindow.Input.Value := RegExReplace(text, "\s*[`r`n`t]+\s*", " ")
+            length := StrLen(SearchWindow.Input.Value)
+            Platform.SelectEdit(SearchWindow.Input, length, length)
+            SearchWindow.HistoryIndex := 0
+            SearchWindow._RunSearch()
+        } finally {
+            --SearchWindow._settingInput
+            if (!SearchWindow._settingInput && !SearchWindow._SearchIsCurrent())
+                SearchWindow._OnInputChange()
+        }
     }
 
     static _OnInputChange() {
+        SearchWindow.LastInputAt := A_TickCount
+        if SearchWindow._settingInput
+            return
         text := SearchWindow.Input.Value
         if RegExMatch(text, "[`r`n`t]") {                                   ; 粘贴了多行文字: 合并成一行, 搜索框始终只有一行
             SearchWindow.Input.Value := RegExReplace(text, "\s*[`r`n`t]+\s*", " ")
@@ -396,57 +421,59 @@ class SearchWindow {
             Platform.SelectEdit(SearchWindow.Input, len, len)
         }
         SearchWindow.HistoryIndex := 0
+        if SearchWindow._SearchIsCurrent()
+            return
+        ++SearchWindow._searchGen
         if (SearchWindow._searchTimer = "")
-            SearchWindow._searchTimer := () => SearchWindow._RunSearch()
+            SearchWindow._searchTimer := () => SearchWindow._RunPendingSearch()
         SetTimer(SearchWindow._searchTimer, -1)                             ; 连续输入时只搜索最后一次
+    }
+
+    static _SearchIsCurrent() {
+        state := SearchWindow._lastSearchState
+        return IsObject(state) && state.Text == SearchWindow.Input.Value
+            && state.Mode = SearchWindow.Mode && state.FileMode = SearchWindow.FileMode
+    }
+
+    static _RunPendingSearch() {
+        if !SearchWindow._SearchIsCurrent()
+            SearchWindow._RunSearch()
     }
 
     static _searchGen := 0
     static _RunSearch() {
+        started := Logger.Enabled ? Logger.Ms() : 0
+        if IsObject(SearchWindow._searchTimer)
+            SetTimer(SearchWindow._searchTimer, 0)
         gen := ++SearchWindow._searchGen
-        text := SearchWindow.Input.Value
-        if (SearchWindow.Mode = "actions") {
-            filtered := []
+        text := SearchWindow.Input.Value, mode := SearchWindow.Mode, fileMode := SearchWindow.FileMode
+        if (mode = "actions") {
+            results := []
             for action in SearchWindow.AllActions
                 if (Trim(text) = "" || FuzzyMatcher.Score(text, action.Title) > 0)
-                    filtered.Push(action)
-            return SearchWindow.SetResults(filtered)
+                    results.Push(action)
+        } else {
+            browse := FileSearchProvider.BrowsePath(text)                   ; 浏览文件夹: 只按最后一段 (过滤的文字) 高亮, 路径里的词不算
+            highlightText := IsObject(browse) ? browse.Filter : text
+            results := fileMode ? ProviderRegistry.SearchOnly(FileSearchProvider, text) : ProviderRegistry.Search(text)
         }
-        browse := FileSearchProvider.BrowsePath(text)                       ; 浏览文件夹: 只按最后一段 (过滤的文字) 高亮, 路径里的词不算
-        SearchWindow.HighlightText := IsObject(browse) ? browse.Filter : text
-        results := SearchWindow.FileMode ? ProviderRegistry.SearchOnly(FileSearchProvider, text) : ProviderRegistry.Search(text)
-        if (gen != SearchWindow._searchGen)                                 ; 搜索期间又输入了字: 用新的那次的结果
+        if (gen != SearchWindow._searchGen || !(text == SearchWindow.Input.Value)
+            || mode != SearchWindow.Mode || fileMode != SearchWindow.FileMode)
             return
+        if (mode != "actions")
+            SearchWindow.HighlightText := highlightText
+        SearchWindow._lastSearchState := {Text: text, Mode: mode, FileMode: fileMode}
+        searched := Logger.Enabled ? Logger.Ms() - started : 0
         SearchWindow.SetResults(results)
+        if (Logger.Enabled && (elapsed := Logger.Ms() - started) >= ProviderRegistry.SlowSearchMs)
+            Logger.Debug("Perf: query-to-frame (" StrLen(text) " chars) " Round(elapsed) " ms, providers=" Round(searched)
+                . " render=" Round(elapsed - searched))
     }
 
     static SetResults(results) {
         SearchWindow.Results := results
         SearchWindow.Selected := results.Length ? 1 : 0, SearchWindow.Offset := 0
         SearchWindow._Layout()
-    }
-
-    static _repaintLater := ""
-
-    static _AfterResults() {
-        SearchWindow._Layout()
-    }
-
-    static _recent := [], _blankLogged := false
-    static _NoteResults(count) {
-        SearchWindow._recent.Push(FormatTime(, "HH:mm:ss") "." Format("{:03}", A_MSec) " '" SubStr(SearchWindow.Input.Value, 1, 30) "' mode " SearchWindow.Mode
-            . (SearchWindow.FileMode ? " (files)" : "") " results " count " gen " SearchWindow._searchGen " painted rows " SearchWindow.RowModel.Length)
-        if (SearchWindow._recent.Length > 10)
-            SearchWindow._recent.RemoveAt(1)
-    }
-    static _LogBlankRow(row, count) {
-        if (SearchWindow._blankLogged || !Logger.Enabled)
-            return
-        SearchWindow._blankLogged := true
-        Logger.Warn("SearchWindow: row " row " has no result (results " count ", offset " SearchWindow.Offset ", painted rows " SearchWindow.RowModel.Length
-            . ", window rows " SearchWindow._shownRows ", mode " SearchWindow.Mode ", input '" SubStr(SearchWindow.Input.Value, 1, 30) "')")
-        for entry in SearchWindow._recent
-            Logger.Debug("  recent results: " entry)
     }
 
     static _VisibleCount() {
@@ -488,7 +515,7 @@ class SearchWindow {
                     ? LauncherCanvas.Blend(ThemeManager.Get("Background"), ThemeManager.Get("Title"), 0.045) : ThemeManager.Get("Background")
                 rows.Push({Index: index, Item: item, X: pad, Y: SearchWindow.ListTop + (A_Index - 1) * SearchWindow.RowHeight
                     , Width: SearchWindow.Width - pad * 2, Height: SearchWindow.RowHeight - 4, Title: item.Title, Subtitle: item.Subtitle
-                    , Shortcut: "Ctrl+" A_Index, Background: background, Selected: selected})
+                    , Shortcut: (Platform.IsMac ? "Cmd+" : "Ctrl+") A_Index, Background: background, Selected: selected})
             }
             IconCache.Scale := SearchWindow.Gui.PixelScale
             frameImage := LauncherCanvas.Render(SearchWindow.Width, SearchWindow._WindowHeight(count), SearchWindow.Gui.PixelScale, rows)
@@ -925,7 +952,12 @@ class SearchWindow {
         if !SearchWindow._IsOwnWindow(hwnd)
             return
         vk := wParam
+        ; Command text editing and cursor movement belong to the native macOS field editor.
+        command := Platform.IsMac && modifiers != "" && (modifiers & 8) != 0
+        if (command && !SearchWindow._CommandKey(vk))
+            return
         ctrl  := modifiers = "" ? GetKeyState("Ctrl") : (modifiers & 1) != 0
+        ctrl := ctrl || command
         shift := modifiers = "" ? GetKeyState("Shift") : (modifiers & 2) != 0
         alt   := modifiers = "" ? (msg = 0x104) || GetKeyState("Alt") : (modifiers & 4) != 0
         actions := SearchWindow.Mode = "actions"
@@ -1093,6 +1125,8 @@ class SearchWindow {
         SearchWindow._SetInput(text)
         SearchWindow.HistoryIndex := index                                  ; _SetInput 不经过 Change 事件, 这里保持历史位置
     }
+
+    static _CommandKey(vk) => vk = 0x0D || vk = 0xBC || vk = 0x4C || vk = 0x45 || (vk >= 0x31 && vk <= 0x39)
 
     static ToggleMark() {
         item := SearchWindow.SelectedItem()
@@ -1271,7 +1305,8 @@ public static void ALTRunLauncherAttachKeys(Keysharp.Builtins.Ks.Clr.ManagedInst
             long repeat = pressed.Add(key) ? 1 : 0x40000001;
             long modifiers = ((e.Modifiers & Eto.Forms.Keys.Control) != 0 ? 1 : 0)
                 | ((e.Modifiers & Eto.Forms.Keys.Shift) != 0 ? 2 : 0)
-                | ((e.Modifiers & Eto.Forms.Keys.Alt) != 0 ? 4 : 0);
+                | ((e.Modifiers & Eto.Forms.Keys.Alt) != 0 ? 4 : 0)
+                | ((e.Modifiers & Eto.Forms.Keys.Application) != 0 ? 8 : 0);
             object result = callback.Call(vk, repeat, (modifiers & 4) != 0 ? 0x104L : 0x100L, modifiers);
             if (result != null && (result is not string text || text.Length != 0))
                 e.Handled = true;

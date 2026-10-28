@@ -96,6 +96,10 @@ class ThemeManager {
     ; another function, so the version decides and older systems keep light menus. Only the system's own dark menus are possible, not the theme's colors. Returns whether it was set
     static MenuMode := 0                                                    ; what was set: 0 = nothing yet, 2 = dark, 3 = light
     static ApplyMenuMode(dark) {
+#if OSX
+        ALTRunMacNativeTheme(dark, ThemeManager.Name = "System")
+        return true
+#else
         if !Platform.IsWindows
             return false
         mode := dark ? 2 : 3
@@ -115,6 +119,7 @@ class ThemeManager {
             Logger.Error("ThemeManager: cannot set menu mode - " e.Message)
         }
         return false
+#endif
     }
 
     static SupportsMenuMode(version := A_OSVersion) {
@@ -224,16 +229,28 @@ class ThemeManager {
     static SystemUsesDark() {
 #if WINDOWS
         try return !RegRead("HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme")
-#endif
         return false
+#elif OSX
+        return ALTRunMacSystemDark()
+#else
+        return false
+#endif
     }
 
     ; When the system switches between light and dark, Windows broadcasts WM_SETTINGCHANGE ("ImmersiveColorSet"): reload to change the theme
     static _WatchSystemTheme() {
+#if OSX
+        if ThemeManager._listening
+            return
+        ThemeManager._listening := true
+        ALTRunWatchMacTheme((*) => ThemeManager._OnMacSettingChange())
+        return
+#else
         if (!Platform.IsWindows || ThemeManager._listening)
             return
         ThemeManager._listening := true
         OnMessage(0x1A, (wParam, lParam, *) => ThemeManager._OnSettingChange(lParam))
+#endif
     }
 
     static _OnSettingChange(lParam) {
@@ -242,6 +259,11 @@ class ThemeManager {
         wanted := ThemeManager.SystemUsesDark() ? "Dark" : "Light"
         if (wanted != ThemeManager.Resolved)
             SetTimer(() => App.Reload(), -500)                              ; wait until the system has switched, and don't exit inside a message callback
+    }
+
+    static _OnMacSettingChange() {
+        if (ThemeManager.Name = "System" && (ThemeManager.SystemUsesDark() ? "Dark" : "Light") != ThemeManager.Resolved)
+            SetTimer(() => App.Reload(), -500)
     }
 
     static _Contains(list, value) {
@@ -280,3 +302,13 @@ class ThemeManager {
         )
     }
 }
+
+#if OSX
+#CSharp
+public static bool ALTRunMacSystemDark() => Eto.Forms.Themes.System.ThemeStyle == Eto.Forms.ThemeStyle.Dark;
+public static void ALTRunMacNativeTheme(bool dark, bool system)
+    => Eto.Forms.Application.Instance.Theme = system ? Eto.Forms.Themes.System : dark ? Eto.Forms.Themes.Dark : Eto.Forms.Themes.Light;
+public static void ALTRunWatchMacTheme(Keysharp.Builtins.KeysharpFunc callback)
+    => Eto.Forms.Application.Instance.ThemeChanged += (_, _) => callback.Call();
+#EndCSharp
+#endif

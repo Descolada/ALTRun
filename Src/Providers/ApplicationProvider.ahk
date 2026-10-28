@@ -335,10 +335,17 @@ class ApplicationProvider {
             subfolders := []
             Loop Files, Platform.Join(folder, "*"), "FD" {
                 if InStr(A_LoopFileAttrib, "D") {
-                    if Platform.IsMac && RegExMatch(A_LoopFileName, "\.app$") {
-                        title := SubStr(A_LoopFileName, 1, -4)
-                        if (exclude = "" || !RegExMatch(title, exclude))
-                            job.Found[A_LoopFileFullPath] := ApplicationProvider._Entry(title, A_LoopFileFullPath, "", options)
+                    if Platform.IsMac && RegExMatch(A_LoopFileName, "i)\.app$") {
+                        if !RegExMatch(A_LoopFileName, job.Types)
+                            continue
+                        bundle := ApplicationProvider.MacBundle(A_LoopFileFullPath)
+                        title := bundle["Name"]
+                        if (bundle["BackgroundOnly"] || (exclude != "" && RegExMatch(title, exclude)))
+                            continue
+                        bundleEntry := ApplicationProvider._Entry(title, A_LoopFileFullPath, "", options)
+                        extra := SubStr(A_LoopFileName, 1, -4) " " bundle["Identifier"]
+                        bundleEntry["Search"] := Trim(bundleEntry["Search"] " " extra " " (options["MatchPinyin"] ? Pinyin.Initials(extra) : ""))
+                        job.Found[A_LoopFileFullPath] := bundleEntry
                         continue
                     }
                     if (depth < maxDepth)
@@ -421,6 +428,8 @@ class ApplicationProvider {
         search := options["MatchPinyin"] ? Pinyin.Initials(title) : ""
         return Map("Title", title, "Target", target, "Detail", detail, "Search", (search != title) ? search : "")
     }
+
+    static MacBundle(path) => JSON.Parse(ALTRunMacBundleRead(path))
 
     ;---------------------------------------------------------------------------
     ; Microsoft Store apps (PowerShell in the background)
@@ -548,3 +557,71 @@ class ApplicationProvider {
         }
     }
 }
+
+#CSharp
+private static class ALTRunMacBundleNative
+{
+    private const string Framework = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
+    [System.Runtime.InteropServices.DllImport(Framework)] internal static extern nint CFURLCreateFromFileSystemRepresentation(nint allocator, byte[] path, nint length, [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.I1)] bool isDirectory);
+    [System.Runtime.InteropServices.DllImport(Framework)] internal static extern nint CFBundleCreate(nint allocator, nint url);
+    [System.Runtime.InteropServices.DllImport(Framework)] internal static extern nint CFBundleGetValueForInfoDictionaryKey(nint bundle, nint key);
+    [System.Runtime.InteropServices.DllImport(Framework)] internal static extern nint CFStringCreateWithCString(nint allocator, [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string value, uint encoding);
+    [System.Runtime.InteropServices.DllImport(Framework)] internal static extern nint CFStringGetLength(nint value);
+    [System.Runtime.InteropServices.DllImport(Framework)] internal static extern nint CFStringGetMaximumSizeForEncoding(nint length, uint encoding);
+    [System.Runtime.InteropServices.DllImport(Framework)] [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.I1)] internal static extern bool CFStringGetCString(nint value, byte[] buffer, nint length, uint encoding);
+    [System.Runtime.InteropServices.DllImport(Framework)] internal static extern nuint CFGetTypeID(nint value);
+    [System.Runtime.InteropServices.DllImport(Framework)] internal static extern nuint CFStringGetTypeID();
+    [System.Runtime.InteropServices.DllImport(Framework)] internal static extern nuint CFBooleanGetTypeID();
+    [System.Runtime.InteropServices.DllImport(Framework)] [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.I1)] internal static extern bool CFBooleanGetValue(nint value);
+    [System.Runtime.InteropServices.DllImport(Framework)] internal static extern void CFRelease(nint value);
+
+    internal static string Value(nint bundle, string name)
+    {
+        const uint utf8 = 0x08000100;
+        nint key = CFStringCreateWithCString(0, name, utf8);
+        try
+        {
+            nint value = CFBundleGetValueForInfoDictionaryKey(bundle, key);
+            if (value == 0) return "";
+            if (CFGetTypeID(value) == CFBooleanGetTypeID()) return CFBooleanGetValue(value) ? "true" : "false";
+            if (CFGetTypeID(value) != CFStringGetTypeID()) return "";
+            var buffer = new byte[checked((int)CFStringGetMaximumSizeForEncoding(CFStringGetLength(value), utf8) + 1)];
+            return CFStringGetCString(value, buffer, buffer.Length, utf8)
+                ? System.Text.Encoding.UTF8.GetString(buffer, 0, System.Array.IndexOf(buffer, (byte)0)) : "";
+        }
+        finally { if (key != 0) CFRelease(key); }
+    }
+}
+
+public static string ALTRunMacBundleRead(string path)
+{
+    string name = System.IO.Path.GetFileNameWithoutExtension(System.IO.Path.TrimEndingDirectorySeparator(path));
+    string identifier = "";
+    bool backgroundOnly = false;
+    if (System.OperatingSystem.IsMacOS())
+    {
+        byte[] bytes = System.Text.Encoding.UTF8.GetBytes(System.IO.Path.GetFullPath(path));
+        nint url = ALTRunMacBundleNative.CFURLCreateFromFileSystemRepresentation(0, bytes, bytes.Length, true);
+        nint bundle = 0;
+        try
+        {
+            if (url != 0) bundle = ALTRunMacBundleNative.CFBundleCreate(0, url);
+            if (bundle != 0)
+            {
+                string display = ALTRunMacBundleNative.Value(bundle, "CFBundleDisplayName");
+                if (display.Length == 0) display = ALTRunMacBundleNative.Value(bundle, "CFBundleName");
+                if (display.Length > 0) name = display;
+                identifier = ALTRunMacBundleNative.Value(bundle, "CFBundleIdentifier");
+                string background = ALTRunMacBundleNative.Value(bundle, "LSBackgroundOnly");
+                backgroundOnly = background.Equals("true", System.StringComparison.OrdinalIgnoreCase) || background == "1";
+            }
+        }
+        finally
+        {
+            if (bundle != 0) ALTRunMacBundleNative.CFRelease(bundle);
+            if (url != 0) ALTRunMacBundleNative.CFRelease(url);
+        }
+    }
+    return System.Text.Json.JsonSerializer.Serialize(new { Name = name, Identifier = identifier, BackgroundOnly = backgroundOnly });
+}
+#EndCSharp

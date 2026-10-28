@@ -35,6 +35,12 @@ Programs compiled with AutoHotkey are sometimes reported by mistake. Add the ALT
 ### ALTRun is slow or doesn't respond right after Windows starts
 Just after Windows starts, Explorer and OneDrive (or another sync tool) are often busy for a while. ALTRun asks Windows for icons and shortcuts, so it has to wait for them too: the search window may open slowly, or ignore typing for a few seconds. It recovers by itself once Windows has settled down. To check, turn on the debug log: lines starting with `Perf: startup:` show how long each startup step took, and `Perf: icon ... ms` lines show icons that took a long time to load. If it happens every time, look in Task Manager at what is using the CPU or disk after startup (OneDrive syncing many files is a common cause).
 
+### Search is slow in the Keysharp source port
+
+Turn on **Write a debug log** in Preferences and reproduce the slow search. `Perf: search` breaks down provider time; `Perf: query-to-frame` adds the time to render and assign the result bitmap, without recording the query itself. The log path is shown beside the preference.
+
+The source port paints cached icons or a temporary fallback immediately. Missing icons load one at a time after typing has been quiet for 150 ms. Native macOS icons are resized directly in memory. Default window matches use an idle-refreshed snapshot (every five seconds while the launcher is closed); use `w ...` for an explicit window refresh. Script/bookmark refreshes and startup prefetching also wait while the launcher is open. Large result sets use bounded ranking rather than building and sorting a large text buffer. See the search fixtures in [Contributing](../../CONTRIBUTING.md) for reproducible checks.
+
 ### Searching is awkward with a Chinese input method
 In Preferences → Keyboard, set "Switch to English" to "English (US) keyboard" (the keyboard needs to be added in Windows) or "English mode of the current input method" (keeps your input method and only turns it to English). Chinese names can also be searched by their pinyin initials ("wx" → 微信).
 

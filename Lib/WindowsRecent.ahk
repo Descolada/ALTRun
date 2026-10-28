@@ -20,6 +20,9 @@ class WindowsRecent {
     static Dir := A_AppData "\Microsoft\Windows\Recent"
     static CacheMs := 2000, MaxLinks := 1200, _links := Map(), _lists := Map()
     static Items(maxLinks, recentDir := "") {
+        ; Spotlight has its own background cache; do not cache the initial, still-pending empty result here.
+        if Platform.IsMac
+            return DesktopIntegration.RecentItems(maxLinks, recentDir)
         if Platform.IsLinux {
             file := recentDir != "" ? recentDir : Platform.Join(Platform.UserDataDir, "recently-used.xbel")
             key := file "|" maxLinks, lists := WindowsRecent._lists

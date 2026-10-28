@@ -197,8 +197,14 @@ class SystemProvider {
         for command in SystemProvider.LinuxCommands()
             add(command["Id"], command["TitleKey"], command["Executable"], SystemProvider._NativeCommand(command)
                 , command["Confirm"], "Sys.Subtitle", command["Title"], command["English"])
-        add("ShowIP", "Sys.ShowIP", "url:", () => SystemProvider.ShowIP())
 #endif
+#if OSX
+        add("Lock", "Sys.Lock", App.IconFile, () => Send("^#q"))
+        for command in SystemProvider.MacCommands()
+            add(command["Id"], command["TitleKey"], command.Has("Icon") ? command["Icon"] : App.IconFile, SystemProvider._NativeCommand(command)
+                , command["Confirm"], "Sys.Subtitle", command["Title"], command["English"])
+#endif
+        add("ShowIP", "Sys.ShowIP", "url:", () => SystemProvider.ShowIP())
 #endif
         ; --- Clipboard text tools ---
         text("TextUpper"        , "Text.Upper"        , (s) => TextTools.Upper(s))
@@ -305,6 +311,44 @@ class SystemProvider {
     ;---------------------------------------------------------------------------
     static _NativeCommand(command) {
         return () => SystemProvider.NativeRunner.Call(command["Executable"], command["Arguments"])
+    }
+
+    static MacCommands() {
+        list := []
+        add(id, titleKey, executable, arguments := [], confirm := false, title := "", english := "", icon := "") {
+            if (Platform.FindExecutable(executable) = "")
+                return
+            command := Map("Id", id, "TitleKey", titleKey, "Executable", executable, "Arguments", arguments
+                , "Confirm", confirm, "Title", title, "English", english)
+            if (icon != "")
+                command["Icon"] := icon
+            list.Push(command)
+        }
+        apple(id, titleKey, script, confirm := false, title := "", english := "") => add(id, titleKey, "/usr/bin/osascript", ["-e", script], confirm, title, english)
+        add("Sleep", "Sys.Sleep", "/usr/bin/pmset", ["sleepnow"])
+        add("MonitorOff", "Sys.MonitorOff", "/usr/bin/pmset", ["displaysleepnow"])
+        apple("Shutdown", "Sys.Shutdown", 'tell application "System Events" to shut down', true)
+        apple("Restart", "Sys.Restart", 'tell application "System Events" to restart', true)
+        apple("Logoff", "Sys.Logoff", 'tell application "System Events" to log out', true)
+        apple("EmptyRecycle", "Sys.EmptyRecycle", 'tell application "Finder" to empty trash', true, "Empty Trash", "Empty Trash")
+        apple("Mute", "Sys.Mute", "set volume output muted (not (output muted of (get volume settings)))")
+        apple("VolumeUp", "Sys.VolumeUp", "set level to (output volume of (get volume settings)) + 10`nif level > 100 then set level to 100`nset volume output volume level")
+        apple("VolumeDown", "Sys.VolumeDown", "set level to (output volume of (get volume settings)) - 10`nif level < 0 then set level to 0`nset volume output volume level")
+        selected := Map()
+        for tool in [["Settings", "Tool.Settings", "/System/Applications/System Settings.app", "", ""]
+            , ["Settings", "Tool.Settings", "/System/Applications/System Preferences.app", "", ""]
+            , ["TaskManager", "Tool.TaskManager", "/System/Applications/Utilities/Activity Monitor.app", "Activity Monitor", "Activity Monitor Task Manager"]
+            , ["Calculator", "Tool.Calculator", "/System/Applications/Calculator.app", "", ""]
+            , ["Notepad", "Tool.Notepad", "/System/Applications/TextEdit.app", "TextEdit", "TextEdit Text Editor Notepad"]
+            , ["Explorer", "Tool.Explorer", "/System/Library/CoreServices/Finder.app", "Finder", "Finder File Manager Explorer"]
+            , ["DiskManagement", "Tool.DiskManagement", "/System/Applications/Utilities/Disk Utility.app", "Disk Utility", "Disk Utility Disk Management"]
+            , ["EventViewer", "Tool.EventViewer", "/System/Applications/Utilities/Console.app", "Console", "Console System Logs Event Viewer"]] {
+            if (!selected.Has(tool[1]) && DirExist(tool[3])) {
+                add(tool[1], tool[2], "/usr/bin/open", [tool[3]], false, tool[4], tool[5], tool[3])
+                selected[tool[1]] := true
+            }
+        }
+        return list
     }
 
     ; The optional systemd flag lets tests inspect the table without touching real sessions or power settings.

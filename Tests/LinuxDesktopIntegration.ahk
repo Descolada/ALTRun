@@ -45,8 +45,9 @@ class DesktopIntegrationTest {
         DesktopIntegrationTest.Assert(command.Arguments.Length = arguments.Length, "Autostart arguments changed count.")
         for argument in arguments
             DesktopIntegrationTest.Assert(command.Arguments[A_Index] == argument, "Autostart argument escaping did not round trip.")
+        FileSetTime("20000102030405", file, "M")
         DesktopIntegrationTest.Assert(ALTRunAutostartSet(config, true, executable, JSON.Stringify(arguments), script, ""), "Autostart update failed.")
-        DesktopIntegrationTest.Assert(FileRead(file, "UTF-8") == text, "An unchanged autostart entry was rewritten differently.")
+        DesktopIntegrationTest.Assert(FileRead(file, "UTF-8") == text && FileGetTime(file, "M") = "20000102030405", "An unchanged autostart entry was rewritten.")
         DesktopIntegrationTest.Assert(ALTRunAutostartSet(config, false, executable, "[]", script, "") && !FileExist(file), "Owned autostart was not removed.")
         FileAppend("[Desktop Entry]`nName=User entry`n", file, "UTF-8-RAW")
         DesktopIntegrationTest.Assert(!ALTRunAutostartSet(config, true, executable, "[]", script, ""), "An unrelated autostart entry was overwritten.")

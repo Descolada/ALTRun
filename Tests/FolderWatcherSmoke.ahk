@@ -13,7 +13,7 @@ SetTimer(() => FolderWatcherSmoke.Fail("Timed out after 20 seconds."), -20000)
 FolderWatcherSmoke.Run()
 
 class FolderWatcherSmoke {
-    static Folder := "", Watcher := ""
+    static Folder := "", External := "", Watcher := ""
 
     static Assert(condition, message) {
         if !condition
@@ -24,8 +24,18 @@ class FolderWatcherSmoke {
         FolderWatcherSmoke.Folder := Platform.Join(A_Temp, "ALTRun-FolderWatcher-" Platform.NewUuid())
         nested := Platform.Join(FolderWatcherSmoke.Folder, "Nested")
         DirCreate(nested)
+        preexisting := Platform.Join(nested, "Preexisting.txt")
+        FileAppend("before watching", preexisting, "UTF-8")
         watcher := FolderWatcherSmoke.Watcher := FolderWatcher([FolderWatcherSmoke.Folder], FolderWatcher.NameChanges)
         FolderWatcherSmoke.Assert(watcher.Count = 1, "The temporary folder could not be watched.")
+        started := A_TickCount
+        while !watcher.Ready {
+            FolderWatcherSmoke.Assert(A_TickCount - started < 4000, "Initial watcher snapshot did not finish.")
+            Sleep(10)
+        }
+        FolderWatcherSmoke.Drain()
+        FileAppend(" content only", preexisting, "UTF-8")
+        FolderWatcherSmoke.AssertQuiet()
         original := Platform.Join(nested, "Case 漢字.txt"), renamed := Platform.Join(nested, "Renamed.txt")
         FileAppend("first", original, "UTF-8")
         FolderWatcherSmoke.WaitFor([original])
@@ -33,14 +43,28 @@ class FolderWatcherSmoke {
         FolderWatcherSmoke.WaitFor([original, renamed])
         FolderWatcherSmoke.Drain()
         FileAppend("second", renamed, "UTF-8")
-        started := A_TickCount
-        while A_TickCount - started < 250 {
-            FolderWatcherSmoke.Assert(!watcher.Poll().Length, "NameChanges reported a content-only write.")
-            Sleep(10)
-        }
+        FolderWatcherSmoke.AssertQuiet()
         FileDelete(renamed)
         FolderWatcherSmoke.WaitFor([renamed])
-        FileAppend("PASS FOLDER_WATCHER nested Unicode create, rename, delete and name filters`n", "*")
+        FolderWatcherSmoke.Drain()
+        moved := Platform.Join(FolderWatcherSmoke.Folder, "Moved")
+        DirMove(nested, moved)
+        FolderWatcherSmoke.WaitFor([nested, moved])
+        FolderWatcherSmoke.Drain()
+        preexisting := Platform.Join(moved, "Preexisting.txt")
+        FileAppend(" after folder rename", preexisting, "UTF-8")
+        FolderWatcherSmoke.AssertQuiet()
+        external := FolderWatcherSmoke.External := FolderWatcherSmoke.Folder "-incoming"
+        DirCreate(external)
+        FileAppend("already populated", Platform.Join(external, "Child.txt"), "UTF-8")
+        incoming := Platform.Join(FolderWatcherSmoke.Folder, "Incoming")
+        DirMove(external, incoming)
+        FolderWatcherSmoke.WaitFor([incoming])
+        FolderWatcherSmoke.Drain()
+        imported := Platform.Join(incoming, "Child.txt")
+        FileDelete(imported)
+        FolderWatcherSmoke.WaitFor([imported])
+        FileAppend("PASS FOLDER_WATCHER nested Unicode create, rename, delete and preexisting name filters`n", "*")
 
         watched := Platform.Join(FolderWatcherSmoke.Folder, "WatchRoot")
         FolderWatcherSmoke.Assert(FileIndex.IsWatchedChange(Platform.Join(watched, "one.txt"), [watched], 1, "", ""), "A direct file was excluded.")
@@ -52,6 +76,12 @@ class FolderWatcherSmoke {
         watcher.Stop()
         FolderWatcherSmoke.Assert(!watcher.Count && !watcher.Poll().Length, "Stopped watchers retained notifications.")
         FileAppend("PASS FOLDER_WATCHER depth, temporary files, case and disposal`n", "*")
+        watcher := FolderWatcherSmoke.Watcher := FolderWatcher([FolderWatcherSmoke.Folder])
+        FolderWatcherSmoke.Drain()
+        FileAppend(" include modifications", preexisting, "UTF-8")
+        FolderWatcherSmoke.WaitFor([preexisting])
+        watcher.Stop()
+        FileAppend("PASS FOLDER_WATCHER content notifications when requested`n", "*")
         if FolderWatcher.Managed {
             recovery := Platform.Join(FolderWatcherSmoke.Folder, "Recovery")
             DirCreate(recovery)
@@ -100,11 +130,21 @@ class FolderWatcherSmoke {
         }
     }
 
+    static AssertQuiet() {
+        started := A_TickCount
+        while A_TickCount - started < 250 {
+            FolderWatcherSmoke.Assert(!FolderWatcherSmoke.Watcher.Poll().Length, "NameChanges reported a content-only write.")
+            Sleep(10)
+        }
+    }
+
     static CleanUp() {
         if IsObject(FolderWatcherSmoke.Watcher)
             try FolderWatcherSmoke.Watcher.Stop()
         if (FolderWatcherSmoke.Folder != "" && InStr(FolderWatcherSmoke.Folder, "ALTRun-FolderWatcher-") && DirExist(FolderWatcherSmoke.Folder))
             try DirDelete(FolderWatcherSmoke.Folder, true)
+        if (FolderWatcherSmoke.External != "" && DirExist(FolderWatcherSmoke.External))
+            try DirDelete(FolderWatcherSmoke.External, true)
     }
 
     static Fail(message) {

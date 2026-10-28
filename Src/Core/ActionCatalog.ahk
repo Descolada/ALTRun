@@ -89,7 +89,7 @@ class ActionCatalog {
     static OpenFile(target, arguments := "") {
         resolved := Path.Resolve(target)
         if !Platform.IsWindows {
-            if RegExMatch(resolved, "i)\.(desktop|app)$")
+            if (Platform.IsLinux && RegExMatch(resolved, "i)\.desktop$"))
                 return ApplicationProvider.Launch(resolved)
             return Platform.Open(resolved, arguments)
         }

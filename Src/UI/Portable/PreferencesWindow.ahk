@@ -13,10 +13,7 @@ class PreferencesWindow {
     static WidthK := 150                                                    ; 热键框 ("K")
     static _pairX := 0, _pairFirstW := 0, _pairSecondW := 0, _pairSizes := ["", ""]
     static ButtonY := 619                                                   ; 底部按钮的位置; 页面内容要在它上面 (y < ButtonY - 10)
-    static LabelMax := 250                                                  ; 左列最宽多少, 再长的标签换行
     static _positionReset := false
-    static _pageKey := "", _wider := Map()                                  ; 正在建的页; 标签放不下的页 -> 需要的左列宽度
-    static _labelWidths := Map()                                            ; "语言 页" -> 加宽后的左列宽度 (打开过一次就记住)
     static Chrome := "", Palette := Map(), UiFont := 10, HintFont := 9
     static WindowW := 980, WindowH := 700, _viewHeight := 700
     static SidebarW := 224, HeaderH := 92, RowGap := 10
@@ -198,7 +195,7 @@ class PreferencesWindow {
     }
 
     static FitText(control) {
-#if WINDOWS || LINUX
+#if WINDOWS || LINUX || OSX
         control.GetPos(, , &width, &height)
         preferred := ALTRunPreferenceTextHeight(control.ToClr(), width)
         if preferred > height
@@ -324,7 +321,7 @@ class PreferencesWindow {
         PreferencesWindow._Field("General.Hotkey", "Prefs.Hotkey", "M", "hotkey")
         PreferencesWindow._Field("General.SecondaryHotkey", "Prefs.SecondaryHotkey", "M", "hotkey")
         PreferencesWindow._Choice("General.Language", "Prefs.Language", PreferencesWindow._LanguageValues(), PreferencesWindow._LanguageLabels())
-        if (Platform.IsWindows || Platform.IsLinux)
+        if (Platform.IsWindows || Platform.IsLinux || Platform.IsMac)
             PreferencesWindow._Check("General.LaunchAtLogin", "Prefs.LaunchAtLogin")
         PreferencesWindow._Check("General.ShowTrayIcon", "Prefs.ShowTrayIcon")
         PreferencesWindow._Check("General.SaveLog", "Prefs.SaveLog")
@@ -383,35 +380,6 @@ class PreferencesWindow {
     static _ThemeLabel(themeName) {
         label := I18n.T("Theme." themeName)
         return (label = "Theme." themeName) ? themeName : label
-    }
-
-    static _ThemeGallery(path, themes, height) {
-        list := PreferencesWindow._Add("ListView", "w" PreferencesWindow.ContentW " h" height " Report -Multi -Hdr", ["Theme"])
-        selected := 1
-        for index, name in themes {
-            list.Add("", PreferencesWindow._ThemeLabel(name))
-            if (name = PreferencesWindow.GetPath(PreferencesWindow.Working, path))
-                selected := index
-        }
-        list.Modify(selected, "Select Focus Vis")
-        list.OnEvent("ItemSelect", (ctrl, row, chosen) => chosen ? PreferencesWindow.MarkDirty() : "")
-        PreferencesWindow._Bind(path, () => themes[list.GetNext() || selected])
-        return list
-    }
-
-    static _CopyTheme(gallery, themes) {
-        source := themes[gallery.GetNext() || 1]
-        theme := ThemeManager.Resolve(source)
-        answer := InputBox(I18n.T("Prefs.CopyThemePrompt"), I18n.T("Prefs.CopyTheme"), "w340 h130", source " Custom")
-        name := Trim(RegExReplace(answer.Value, '[\\/:*?"<>|]'))
-        if (answer.Result != "OK" || name = "")
-            return
-        destination := Platform.Join(ThemeManager.UserDir, name ".json")
-        if (FileExist(destination) && MsgBox(I18n.T("Prefs.ThemeExists", name), App.Name, "YesNo Default2") != "Yes")
-            return
-        DirCreate(ThemeManager.UserDir)
-        JSON.WriteFile(destination, theme)
-        Platform.Edit(destination)
     }
 
     static _BuildFeatures() {
@@ -570,28 +538,17 @@ class PreferencesWindow {
         PreferencesWindow._Button("Prefs.ResetLearning", (*) => PreferencesWindow._ResetLearning())
     }
 
-    static _usage := ""
     static _ResetLearning() {
         Knowledge.Picks := Knowledge._UidMap(), Knowledge.QueryPicks := Map(), Knowledge.History := [], Knowledge.Recent := []
         Knowledge.Save()
         MsgBox(I18n.T("Prefs.ResetDone"), App.Name, 64)
     }
 
-    static _OpenFolder(folder) {
-        DirCreate(folder)
-        ActionCatalog.OpenFolder(folder)                                    ; 设置的文件管理器 (例如 Total Commander)
-    }
-
     static _BeginPage(nameKey, labelW := 190) {
         PreferencesWindow.Pages.Push({Key: nameKey, Name: I18n.T(nameKey), Wiki: PreferencesWindow.WikiPage(nameKey), Controls: []})
         PreferencesWindow._y := PreferencesWindow.HeaderH
-        PreferencesWindow._pageKey := nameKey
         PreferencesWindow._pairX := 0                                       ; 这一页成对设置的右列位置, 见 _Pair
-        PreferencesWindow.LabelW := Max(180, labelW, PreferencesWindow._labelWidths.Get(I18n.Lang " " nameKey, 0))
-    }
-
-    static _FitLabel(ctrl, text) {
-        PreferencesWindow.FitText(ctrl)
+        PreferencesWindow.LabelW := Max(180, labelW)
     }
 
     static _Add(type, options, text := "") {
@@ -645,14 +602,25 @@ class PreferencesWindow {
     }
 
     static _HasDesc(labelKey) {
-        return I18n.Strings.Has(labelKey ".Desc")
+        return I18n.Strings.Has(PreferencesWindow._DescriptionKey(labelKey))
+    }
+
+    static _DescriptionKey(labelKey) {
+        if !Platform.IsWindows {
+            if (labelKey = "Prefs.FileManager")
+                return labelKey (Platform.IsMac ? ".Mac.Desc" : ".Linux.Desc")
+            if I18n.Strings.Has(labelKey ".Portable.Desc")
+                return labelKey ".Portable.Desc"
+        }
+        return labelKey ".Desc"
     }
 
     static _Desc(labelKey, x, text := "") {
         if (text = "") {
             if !PreferencesWindow._HasDesc(labelKey)
                 return
-            text := I18n.T(labelKey ".Desc")
+            key := PreferencesWindow._DescriptionKey(labelKey)
+            text := key = "Prefs.SaveLog.Portable.Desc" ? I18n.T(key, Logger.File) : I18n.T(key)
         }
         PreferencesWindow.Gui.SetFont("s" PreferencesWindow.HintFont)
         ctrl := PreferencesWindow._Add("Text", "x" x " w" (PreferencesWindow.ContentX + PreferencesWindow.ContentW - x) " c" PreferencesWindow.Palette["Muted"], text)
@@ -661,18 +629,15 @@ class PreferencesWindow {
     }
 
     static _Note(textKey) {
+        if (!Platform.IsWindows && I18n.Strings.Has(textKey ".Portable"))
+            textKey .= ".Portable"
         PreferencesWindow._Desc("", PreferencesWindow.ContentX, I18n.T(textKey))
-    }
-
-    static _Gap() {
-        PreferencesWindow._y += 10
     }
 
     static _Label(labelKey) {
         PreferencesWindow._y += 3
         ctrl := PreferencesWindow._Add("Text", "w" (PreferencesWindow.LabelW - 20), I18n.T(labelKey))
         PreferencesWindow._y -= 3
-        PreferencesWindow._FitLabel(ctrl, I18n.T(labelKey))
         return ctrl
     }
 
@@ -713,7 +678,6 @@ class PreferencesWindow {
         PreferencesWindow._y += dy
         ctrl := PreferencesWindow._Add("Text", "x" PreferencesWindow.ContentX " w" (PreferencesWindow.LabelW - 20), I18n.T(labelKey))
         PreferencesWindow._y -= dy
-        PreferencesWindow._FitLabel(ctrl, I18n.T(labelKey))
         return ctrl
     }
 
@@ -722,22 +686,6 @@ class PreferencesWindow {
         ctrl := PreferencesWindow._Add(type, "x" PreferencesWindow._InputX() " w" PreferencesWindow._InputW() " " options, text)
         PreferencesWindow._Below(6, label, ctrl)
         return ctrl
-    }
-
-    static _InlineField(path, labelKey, size, kind := "text") {
-        x := PreferencesWindow._InputX()
-        PreferencesWindow._y += 3
-        label := PreferencesWindow._Add("Text", "x" x, I18n.T(labelKey))
-        PreferencesWindow._y -= 3
-        label.GetPos(, , &labelW)
-        value := PreferencesWindow.GetPath(PreferencesWindow.Working, path)
-        ctrl := PreferencesWindow._Add("Edit", "x" (x + labelW + 8) " w" PreferencesWindow._Width(size) " r1 -Multi" (kind = "number" ? " Number" : ""), value)
-        if (kind = "number")
-            PreferencesWindow._Bind(path, () => IsInteger(ctrl.Value) ? Integer(ctrl.Value) : 0)
-        else
-            PreferencesWindow._Bind(path, () => ctrl.Value)
-        PreferencesWindow._Below(PreferencesWindow._HasDesc(labelKey) ? 3 : 8, label, ctrl)
-        PreferencesWindow._Desc(labelKey, x)
     }
 
     static _Field(path, labelKey, size, kind := "text") {
@@ -787,18 +735,6 @@ class PreferencesWindow {
         PreferencesWindow._Desc(labelKey, PreferencesWindow._InputX())
     }
 
-    static _WinList(path, labelKey, rows, value := "") {
-        label := PreferencesWindow._Label(labelKey)
-        if (path != "")
-            value := PreferencesWindow.SplitWindows(PreferencesWindow.GetPath(PreferencesWindow.Working, path))
-        ctrl := PreferencesWindow._Add("Edit", "x" PreferencesWindow._InputX() " w" PreferencesWindow._InputW() " r" rows " +Multi -Wrap +HScroll +VScroll", PreferencesWindow.JoinLines(value))
-        if (path != "")
-            PreferencesWindow._Bind(path, () => PreferencesWindow.JoinWindows(PreferencesWindow.SplitLines(ctrl.Value)))
-        PreferencesWindow._Below(3, label, ctrl)
-        PreferencesWindow._Desc(labelKey, PreferencesWindow._InputX())
-        return ctrl
-    }
-
     static _Csv(path, labelKey, size) {
         label := PreferencesWindow._Label(labelKey)
         value := PreferencesWindow.JoinCsv(PreferencesWindow.GetPath(PreferencesWindow.Working, path))
@@ -815,21 +751,6 @@ class PreferencesWindow {
         PreferencesWindow._Below(PreferencesWindow._HasDesc(labelKey) ? 2 : 6, ctrl)
         PreferencesWindow._Desc(labelKey, PreferencesWindow._InputX())
         return ctrl
-    }
-
-    static _Buttons(group, specs*) {
-        if (group != "")
-            PreferencesWindow._GroupLabel(group, 5)
-        x := PreferencesWindow._InputX(), controls := []
-        buttonW := Min(PreferencesWindow.ButtonW, (PreferencesWindow._InputW() - 10 * (specs.Length - 1)) // specs.Length)   ; 左列加宽后放不下时按钮窄一点
-        for spec in specs {
-            ctrl := PreferencesWindow._Add("Button", "x" x " w" buttonW " h" PreferencesWindow.ButtonH, I18n.T(spec[1]))
-            ctrl.OnEvent("Click", spec[2])
-            controls.Push(ctrl)
-            x += buttonW + 10
-        }
-        PreferencesWindow._Below(PreferencesWindow._HasDesc(specs[1][1]) ? 2 : 6, controls*)
-        PreferencesWindow._Desc(specs[1][1], PreferencesWindow._InputX())
     }
 
     static _Pair(left, right) {
@@ -914,13 +835,6 @@ class PreferencesWindow {
         PreferencesWindow.StyleNative(ctrl, "Edit", PreferencesWindow.Palette)
         PreferencesWindow.Pages[PreferencesWindow.Pages.Length].Controls.Push(ctrl)
         PreferencesWindow._Bind(path, () => HotkeyBox.Value(ctrl))
-        return ctrl
-    }
-
-    static _SideButton(rowY, labelKey, fn) {
-        x := PreferencesWindow._InputX() + PreferencesWindow.WidthS + 12
-        ctrl := PreferencesWindow._Add("Button", "x" x " y" (rowY - 2) " w" PreferencesWindow.ButtonW " h" PreferencesWindow.ButtonH, I18n.T(labelKey))
-        ctrl.OnEvent("Click", fn)
         return ctrl
     }
 
@@ -1167,20 +1081,6 @@ class PreferencesWindow {
         return items
     }
 
-    static SplitWindows(text) {
-        return PreferencesWindow.SplitCsv(text)
-    }
-
-    static JoinWindows(lists*) {
-        all := [], seen := Map()
-        seen.CaseSense := false
-        for list in lists
-            for window in list
-                if (Trim(window) != "" && !seen.Has(Trim(window)))
-                    seen[Trim(window)] := true, all.Push(Trim(window))
-        return PreferencesWindow.JoinCsv(all)
-    }
-
     static JoinCsv(items) {
         if !(items is Array)
             return items
@@ -1316,6 +1216,16 @@ public static object ALTRunStylePreferenceControl(Keysharp.Builtins.Ks.Clr.Manag
         };
     }
     return null;
+}
+#EndCSharp
+#endif
+
+#if OSX
+#CSharp
+public static long ALTRunPreferenceTextHeight(Keysharp.Builtins.Ks.Clr.ManagedInstance wrapped, double width)
+{
+    var control = (Eto.Forms.Control)wrapped.Native;
+    return (long)System.Math.Ceiling(control.GetPreferredSize(new Eto.Drawing.SizeF((float)width, float.PositiveInfinity)).Height);
 }
 #EndCSharp
 #endif
